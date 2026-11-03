@@ -61,3 +61,32 @@ The old `ALTER TABLE ... try/catch` block in `db.ts` is replaced by migration `0
 Same command, fixture and model as the baseline above: 77 calls (2 cycles), 939,153 input / 17,501 output tokens, 97.7% cache hits, about 1.9 million tokens per simulated day, 16 memories.
 
 That is within run-to-run noise of the baseline (84 calls, about 2.0 million). As expected, the cutover changed timing, not token use: the brain is still cycle-driven. The token reduction is MVP 4's job. River ended in a different place in each run, so the two runs diverged behaviorally as usual for a live model.
+
+## MVP 2 progress: record and replay
+
+What exists:
+
+- **Command journal** (`sim_commands`): every brain tool call, brain-loop effect (end of cycle, activity labels), human command that changes the world, and outside input (a dream's outcome, each embedding relevance score), with the tick it was admitted on.
+- **Boot snapshot** (`sim_snapshots`, `data/snapshots/`): the database file exactly as the process found it, taken before anything is constructed. Construction and hydration are repeated by replay, so they must not be in the snapshot.
+- **Checkpoints** (`sim_checkpoints`): a hash of the physical state every 300 ticks, in named parts (rng, entities, inventory, me, world, heat, scorch, creatures, body) so a mismatch says where it diverged.
+- **Replay** (`npm run replay` is `tsx scripts/replay.ts <recorded.db>`): restores the snapshot, reruns the journal at the recorded ticks through the same runtime (`src/server/runtime.ts`), and compares every checkpoint. `fetch` is blocked, and the run is offline.
+- **Verification** (`npm run verify:replay -- <seconds> [fixture...]`): records a run of each fixture with human commands, then replays it.
+
+Results on this machine:
+
+| Run | Commands | Checkpoints matched |
+|---|---|---|
+| Mock brain, all 6 fixtures, 45 s each at 10x | 74-200 each | 18/18 each |
+| Real model (`deepseek-flash`), embeddings off, 240 s at 10x | 124 | 96/96 |
+| Real model, real embeddings (Ollama), 240 s at 10x | 136 | 96/96 |
+
+Bugs this found: partial `needs` in my fixtures produced NaN (the hash rejects non-finite numbers); system construction repeated on a post-construction snapshot drew random numbers twice; brain-loop side effects, dream mood shifts and embedding-driven appraisal were unjournaled inputs.
+
+Not done in MVP 2 (do not read the above as meeting its acceptance criteria):
+
+- The 20-seed, three-simulated-day replay requirement. The runs above are minutes long, on 6 fixtures.
+- Command idempotency keys and duplicate rejection; lifecycle fencing so late model answers cannot cross a reset; crash-between-commit testing.
+- Replay across resets, new lives, tool approvals and forging: those commands are not journaled, so a replay segment ends at one.
+- Mid-run snapshots. In-flight timers are closures that a snapshot cannot hold, so only the boot snapshot is faithful. Persistent activities (MVP 3) remove this.
+- Journal stories, reflections and web search results do not touch the hashed state and are not journaled; replay does not reproduce their prose.
+- Emotions, memories and desires are not in the hash; they affect the physical state only through the journaled paths above.

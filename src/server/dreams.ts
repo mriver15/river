@@ -6,6 +6,7 @@ import { chat } from "./llm.ts";
 import { addMemory } from "./memory.ts";
 import { overBudget } from "./usage.ts";
 import { MOCK } from "./agent.ts";
+import { recordCommand, finishCommand, isReplaying } from "./recorder.ts";
 import type { World } from "./world.ts";
 import { simNow } from "./sim.ts";
 
@@ -29,7 +30,7 @@ export function startDreams(w: World, notify: (msg: string) => void, hooks?: Dre
 }
 
 async function dream(w: World, seconds: number, notify: (msg: string) => void, hooks?: DreamHooks) {
-  if (busy || simNow() - lastAt < COOLDOWN_MS) return;
+  if (isReplaying() || busy || simNow() - lastAt < COOLDOWN_MS) return;   // replay applies the recorded dream instead
   if (!MOCK && overBudget()) return;
   const today = w.day(), key = `dreams:${today}`;
   if (kvGet<number>(key, 0) >= cfg("dreams")) return;
@@ -54,11 +55,20 @@ async function dream(w: World, seconds: number, notify: (msg: string) => void, h
       text = String(j.dream ?? "").trim(); insight = String(j.insight ?? "").trim(); shift = Math.max(-8, Math.min(8, Number(j.mood_shift) || 0));
     }
     if (!text) return;
-    lastAt = simNow(); kvSet("lastDream", lastAt); kvSet(key, kvGet<number>(key, 0) + 1);
-    log("dream", `${w.me.name} dreams: ${text}${insight ? `\nOn waking: ${insight}` : ""}`, { seed: seed ?? null });
-    addMemory(`I dreamed: ${text}`, 4, ["dream"], "dream");
-    if (insight) addMemory(insight, 6, ["dream"], "reflection");
-    w.bump({ mood: shift }); hooks?.after();
-    notify(`## You woke from a dream\n"${text}"${insight ? `\nYou wake with a thought: ${insight}` : ""}`);
+    // The model's answer is an outside input: journal it, then apply it through the same path replay uses.
+    const result: DreamResult = { text, insight, shift, seed: seed ?? null, key };
+    const seq = recordCommand("external", "dream", result);
+    applyDream(w, result, notify, hooks);
+    finishCommand(seq, "ok", "");
   } finally { busy = false; }
+}
+
+export interface DreamResult { text: string; insight: string; shift: number; seed: string | null; key: string }
+export function applyDream(w: World, r: DreamResult, notify: (msg: string) => void, hooks?: DreamHooks) {
+  lastAt = simNow(); kvSet("lastDream", lastAt); kvSet(r.key, kvGet<number>(r.key, 0) + 1);
+  log("dream", `${w.me.name} dreams: ${r.text}${r.insight ? `\nOn waking: ${r.insight}` : ""}`, { seed: r.seed });
+  addMemory(`I dreamed: ${r.text}`, 4, ["dream"], "dream");
+  if (r.insight) addMemory(r.insight, 6, ["dream"], "reflection");
+  w.bump({ mood: r.shift }); hooks?.after();
+  notify(`## You woke from a dream\n"${r.text}"${r.insight ? `\nYou wake with a thought: ${r.insight}` : ""}`);
 }

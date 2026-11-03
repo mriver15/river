@@ -14,6 +14,7 @@ import type { Moment } from "../shared/types.ts";
 import { BITTERSWEET, EMOTIONS, EMOTION_ORDER, intensityWord, type EmotionName } from "../shared/emotions.ts";
 import type { World } from "./world.ts";
 import { simNow, every, after } from "./sim.ts";
+import { recordCommand, finishCommand, isReplaying } from "./recorder.ts";
 
 const clamp = (v: number, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
 const clip = (s: string, n = 70) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
@@ -152,6 +153,18 @@ export class Emotions {
   }
   /** 0..1: how much does this text bear on what River cares about? Unknown (no embeddings, nothing cared about yet) is neutral-ish. */
   private async relevanceOf(text: string): Promise<{ r: number; top?: string }> {
+    // The embedding service is an outside input. Live, its answer is journaled when it arrives; in replay it is waited for and supplied.
+    const id = ++this.relId;
+    if (isReplaying()) return new Promise((res) => this.relWaiting.set(id, res));
+    const v = await this.relevanceLive(text);
+    finishCommand(recordCommand("external", "relevance", { id, ...v }), "ok", "");
+    return v;
+  }
+  private relId = 0;
+  private relWaiting = new Map<number, (v: { r: number; top?: string }) => void>();
+  /** Replay: deliver a recorded relevance result to the appraisal that is waiting for it. */
+  resolveRelevance(p: { id: number; r: number; top?: string }) { this.relWaiting.get(p.id)?.({ r: p.r, top: p.top }); this.relWaiting.delete(p.id); }
+  private async relevanceLive(text: string): Promise<{ r: number; top?: string }> {
     await this.refreshConcerns(); if (!this.concerns.length) return { r: 0.35 };
     const q = await embed([text.slice(0, 300)], "query"); if (!q) return { r: 0.35 };
     let best = 0, top: string | undefined;

@@ -19,7 +19,7 @@ async function seed(name: Name) {
     db.prepare("INSERT INTO inventory(id,kind,name,desc,qty,props) VALUES(?,?,?,?,?,?)").run(id, kind, nm, desc, qty, JSON.stringify(props));
   const body = (extra: object) => kvSet("body", { health: 100, infection: 0, born: NOW - 2 * DAY, dead: null, injuries: [], strain: 0, ailment: null, walked: 0, next: 1, ...extra });
 
-  kvSet("seed", 12345); kvSet("epoch", NOW - 0.3 * DAY - 2 * DAY); kvSet("agent", { x: 0, z: 0, heading: 0, needs: { hunger: 0.2, energy: 0.8 }, name: "River" });
+  kvSet("seed", 12345); kvSet("epoch", NOW - 0.3 * DAY - 2 * DAY); kvSet("agent", { x: 0, z: 0, heading: 0, needs: { energy: 90, hunger: 70, mood: 60, curiosity: 70, warmth: 75 }, name: "River" });
   ent("tree_1", "tree", "oak", 6, 4); ent("tree_2", "tree", "birch", -5, 8); ent("rock_1", "rock", "granite boulder", 10, -3);
   kvSet("nextId", 100);
 

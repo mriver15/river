@@ -13,7 +13,9 @@
     "fixtures": "tsx scripts/make-fixtures.ts",
     "db:backup": "tsx scripts/db-backup.ts",
     "test": "node --import tsx --test tests/*.test.ts",
-    "baseline": "tsx scripts/baseline.ts"
+    "baseline": "tsx scripts/baseline.ts",
+    "verify:replay": "tsx scripts/verify-replay.ts",
+    "replay": "tsx scripts/replay.ts"
   },
   "dependencies": {
     "three": "^0.187.0",

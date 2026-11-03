@@ -14,6 +14,7 @@ import { placeNear } from "./places.ts";
 import type { Emotions } from "./emotions.ts";
 import type { World } from "./world.ts";
 import { simNow, simRng, after, cancel, simPaused, simTick, simSpeed } from "./sim.ts";
+import { recordCommand, finishCommand } from "./recorder.ts";
 const sr = simRng("agent");
 
 // Higher than the default 1.0: River converges on obsessions, so it gets a wider spread of choices.
@@ -120,7 +121,7 @@ export class Agent {
         if (this.halted || this.paused) { await this.idle(1000); continue; }
         if (!MOCK && overBudget()) {
           if (!this.budgetNoted) log("system", `Token budget reached (${usageStats().tokensLastHour.toLocaleString()} / ${usageStats().maxTokensPerHour.toLocaleString()} per hour). Dozing until it frees up.`);
-          this.budgetNoted = true; this.w.setActivity("dozing (token budget)");
+          this.budgetNoted = true; this.activity("dozing (token budget)");
           await this.idle(msUntilUnderBudget()); continue;
         }
         this.budgetNoted = false;
@@ -128,7 +129,7 @@ export class Agent {
         this.cycleTimes = this.cycleTimes.filter((t) => t > hourAgo);
         if (this.cycleTimes.length >= maxCyclesNow()) {
           log("system", `Cycle budget reached (${maxCyclesNow()}/hour). Resting until the budget frees up.`);
-          this.w.setActivity("dozing (budget)");
+          this.activity("dozing (budget)");
           await this.idle(Math.max(30_000, this.cycleTimes[0] + 3_600_000 - Date.now()));
           continue;
         }
@@ -137,7 +138,7 @@ export class Agent {
         this.w.me.thinking = true;
         const cyc = MOCK ? this.mockCycle() : this.cycle();
         this.inFlight = cyc.catch(() => {});            // halt() waits on this; real errors still surface through `cyc`
-        await cyc; this.emo.onCycleEnd();
+        await cyc; this.cycleEnd();
         this.errBackoff = 0;
         this.w.me.thinking = false;
         bus.emit("state");
@@ -183,7 +184,7 @@ export class Agent {
   // ---------- LLM cycle ----------
   private async cycle() {
     const messages: ChatMessage[] = [{ role: "system", content: systemPrompt(this.w.me.name) }, { role: "user", content: await this.buildContext() }];
-    this.w.setActivity("thinking");
+    this.activity("thinking");
     for (let step = 0; !cfg("maxSteps") || step < cfg("maxSteps"); step++) {
       if (this.halted) return;
       if (step > 0 && overBudget()) { log("system", "Token budget reached mid-cycle; stopping early."); return; }
@@ -208,8 +209,25 @@ export class Agent {
     log("system", "Reached the step limit for this cycle; will continue next cycle.");
   }
 
-  private async exec(name: string, input: Record<string, any>): Promise<{ content: string; is_error?: boolean }> {
+  /** Things the brain loop does to the world besides tool calls. Journaled, so replay (which has no brain) can repeat them. */
+  private activity(text: string) { this.applyBrain({ type: "set_activity", text }); }
+  private cycleEnd() { this.applyBrain({ type: "cycle_end" }); }
+  applyBrain(c: { type: string; text?: string }) {
+    const seq = recordCommand("brain", c.type, c);
+    if (c.type === "set_activity") this.w.setActivity(c.text ?? "");
+    else if (c.type === "cycle_end") this.emo.onCycleEnd();
+    finishCommand(seq, "ok", "");
+  }
+
+  /** Run one tool call as the character. Every call is journaled (with the tick it started on) so a life can be replayed. */
+  async exec(name: string, input: Record<string, any>): Promise<{ content: string; is_error?: boolean }> {
     if (this.halted) return { content: "Your life is being reset; nothing more happens.", is_error: true };
+    const seq = recordCommand("brain", "tool", { name, input });
+    const out = await this.run1(name, input);
+    finishCommand(seq, out.is_error ? "error" : "ok", out.content);
+    return out;
+  }
+  private async run1(name: string, input: Record<string, any>): Promise<{ content: string; is_error?: boolean }> {
     const tool = findTool(name);
     if (name !== "say" && name !== "remember") log("action", `${name} ${clip(JSON.stringify(input), 200)}`, { tool: name, input });
     if (!tool) return { content: `Unknown tool "${name}". You may need to request it with request_tool.`, is_error: true };

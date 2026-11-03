@@ -10,7 +10,7 @@ import { Streams, type StreamState } from "../sim/random.ts";
 
 export { STEP_MS, DAY_MS };
 
-interface Saved { base: number; tick: number; speed: number; paused: boolean; seed: number; rng: Record<string, StreamState> }
+interface Saved { wall0: number; base: number; tick: number; speed: number; paused: boolean; seed: number; rng: Record<string, StreamState> }
 const saved = kvGet<Saved | null>("sim", null);
 const wallBoot = Date.now();
 
@@ -26,9 +26,11 @@ export const simTick = () => clock.tick;
 export const simPaused = () => clock.paused;
 export const simSpeed = () => clock.speed;
 /** First-boot wall time. Used once, to carry an old wall-clock day phase into the simulation calendar. */
-export const legacyWallBoot = wallBoot;
+export const legacyWallBoot = saved?.wall0 ?? wallBoot;
 
 /** A function drawing from the named seeded stream. Cheap to call repeatedly; the stream is looked up lazily. */
+/** Saved state of every random stream, by key. */
+export const rngState = () => streams.save();
 export const simRng = (key: string) => () => streams.get(key).next();
 
 interface Periodic { name: string; every: number; offset: number; fn: (dtSec: number) => void }
@@ -76,7 +78,7 @@ export function pump(wallMs: number, maxTicks = 100): number {
 export function runTicks(n: number) { for (let i = 0; i < n; i++) step(); }
 
 export function save() {
-  kvSet("sim", { base, tick: clock.tick, speed: clock.speed, paused: clock.paused, seed: streams.seed, rng: streams.save() } satisfies Saved);
+  kvSet("sim", { wall0: legacyWallBoot, base, tick: clock.tick, speed: clock.speed, paused: clock.paused, seed: streams.seed, rng: streams.save() } satisfies Saved);
 }
 export function setSimPaused(p: boolean) { clock.paused = p; save(); }
 /** 1 = the canonical 24-minute day. 2 = a 12-minute day. */
@@ -86,11 +88,28 @@ export const speedForDayMinutes = (minutes: number) => 24 / minutes;
 export function simInfo() { return { tick: clock.tick, speed: clock.speed, paused: clock.paused, lagMs: Math.round(clock.lagMs), systems: systems.length, timers: timers.length }; }
 
 let timer: NodeJS.Timeout | null = null;
-/** Host loop: a monotonic wall timer feeding the accumulator. Lag is carried, never dropped; work per turn is bounded. */
+const drain = () => new Promise<void>((r) => setImmediate(r));
+/**
+ * Host loop: a monotonic wall timer feeding the accumulator. Lag is carried, never dropped; work per turn is bounded.
+ * Each tick is followed by a pass of the event loop, so the continuations of awaited sleeps always finish between ticks:
+ * the same interleaving a replay reproduces.
+ */
 export function start(hz = 40) {
   if (timer) return;
-  let last = performance.now();
-  timer = setInterval(() => { const n = performance.now(); pump(n - last); last = n; }, 1000 / hz);
+  let last = performance.now(), busy = false;
+  timer = setInterval(async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      const t = performance.now(), owed = advanceWall(clock, t - last, 100); last = t;
+      let done = 0;
+      for (; done < owed && !clock.paused; done++) { step(); await drain(); }
+      consumeTicks(clock, done);
+    } finally { busy = false; }
+  }, 1000 / hz);
   for (const sig of ["SIGINT", "SIGTERM"] as const) process.once(sig, () => { save(); process.exit(0); });
 }
 export function stop() { if (timer) clearInterval(timer); timer = null; save(); }
+
+// A fresh clock is written down at once, so a copy of the database taken at boot carries its base time, seed and first-boot wall time.
+if (!saved) save();

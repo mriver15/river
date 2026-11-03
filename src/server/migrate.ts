@@ -22,6 +22,16 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, "tool_requests", "match_score", "REAL");
     },
   },
+  {
+    id: "0003_replay_tables", description: "Command journal, checkpoint hashes and boot snapshots for replay",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS sim_commands (seq INTEGER PRIMARY KEY AUTOINCREMENT, tick INTEGER NOT NULL, source TEXT NOT NULL, type TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'running', result TEXT);
+        CREATE TABLE IF NOT EXISTS sim_checkpoints (tick INTEGER PRIMARY KEY, hash TEXT NOT NULL, parts TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS sim_snapshots (tick INTEGER PRIMARY KEY, file TEXT NOT NULL, hash TEXT NOT NULL, created_at INTEGER NOT NULL);
+      `);
+    },
+  },
 ];
 
 export interface MigrationReport { applied: string[]; alreadyApplied: string[] }
