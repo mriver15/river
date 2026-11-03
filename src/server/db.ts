@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
+import { migrate } from "./migrate.ts";
 
 export const DB_PATH = process.env.RIVER_DB ?? path.join("data", "river.db");
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
@@ -54,8 +55,7 @@ CREATE TABLE IF NOT EXISTS tool_requests (
 );
 `);
 
-// migrations
-for (const stmt of ["ALTER TABLE memories ADD COLUMN embedding BLOB", "ALTER TABLE memories ADD COLUMN x REAL", "ALTER TABLE memories ADD COLUMN z REAL", "ALTER TABLE tool_requests ADD COLUMN matches TEXT", "ALTER TABLE tool_requests ADD COLUMN match_score REAL"]) { try { db.exec(stmt); } catch { /* already applied */ } }
+migrate(db);
 
 export function kvGet<T>(k: string, fallback: T): T {
   const row = db.prepare("SELECT v FROM kv WHERE k = ?").get(k) as { v: string } | undefined;

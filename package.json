@@ -8,7 +8,10 @@
     "dev:client": "vite",
     "build": "tsc --noEmit && vite build",
     "start": "tsx --env-file-if-exists=.env src/server/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "audit": "tsx scripts/audit-nondeterminism.ts --write",
+    "fixtures": "tsx scripts/make-fixtures.ts",
+    "db:backup": "tsx scripts/db-backup.ts"
   },
   "dependencies": {
     "three": "^0.187.0",
