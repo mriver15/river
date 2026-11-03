@@ -4,7 +4,8 @@ import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import { bus, log, logBefore, recentLog } from "./bus.ts";
 import { createRuntime, startSystems, humanCommand, REPLAYABLE } from "./runtime.ts";
-import { recordCommand, finishCommand, snapshotBoot } from "./recorder.ts";
+import { recordCommand, finishCommand, snapshotBoot, admit, recoverCommands } from "./recorder.ts";
+import { afterCommit } from "./sim.ts";
 import * as sim from "./sim.ts";
 import { every, STEP_MS, speedForDayMinutes } from "./sim.ts";
 import { kvGet, kvSet } from "./db.ts";
@@ -34,6 +35,7 @@ import { plantSeed, startDreams } from "./dreams.ts";
 import type { ClientMsg, ServerMsg } from "../shared/types.ts";
 
 const PORT = Number(process.env.PORT ?? 8787);
+recoverCommands();                                // whatever was running when the last process stopped is not running now
 const snap = snapshotBoot();                      // the state replay restores: taken before anything is constructed
 const rt = await createRuntime();
 const { world, emotions, agent, ambient, creatures, story, catalog, wildlife, fire } = rt;
@@ -67,7 +69,8 @@ const server = http.createServer(async (req, res) => {
 // ---------- WebSocket ----------
 const wss = new WebSocketServer({ server, path: "/ws" });
 const send = (ws: WebSocket, m: ServerMsg) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(m));
-const broadcast = (m: ServerMsg) => wss.clients.forEach((c) => send(c, m));
+/** Nothing is announced before it is durable. */
+const broadcast = (m: ServerMsg) => afterCommit(() => wss.clients.forEach((c) => send(c, m)));
 
 const initMsg = (): ServerMsg => ({ t: "init", moments: recentMoments(30), heat: heatCells(), scorch: scorchCells(), seed: world.seed, entities: [...world.entities.values()], agent: world.view(), log: recentLog(300), ...(() => { const { t, ...s } = stateMsg(); return s; })() });
 let resetting = false;
@@ -76,11 +79,16 @@ wss.on("connection", (ws) => {
   send(ws, initMsg()); send(ws, { t: "config", config: configView() });
   ws.on("message", (raw) => {
     let m: ClientMsg; try { m = JSON.parse(String(raw)); } catch { return; }
+    const cid = typeof m.cid === "string" ? m.cid.slice(0, 80) : undefined;
+    const ack = (status: "ok" | "error" | "duplicate", result?: string) => { if (cid) afterCommit(() => send(ws, { t: "ack", cid, status, result })); };
     if (REPLAYABLE.has(m.t)) {
-      const seq = recordCommand("human", m.t, m), r = humanCommand(rt, m);
-      finishCommand(seq, r.notice?.level === "error" ? "error" : "ok", r.notice?.text ?? "");
+      const { cid: _c, ...body } = m, adm = admit("human", m.t, body, cid);
+      if (adm.duplicate) return void ack("duplicate", adm.result);       // already done: report the original outcome, do nothing
+      const r = humanCommand(rt, m), failed = r.notice?.level === "error";
+      finishCommand(adm.seq, failed ? "error" : "ok", r.notice?.text ?? "");
       if (m.t === "config_reset") broadcast({ t: "config", config: configView() });
-      if (r.notice) (r.toAll ? broadcast : (x: ServerMsg) => send(ws, x))({ t: "notice", ...r.notice });
+      if (r.notice) (r.toAll ? broadcast : (x: ServerMsg) => afterCommit(() => send(ws, x)))({ t: "notice", ...r.notice });
+      ack(failed ? "error" : "ok", r.notice?.text);
     } else if (m.t === "approve" || m.t === "deny") {
       const r = decideRequest(m.id, m.t === "approve", m.note, m.t === "approve" ? m.builtin : undefined);
       if (r) {
@@ -100,12 +108,14 @@ wss.on("connection", (ws) => {
       if (!c.ok) return void send(ws, { t: "notice", level: "error", text: c.error! });
       if (resetting) return void send(ws, { t: "notice", level: "error", text: "A reset is already in progress." });
       resetting = true;
+      recordCommand("human", "reset_river", { world: !!m.world }, cid);   // a lifecycle boundary: replay ends here (the code is not kept)
       resetRiver({ world: !!m.world }, { agent, world, ambient, emotions, creatures, story, catalog, wildlife })
         .then((r) => { broadcast(initMsg()); broadcast({ t: "notice", level: "ok", text: `A new River has awakened. Your previous life is saved at ${r.backup}.` }); })
         .catch((e) => send(ws, { t: "notice", level: "error", text: `Reset failed: ${e.message}` }))
         .finally(() => { resetting = false; });
     } else if (m.t === "new_life") {
       if (!bodyApi.isDead()) return void send(ws, { t: "notice", level: "error", text: "River is alive." });
+      recordCommand("human", "new_life", {}, cid);                          // a lifecycle boundary: replay ends here
       if (resetting) return;
       resetting = true;
       resetRiver({ world: false }, { agent, world, ambient, emotions, creatures, story, catalog, wildlife })

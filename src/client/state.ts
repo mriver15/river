@@ -11,7 +11,9 @@ export const ctx = { scene: null as Scene3D | null, audio: null as Ambience | nu
 
 let socket: WebSocket | null = null;
 export const setSocket = (w: WebSocket) => { socket = w; };
-export const send = (m: ClientMsg) => socket?.readyState === 1 && socket.send(JSON.stringify(m));
+/** Each message gets an id, so a retry the server has already seen is not run twice. */
+const makeCid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+export const send = (m: ClientMsg) => socket?.readyState === 1 && socket.send(JSON.stringify({ cid: makeCid(), ...m }));
 
 /** Each tab registers how to (re)draw itself; chrome calls it when the tab is shown or data changes. */
 export const renderers: Record<string, () => void> = {};

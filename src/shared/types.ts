@@ -108,6 +108,7 @@ export type ServerMsg =
   | { t: "fx"; kind: FxKind }
   | { t: "heat"; cells: number[]; scorch: number[] }
   | { t: "notice"; level: "ok" | "error"; text: string }
+  | { t: "ack"; cid: string; status: "ok" | "error" | "duplicate"; result?: string }
   | { t: "score"; title: string; score: Score }
   | { t: "moment"; moment: Moment }
   | { t: "log"; entry: LogEntry }
@@ -117,12 +118,14 @@ export type ServerMsg =
       stats: Stats; selfModel: string };
 export const HEAT_N = 60; // heat grid is HEAT_N x HEAT_N cells over the world
 
-export type ClientMsg =
+/** Every client message may carry `cid`, an id the client makes up. A cid the server has seen is acknowledged as a duplicate and not run again. */
+export type ClientMsg = (
   | { t: "say"; text: string }
   | { t: "approve"; id: number; note?: string; builtin?: string }
   | { t: "deny"; id: number; note?: string }
   | { t: "pause"; paused: boolean }
   | { t: "sim_pause"; paused: boolean }
+  | { t: "sim_speed"; speed: number }
   | { t: "dream_seed"; text: string }
   | { t: "reset_budget" }
   | { t: "reset_river"; code: string; world: boolean }
@@ -137,4 +140,5 @@ export type ClientMsg =
   | { t: "catalog_place"; id: string; x?: number; z?: number }
   | { t: "catalog_retrieve"; id: string }
   | { t: "catalog_add"; name: string; desc: string; text?: string; glow?: boolean; fixed?: boolean; place: boolean }
-  | { t: "catalog_delete"; id: string };
+  | { t: "catalog_delete"; id: string }
+) & { cid?: string };

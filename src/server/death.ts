@@ -9,10 +9,12 @@ import { worn } from "./clothing.ts";
 import type { World } from "./world.ts";
 import type { Agent } from "./agent.ts";
 import { simRng } from "./sim.ts";
+import { beginGeneration } from "./lifecycle.ts";
 const sr = simRng("death");
 
 export function setupDeath(w: World, agent: Agent) {
   bus.on("died", (d: { cause: string; born: number; at: number; x: number; z: number }) => {
+    beginGeneration();                                     // anything still in flight for this life is now stale
     const days = (d.at - d.born) / (24 * 60_000), name = w.me.name;
     const held = [...w.inventory.values()].map((i) => `${i.qty} ${i.name}`), made = works(6).map((x) => x.name), wearing = worn().map((g) => g.name);
     const t = w.worldTime(), when = t < 0.23 || t > 0.78 ? "in the night" : "by day";

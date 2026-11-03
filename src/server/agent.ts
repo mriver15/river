@@ -14,7 +14,8 @@ import { placeNear } from "./places.ts";
 import type { Emotions } from "./emotions.ts";
 import type { World } from "./world.ts";
 import { simNow, simRng, after, cancel, simPaused, simTick, simSpeed } from "./sim.ts";
-import { recordCommand, finishCommand } from "./recorder.ts";
+import { recordCommand, finishCommand, admit } from "./recorder.ts";
+import { lifeGen, isStale, discarded } from "./lifecycle.ts";
 const sr = simRng("agent");
 
 // Higher than the default 1.0: River converges on obsessions, so it gets a wider spread of choices.
@@ -136,9 +137,12 @@ export class Agent {
         this.cycleTimes.push(Date.now()); kvSet("cycleTimes", this.cycleTimes);
         this.cycleCount++; kvSet("cycleCount", this.cycleCount);
         this.w.me.thinking = true;
+        const gen = lifeGen();
         const cyc = MOCK ? this.mockCycle() : this.cycle();
         this.inFlight = cyc.catch(() => {});            // halt() waits on this; real errors still surface through `cyc`
-        await cyc; this.cycleEnd();
+        await cyc;
+        if (isStale(gen)) { discarded("thought cycle"); this.w.me.thinking = false; continue; }
+        this.cycleEnd();
         this.errBackoff = 0;
         this.w.me.thinking = false;
         bus.emit("state");
@@ -183,6 +187,7 @@ export class Agent {
 
   // ---------- LLM cycle ----------
   private async cycle() {
+    const gen = lifeGen();
     const messages: ChatMessage[] = [{ role: "system", content: systemPrompt(this.w.me.name) }, { role: "user", content: await this.buildContext() }];
     this.activity("thinking");
     for (let step = 0; !cfg("maxSteps") || step < cfg("maxSteps"); step++) {
@@ -191,6 +196,7 @@ export class Agent {
       trimOldToolResults(messages);
       const tools = availableTools().map((t) => ({ name: t.name, description: t.description, input_schema: t.input_schema }));
       const r = await chat({ messages, tools, maxTokens: 5000, temperature: this.emo.temperature(cfg("temperature")) });
+      if (isStale(gen)) { discarded("model reply"); return; }
       if (r.truncated) { log("system", "Model spent its whole token allowance thinking and gave no answer this step; moving on."); return; }
       messages.push(r.message);
       if (r.finish === "content_filter") { log("system", "Model output was filtered; skipping this step."); return; }
@@ -202,7 +208,7 @@ export class Agent {
       if (r.text) log("thought", r.text);
 
       for (const c of r.toolCalls) {
-        const out = c.badJson ? { content: "ERROR: your tool arguments were not valid JSON; try again." } : await this.exec(c.name, c.args);
+        const out = c.badJson ? { content: "ERROR: your tool arguments were not valid JSON; try again." } : await this.exec(c.name, c.args, gen, `${gen}:${c.id}`);
         messages.push({ role: "tool", tool_call_id: c.id, content: out.is_error ? `ERROR: ${out.content}` : out.content });
       }
     }
@@ -220,9 +226,12 @@ export class Agent {
   }
 
   /** Run one tool call as the character. Every call is journaled (with the tick it started on) so a life can be replayed. */
-  async exec(name: string, input: Record<string, any>): Promise<{ content: string; is_error?: boolean }> {
+  async exec(name: string, input: Record<string, any>, gen?: number, commandId?: string): Promise<{ content: string; is_error?: boolean }> {
     if (this.halted) return { content: "Your life is being reset; nothing more happens.", is_error: true };
-    const seq = recordCommand("brain", "tool", { name, input });
+    if (gen !== undefined && isStale(gen)) { discarded(`call to ${name}`); return { content: "That belongs to a life that has ended; nothing happens.", is_error: true }; }
+    const adm = admit("brain", "tool", { name, input }, commandId);
+    if (adm.duplicate) return { content: adm.result, is_error: adm.status === "error" };   // a repeat of a call already made: report the original outcome
+    const seq = adm.seq;
     const out = await this.run1(name, input);
     finishCommand(seq, out.is_error ? "error" : "ok", out.content);
     return out;
@@ -251,6 +260,7 @@ export class Agent {
   private async maybeReflect() {
     const due = this.cycleCount % 10 === 0 || importanceSince(this.lastReflect) > 40;
     if (!due || (MOCK && this.cycleCount % 10 !== 0)) return;
+    const gen = lifeGen();
     this.lastReflect = simNow(); kvSet("lastReflect", this.lastReflect);
     decayInterests(); const forgot = forgetStale();
     if (forgot) log("system", `Forgot ${forgot} faded memories.`);
@@ -263,6 +273,7 @@ export class Agent {
       json: true, maxTokens: 5000,
       messages: [{ role: "user", content: prompt + `\n\nRespond with a single JSON object exactly of the form: {"insights": string[], "self_model": string, "interests": [{"topic": string, "why": string}], "new_desires": [{"text": string, "priority": number}], "drop_desire_ids": number[]}` }],
     });
+    if (isStale(gen)) { discarded("reflection"); return; }
     const raw = r0.text;
     if (!raw) return;
     let r: any; try { r = JSON.parse(raw); } catch { log("system", "Reflection returned invalid JSON; skipped."); return; }
@@ -276,7 +287,8 @@ export class Agent {
   // ---------- scripted brain (MOCK_LLM=1) ----------
   private async mockCycle() {
     const w = this.w;
-    const act = async (name: string, input: Record<string, any>) => { const r = await this.exec(name, input); return r; };
+    const gen = lifeGen();
+    const act = async (name: string, input: Record<string, any>) => { const r = await this.exec(name, input, gen); return r; };
     log("thought", ["Hm, what's over there?", "I wonder what that is.", "Let me wander a bit.", "Something catches my eye."][this.cycleCount % 4]);
     if (w.me.needs.energy < 30) { await act("rest", { seconds: 15 }); return; }
     if (w.me.needs.hunger < 35) {

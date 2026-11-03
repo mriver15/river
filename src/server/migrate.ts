@@ -32,6 +32,13 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: "0004_command_ids", description: "Idempotency key on journaled commands",
+    up: (db) => {
+      addColumn(db, "sim_commands", "command_id", "TEXT");
+      db.exec("CREATE UNIQUE INDEX IF NOT EXISTS sim_commands_command_id ON sim_commands(command_id) WHERE command_id IS NOT NULL");
+    },
+  },
 ];
 
 export interface MigrationReport { applied: string[]; alreadyApplied: string[] }

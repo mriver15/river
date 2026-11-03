@@ -15,6 +15,7 @@ import { BITTERSWEET, EMOTIONS, EMOTION_ORDER, intensityWord, type EmotionName }
 import type { World } from "./world.ts";
 import { simNow, every, after } from "./sim.ts";
 import { recordCommand, finishCommand, isReplaying } from "./recorder.ts";
+import { lifeGen, isStale, discarded } from "./lifecycle.ts";
 
 const clamp = (v: number, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
 const clip = (s: string, n = 70) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
@@ -152,11 +153,12 @@ export class Emotions {
     const vs = texts.length ? await embed(texts, "document") : []; this.concerns = vs ? texts.map((t, i) => ({ text: t, v: vs[i] })) : [];
   }
   /** 0..1: how much does this text bear on what River cares about? Unknown (no embeddings, nothing cared about yet) is neutral-ish. */
-  private async relevanceOf(text: string): Promise<{ r: number; top?: string }> {
+  private async relevanceOf(text: string): Promise<{ r: number; top?: string } | null> {
     // The embedding service is an outside input. Live, its answer is journaled when it arrives; in replay it is waited for and supplied.
     const id = ++this.relId;
     if (isReplaying()) return new Promise((res) => this.relWaiting.set(id, res));
-    const v = await this.relevanceLive(text);
+    const gen = lifeGen(), v = await this.relevanceLive(text);
+    if (isStale(gen)) { discarded("appraisal"); return null; }          // the life it was about has ended
     finishCommand(recordCommand("external", "relevance", { id, ...v }), "ok", "");
     return v;
   }
@@ -186,6 +188,7 @@ export class Emotions {
     if (o.ambiguous && (this.level.dread > 0.25 || this.arousal() > 0.55)) { emotion = "dread"; base = 0.15 + 0.3 * this.arousal(); why = `${o.why}, and in the state you were in it felt like a threat`; title = `${o.why}, and it felt like a threat`; }
     const hab = o.habit === false ? { f: 1, first: false } : this.habituate(o.key);
     const rel = await this.relevanceOf(o.text);
+    if (!rel) return;                                   // stale: the life this was about has ended
     const carry = 1 + 0.5 * this.arousal();
     let amt = Math.min(base * hab.f * (0.7 + 0.8 * rel.r) * carry * (hab.first ? 1.4 : 1), base * 2.5, 0.9);
     if (rel.r > 0.6 && rel.top && amt > 0.1) why += ` (it touches on “${clip(rel.top, 40)}”)`;

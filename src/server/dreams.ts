@@ -7,6 +7,7 @@ import { addMemory } from "./memory.ts";
 import { overBudget } from "./usage.ts";
 import { MOCK } from "./agent.ts";
 import { recordCommand, finishCommand, isReplaying } from "./recorder.ts";
+import { lifeGen, isStale, discarded } from "./lifecycle.ts";
 import type { World } from "./world.ts";
 import { simNow } from "./sim.ts";
 
@@ -35,6 +36,7 @@ async function dream(w: World, seconds: number, notify: (msg: string) => void, h
   const today = w.day(), key = `dreams:${today}`;
   if (kvGet<number>(key, 0) >= cfg("dreams")) return;
   busy = true;
+  const gen = lifeGen();
   try {
     // some recent, some random older: dreams recombine
     const recent = db.prepare("SELECT text FROM memories WHERE kind != 'dream' ORDER BY id DESC LIMIT 3").all() as any[];
@@ -55,6 +57,7 @@ async function dream(w: World, seconds: number, notify: (msg: string) => void, h
       text = String(j.dream ?? "").trim(); insight = String(j.insight ?? "").trim(); shift = Math.max(-8, Math.min(8, Number(j.mood_shift) || 0));
     }
     if (!text) return;
+    if (isStale(gen)) { discarded("dream"); return; }
     // The model's answer is an outside input: journal it, then apply it through the same path replay uses.
     const result: DreamResult = { text, insight, shift, seed: seed ?? null, key };
     const seq = recordCommand("external", "dream", result);

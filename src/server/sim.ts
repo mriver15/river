@@ -4,7 +4,7 @@
 //   after(ms, fn) / simSleep(ms)   one-shot callbacks and awaitable sleeps, resolved by the tick loop
 //   simRng(key)   seeded stream; states persist with the clock
 // Wall time only feeds the accumulator in `start()`. Operational timers (API timeouts, token budgets, socket pushes) stay on setTimeout.
-import { kvGet, kvSet } from "./db.ts";
+import { db, kvGet, kvSet } from "./db.ts";
 import { STEP_MS, DAY_MS, newClock, advanceWall, consumeTicks, ticksFor } from "../sim/clock.ts";
 import { Streams, type StreamState } from "../sim/random.ts";
 
@@ -64,7 +64,6 @@ function step() {
     if ((clock.tick + s.offset) % s.every !== 0) continue;
     try { s.fn((s.every * STEP_MS) / 1000); } catch (e) { errorHook(s.name, e); }
   }
-  if (clock.tick % 10 === 0) save();
 }
 
 /** Run the ticks owed for `wallMs` of wall time, at most `maxTicks`. Returns the number run. */
@@ -87,6 +86,24 @@ export const speedForDayMinutes = (minutes: number) => 24 / minutes;
 
 export function simInfo() { return { tick: clock.tick, speed: clock.speed, paused: clock.paused, lagMs: Math.round(clock.lagMs), systems: systems.length, timers: timers.length }; }
 
+// ---- durability: one transaction per host turn ----
+// Writes made by ticks, by the continuations between ticks and by commands arriving between turns share one open transaction, which
+// is committed at the end of each turn together with the clock itself. A crash therefore leaves the last committed turn, whole.
+// Acknowledgements and broadcasts wait for the commit, so nothing is announced that a restart could take back.
+let txOpen = false, txSuspended = false;
+const afterQ: (() => void)[] = [];
+function beginTx() { if (!txOpen && !txSuspended) { db.exec("BEGIN"); txOpen = true; } }
+export function commitTx() {
+  if (txOpen) { save(); db.exec("COMMIT"); txOpen = false; }
+  for (const f of afterQ.splice(0)) { try { f(); } catch (e) { errorHook("after-commit", e); } }
+  beginTx();
+}
+/** Run `fn` once what has been written so far is durable (immediately if no transaction is open). */
+export function afterCommit(fn: () => void) { if (txOpen) afterQ.push(fn); else fn(); }
+/** Operations that cannot run inside a transaction (VACUUM, their own BEGIN) bracket themselves with these. */
+export function suspendTx() { txSuspended = true; commitTx(); }
+export function resumeTx() { txSuspended = false; beginTx(); }
+
 let timer: NodeJS.Timeout | null = null;
 const drain = () => new Promise<void>((r) => setImmediate(r));
 /**
@@ -97,6 +114,7 @@ const drain = () => new Promise<void>((r) => setImmediate(r));
 export function start(hz = 40) {
   if (timer) return;
   let last = performance.now(), busy = false;
+  beginTx();
   timer = setInterval(async () => {
     if (busy) return;
     busy = true;
@@ -105,11 +123,12 @@ export function start(hz = 40) {
       let done = 0;
       for (; done < owed && !clock.paused; done++) { step(); await drain(); }
       consumeTicks(clock, done);
+      commitTx();
     } finally { busy = false; }
   }, 1000 / hz);
-  for (const sig of ["SIGINT", "SIGTERM"] as const) process.once(sig, () => { save(); process.exit(0); });
+  for (const sig of ["SIGINT", "SIGTERM"] as const) process.once(sig, () => { if (txOpen) { save(); db.exec("COMMIT"); } else save(); process.exit(0); });
 }
-export function stop() { if (timer) clearInterval(timer); timer = null; save(); }
+export function stop() { if (timer) clearInterval(timer); timer = null; if (txOpen) { save(); db.exec("COMMIT"); txOpen = false; } else save(); }
 
 // A fresh clock is written down at once, so a copy of the database taken at boot carries its base time, seed and first-boot wall time.
 if (!saved) save();

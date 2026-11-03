@@ -18,9 +18,25 @@ let replaying = false;
 export const setReplaying = (on: boolean) => { replaying = on; };
 export const isReplaying = () => replaying;
 
-export function recordCommand(source: "brain" | "human" | "external", type: string, payload: unknown): number {
+export function recordCommand(source: "brain" | "human" | "external", type: string, payload: unknown, commandId?: string): number {
   if (!recording) return 0;
-  return Number(db.prepare("INSERT INTO sim_commands(tick, source, type, payload) VALUES(?,?,?,?)").run(simTick(), source, type, JSON.stringify(payload)).lastInsertRowid);
+  return Number(db.prepare("INSERT INTO sim_commands(tick, source, type, payload, command_id) VALUES(?,?,?,?,?)").run(simTick(), source, type, JSON.stringify(payload), commandId ?? null).lastInsertRowid);
+}
+/**
+ * Idempotent admission. A command id seen before is not run again: the caller gets the original outcome back.
+ * `seq` is the new journal row for a first-time command.
+ */
+export type Admission = { duplicate: false; seq: number } | { duplicate: true; status: string; result: string };
+export function admit(source: "brain" | "human", type: string, payload: unknown, commandId?: string): Admission {
+  if (commandId) {
+    const row = db.prepare("SELECT status, result FROM sim_commands WHERE command_id = ?").get(commandId) as { status: string; result: string | null } | undefined;
+    if (row) return { duplicate: true, status: row.status, result: row.result ?? "" };
+  }
+  return { duplicate: false, seq: recordCommand(source, type, payload, commandId) };
+}
+/** After a restart nothing that was running is still running. */
+export function recoverCommands(): number {
+  return Number(db.prepare("UPDATE sim_commands SET status = 'interrupted' WHERE status = 'running'").run().changes);
 }
 export function finishCommand(seq: number, status: "ok" | "error", result: string) {
   if (seq) db.prepare("UPDATE sim_commands SET status=?, result=? WHERE seq=?").run(status, result.slice(0, 2000), seq);
@@ -65,7 +81,7 @@ export function checkpoint(w: World) {
  */
 export function snapshotBoot(): { tick: number; file: string; hash: string } {
   saveSim();
-  const tick = simTick(), dir = path.join(path.dirname(DB_PATH), "snapshots"), file = path.join(dir, `snapshot-${tick}.db`);
+  const tick = simTick(), dir = path.join(path.dirname(DB_PATH), "snapshots"), file = path.join(dir, `${path.basename(DB_PATH)}.snapshot-${tick}.db`);   // named for its database: several worlds may share a directory
   fs.mkdirSync(dir, { recursive: true }); fs.rmSync(file, { force: true });
   db.prepare("VACUUM INTO ?").run(file);
   const hash = createHash("sha256").update(fs.readFileSync(file)).digest("hex");

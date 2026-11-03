@@ -67,7 +67,7 @@ export function startSystems(rt: Runtime) {
 }
 
 /** Human commands that change the world. Live and replay both run them through here. */
-export const REPLAYABLE = new Set(["say", "skip_day", "config_set", "config_reset", "sim_pause", "gift", "catalog_add", "catalog_place", "catalog_retrieve", "catalog_delete"]);
+export const REPLAYABLE = new Set(["say", "skip_day", "config_set", "config_reset", "sim_pause", "sim_speed", "gift", "catalog_add", "catalog_place", "catalog_retrieve", "catalog_delete"]);
 export interface HumanResult { notice?: { level: "ok" | "error"; text: string }; toAll?: boolean }
 
 export function humanCommand(rt: Runtime, m: ClientMsg): HumanResult {
@@ -90,6 +90,7 @@ export function humanCommand(rt: Runtime, m: ClientMsg): HumanResult {
       case "config_set": return setConfig(String(m.key), m.value) ? {} : { notice: { level: "error", text: `Unknown or invalid setting: ${m.key}` } };
       case "config_reset": resetConfig(); log("system", "Settings reset to defaults."); return {};
       case "sim_pause": setSimPaused(!!m.paused); log("system", m.paused ? "The world was frozen by a human." : "The world was thawed by a human."); bus.emit("state"); return {};
+      case "sim_speed": setSimSpeed(Number(m.speed)); log("system", `World speed set to ${Number(m.speed)}x.`); return {};
       case "gift": {
         if (!m.name?.trim()) return {};
         const id = catalog.add({ name: m.name, desc: m.desc || "A gift left by the human." }), at = catalog.place(id);

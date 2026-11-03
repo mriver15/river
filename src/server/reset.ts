@@ -5,6 +5,8 @@ import { bodyApi } from "./body.ts";
 import fs from "node:fs";
 import path from "node:path";
 import { DB_PATH, db, kvGet } from "./db.ts";
+import { beginGeneration, persistGeneration } from "./lifecycle.ts";
+import { suspendTx, resumeTx } from "./sim.ts";
 import { log } from "./bus.ts";
 import { clearMemoryCaches } from "./memory.ts";
 import { resetDreams } from "./dreams.ts";
@@ -36,7 +38,7 @@ function backup(): string {
   return rel.startsWith("..") ? file : rel;
 }
 
-export async function resetRiver(opts: { world: boolean }, d: { agent: Agent; world: World; ambient: Ambient; emotions: Emotions; creatures: Creatures; story: Story; catalog: Catalog; wildlife?: { reset(): void } }): Promise<{ backup: string }> {
+async function resetInner(opts: { world: boolean }, d: { agent: Agent; world: World; ambient: Ambient; emotions: Emotions; creatures: Creatures; story: Story; catalog: Catalog; wildlife?: { reset(): void } }): Promise<{ backup: string }> {
   const file = backup();
   log("system", `A new River is beginning. Database backed up to ${file}.`);
   await d.agent.halt();                                       // let the current cycle finish; nothing new starts
@@ -63,4 +65,14 @@ export async function resetRiver(opts: { world: boolean }, d: { agent: Agent; wo
   log("system", `A new River awakens${opts.world ? " on a new island" : ""}.`);
   void kvGet;                                                 // (kv helpers re-seed themselves lazily)
   return { backup: file };
+}
+
+/**
+ * A new life. Starts a new generation first, so every in-flight model answer, dream and appraisal from the old life is discarded when it lands.
+ * The clock's open transaction is committed and held off meanwhile: the backup and the wipe manage their own.
+ */
+export async function resetRiver(...args: Parameters<typeof resetInner>) {
+  beginGeneration(); suspendTx();
+  try { return await resetInner(...args); }
+  finally { persistGeneration(); resumeTx(); }
 }

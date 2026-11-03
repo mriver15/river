@@ -15,7 +15,9 @@
     "test": "node --import tsx --test tests/*.test.ts",
     "baseline": "tsx scripts/baseline.ts",
     "verify:replay": "tsx scripts/verify-replay.ts",
-    "replay": "tsx scripts/replay.ts"
+    "replay": "tsx scripts/replay.ts",
+    "crash-test": "tsx scripts/crash-test.ts",
+    "soak": "tsx scripts/soak-replay.ts"
   },
   "dependencies": {
     "three": "^0.187.0",

@@ -9,6 +9,7 @@ export const db = new DatabaseSync(DB_PATH);
 
 db.exec(`
 PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;   -- WAL + NORMAL survives a process crash intact; only a power cut can lose the last few commits
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL, data TEXT

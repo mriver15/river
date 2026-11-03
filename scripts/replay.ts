@@ -34,7 +34,11 @@ setRecording(false); setReplaying(true);
 
 const cmds = commandsFrom(src as any, snap.tick);
 const liveCps = new Map((src.prepare("SELECT tick, hash, parts FROM sim_checkpoints WHERE tick > ? ORDER BY tick").all(snap.tick) as any[]).map((r) => [r.tick as number, r]));
-const endTick = Math.max(0, ...liveCps.keys());
+// A reset or a new life wipes the world the snapshot describes: replay covers the segment before the first one.
+const boundary = cmds.find((c) => c.type === "reset_river" || c.type === "new_life");
+const usable = [...liveCps.keys()].filter((t) => !boundary || t <= boundary.tick);
+const endTick = Math.max(0, ...usable);
+for (const t of [...liveCps.keys()]) if (t > endTick) liveCps.delete(t);
 
 const rt = await createRuntime();
 startSystems(rt);
