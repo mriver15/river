@@ -1,5 +1,5 @@
 // TEST_ARGS: {"landmark":"monolith","minutes":10}
-import { ToolError, obj, num, str, type ToolDef } from "../toolkit.ts";
+import { ToolError, obj, num, str, type ToolDef, rand, wait } from "../toolkit.ts";
 
 const STARS = [
   { name: "the Lantern", d: "amber, unwavering" },
@@ -39,7 +39,7 @@ const stargaze: ToolDef = {
     }
 
     w.setActivity("stargazing");
-    await new Promise((r) => setTimeout(r, Math.min(9000, 900 + min * 300)));
+    await wait(Math.min(9000, 900 + min * 300));
     w.bump({ energy: -Math.ceil(min / 6), curiosity: -Math.min(20, 4 + min / 2), mood: 4 });
 
     // Visible stars scale with time watched.
@@ -57,12 +57,12 @@ const stargaze: ToolDef = {
 
     const bearings = ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"];
     for (const s of picked) {
-      const bearing = bearings[Math.floor(Math.random() * bearings.length)];
-      const height = 15 + Math.floor(Math.random() * 60);
+      const bearing = bearings[Math.floor(rand() * bearings.length)];
+      const height = 15 + Math.floor(rand() * 60);
       lines.push(`— ${s.name}, ${s.d}, ${bearing} and ${height}° above the horizon.`);
     }
 
-    if (min >= 8 && Math.random() < 0.6) {
+    if (min >= 8 && rand() < 0.6) {
       const s = picked[0];
       lines.push(`After a while you notice ${s.name} has moved a hand's width. Time is passing up there, same as down here.`);
     }

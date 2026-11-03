@@ -3,6 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import { bus, log, logBefore, recentLog } from "./bus.ts";
+import * as sim from "./sim.ts";
+import { every, STEP_MS, speedForDayMinutes } from "./sim.ts";
 import { kvGet, kvSet } from "./db.ts";
 import { cfg, configView, onConfig, resetConfig, setConfig } from "./config.ts";
 import { search, addMemory, embedPending, embeddingCoverage, setLocator } from "./memory.ts";
@@ -139,6 +141,7 @@ wss.on("connection", (ws) => {
       install(m.name).then((f) => { if (f) { agent.notify(`Your new tool "${f.name}" has been built and is now usable. Try it!`); addMemory(`The tool "${f.name}" was built for me and is now available.`, 7, ["tools"]); } });
     } else if (m.t === "reject") reject(m.name);
     else if (m.t === "pause") agent.setPaused(m.paused);
+    else if (m.t === "sim_pause") { sim.setSimPaused(!!m.paused); log("system", m.paused ? "The world was frozen by a human." : "The world was thawed by a human."); bus.emit("state"); }
     else if (m.t === "gift" && m.name?.trim()) {
       const id = catalog.add({ name: m.name, desc: m.desc || "A gift left by the human." }), at = catalog.place(id);
       log("human", `Human left a gift nearby: ${m.name}`); emotions.contact(0.5); emotions.bump("wonder", 0.3, "a gift appeared"); arrived(m.name, at);
@@ -157,7 +160,7 @@ const announce = () => bus.emit("state");
 // settings: tell every client, and make the ones that need a nudge take effect now
 onConfig((key, _v, old) => {
   broadcast({ t: "config", config: configView() });
-  if (key === "dayMinutes") world.rebaseDay(Number(old) * 60_000);
+  if (key === "dayMinutes") sim.setSimSpeed(speedForDayMinutes(Number(_v)));   // day length is the clock speed; the calendar never moves
   if (key === "weather" && !cfg("weather")) { world.weather = "clear"; kvSet("weather", { w: "clear", until: 0 }); }
   if (key === "predators" || key === "smallWild") wildlife.refresh();
   if (key === "prey") ambient.refreshWildlife();
@@ -175,13 +178,14 @@ let stateTimer: NodeJS.Timeout | null = null;
 bus.on("state", () => { stateTimer ??= setTimeout(() => { stateTimer = null; broadcast(stateMsg()); }, 150); });
 
 // ---------- loops ----------
-let last = Date.now();
-setInterval(() => { const n = Date.now(), dt = Math.min(0.5, (n - last) / 1000); last = n; world.tick(dt); }, 100);
+every(STEP_MS, () => world.tick(STEP_MS / 1000), "world");   // first registered, so it runs first each tick
+sim.setSimSpeed(speedForDayMinutes(cfg("dayMinutes")));
 setInterval(() => broadcast({ t: "agent", agent: world.view() }), 200);
 setInterval(() => bus.emit("state"), 5000); // needs/stats refresh
 
 server.listen(PORT, () => {
   console.log(`River world on http://localhost:${PORT}  (dev client: http://localhost:5173)`);
+  sim.start();
   agent.run();
   ambient.start();
   fire.start();

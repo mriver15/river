@@ -7,21 +7,23 @@ import { HALF, heightAt, isLand } from "../shared/noise.ts";
 import type { Emotions } from "./emotions.ts";
 import type { Entity, KeeperView } from "../shared/types.ts";
 import type { World } from "./world.ts";
+import { simNow, simRng, every } from "./sim.ts";
+const sr = simRng("story");
 
 type At = { x: number; z: number };
 interface Beat { kind: string; text: string; make: (w: World, near: At) => Entity | null }
-const rand = (a: number, b: number) => a + Math.random() * (b - a);
+const rand = (a: number, b: number) => a + sr() * (b - a);
 
 const find = (w: World, kind: string) => [...w.entities.values()].find((e) => e.kind === kind);
 /** a shore point 20-70m from River if one exists, else anywhere on a shore */
 function shore(w: World, near: At): At | null {
   for (let pass = 0; pass < 2; pass++) for (let i = 0; i < 500; i++) {
-    const a = Math.random() * Math.PI * 2, r = pass === 0 ? rand(20, 70) : rand(5, HALF), x = (pass === 0 ? near.x : 0) + Math.cos(a) * r, z = (pass === 0 ? near.z : 0) + Math.sin(a) * r, h = heightAt(x, z, w.seed);
+    const a = sr() * Math.PI * 2, r = pass === 0 ? rand(20, 70) : rand(5, HALF), x = (pass === 0 ? near.x : 0) + Math.cos(a) * r, z = (pass === 0 ? near.z : 0) + Math.sin(a) * r, h = heightAt(x, z, w.seed);
     if (isLand(x, z, w.seed) && h > 0.3 && h < 1.1) return { x, z };
   } return null;
 }
 function inland(w: World, near: At, min = 18, max = 55): At | null {
-  for (let i = 0; i < 400; i++) { const a = Math.random() * Math.PI * 2, r = rand(min, max), x = near.x + Math.cos(a) * r, z = near.z + Math.sin(a) * r; if (isLand(x, z, w.seed) && heightAt(x, z, w.seed) > 1.2) return { x, z }; }
+  for (let i = 0; i < 400; i++) { const a = sr() * Math.PI * 2, r = rand(min, max), x = near.x + Math.cos(a) * r, z = near.z + Math.sin(a) * r; if (isLand(x, z, w.seed) && heightAt(x, z, w.seed) > 1.2) return { x, z }; }
   return null;
 }
 const bottle = (text: string) => (w: World, near: At): Entity | null => {
@@ -29,7 +31,7 @@ const bottle = (text: string) => (w: World, near: At): Entity | null => {
   return w.spawn("item", "sealed bottle", p.x, p.z, { takeable: true, item: "bottle", itemName: "sealed bottle", desc: "A glass bottle sealed with wax, a rolled scrap of paper inside. The hand on it is careful.", text });
 };
 const book = (title: string, topic: string, text: string) => (w: World): Entity | null => {
-  const l = find(w, "library"); if (!l) return null; const a = Math.random() * Math.PI * 2;
+  const l = find(w, "library"); if (!l) return null; const a = sr() * Math.PI * 2;
   return w.spawn("book", `book: ${title}`, l.x + Math.cos(a) * 1.6, l.z + Math.sin(a) * 1.6, { takeable: true, item: "book", desc: `A hand-bound logbook, "${title}". The paper is salt-stiff but legible.`, text, topic, title });
 };
 
@@ -43,7 +45,7 @@ const BEATS: Beat[] = [
   { kind: "bottle", text: "The hum began on the ninth night. I thought it was the generator. There is no generator. I have stopped sleeping near the stone and started sleeping near the stone.", make: bottle("The hum began on the ninth night. I thought it was the generator. There is no generator. I have stopped sleeping near the stone and started sleeping near the stone.") },
   { kind: "book", text: "Keeper's Log, vol. 1. \"Hum: A. Nine nights. It answers when I hum back, but only if I hold the note long enough to be slightly wrong. Then it comes up to meet me, the way a dog does at its name.\"", make: book("Keeper's Log, vol. 1", "the hum", "Hum: A. Nine nights. It answers when I hum back, but only if I hold the note long enough to be slightly wrong. Then it comes up to meet me, the way a dog does at its name.") },
   { kind: "mark", text: "Seventeen strokes in a neat column cut into the monolith's base, each by the same hand. The last is shallower than the rest, as if the cutter had been tired, or tender.", make: (w) => {
-      const m = find(w, "monolith"); if (!m) return null; const a = Math.random() * Math.PI * 2;
+      const m = find(w, "monolith"); if (!m) return null; const a = sr() * Math.PI * 2;
       return w.spawn("trace", "column of strokes", m.x + Math.cos(a) * 1.6, m.z + Math.sin(a) * 1.6, { desc: "Seventeen strokes in a neat column cut into the stone's base, each by the same hand. The last is shallower than the rest, as if the cutter had been tired, or tender." });
     } },
   { kind: "bottle", text: "It dropped today. A half tone. I wrote the date. I do not know what I am measuring, but I cannot stop measuring it.", make: bottle("It dropped today. A half tone. I wrote the date. I do not know what I am measuring, but I cannot stop measuring it.") },
@@ -66,17 +68,17 @@ const fresh = (): State => ({ placed: [], found: [], lastAt: 0, complete: false 
 
 export class Story {
   private s: State = kvGet<State>("story", fresh());
-  private startedAt = Date.now();
+  private startedAt = simNow();
   /** Off until the human switches the Keeper's trail on (a world that was already telling it keeps going). */
   enabled = kvGet<boolean>("storyOn", kvGet<State>("story", fresh()).placed.length > 0);
   emotions?: Emotions;
   constructor(private w: World) {}
-  start() { setInterval(() => this.tick(), 30_000); }
-  reset() { this.s = fresh(); this.enabled = false; this.startedAt = Date.now(); kvSet("story", this.s); kvSet("storyOn", false); }
+  start() { every(30_000, () => this.tick(), "story"); }
+  reset() { this.s = fresh(); this.enabled = false; this.startedAt = simNow(); kvSet("story", this.s); kvSet("storyOn", false); }
   setEnabled(on: boolean) {
     if (on === this.enabled) return;
     this.enabled = on; kvSet("storyOn", on);
-    if (on) this.startedAt = Date.now();
+    if (on) this.startedAt = simNow();
     else { for (const e of [...this.w.entities.values()]) if (e.props.beat) this.w.removeEntity(e.id); this.s = fresh(); kvSet("story", this.s); }     // put the whole story back in the box
     bus.emit("state");
   }
@@ -86,13 +88,13 @@ export class Story {
     const s = this.s, w = this.w; if (!this.enabled || s.complete || s.placed.length >= BEATS.length) return;
     const idx = s.placed.length + 1, out = s.placed.filter((i) => !s.found.includes(i)).length, pace = Number(process.env.STORY_PACE ?? 1);
     const gap = ((s.placed.length === 0 ? 4 : 14) * 60_000) / pace;
-    if (out >= 2 || Date.now() - Math.max(s.lastAt, this.startedAt) < gap) return;
+    if (out >= 2 || simNow() - Math.max(s.lastAt, this.startedAt) < gap) return;
     if (idx === BEATS.length && s.found.length < BEATS.length - 1) return;              // the last piece waits until the rest are understood
     if ((this.emotions?.arousal() ?? 0) > 0.55 || w.me.sleeping) return;                // not in the middle of something intense
     const e = BEATS[idx - 1].make(w, w.me); if (!e) return;
     e.props.beat = idx; w.putEntity(e);
     // the camp and the lean-to carry their scenery: mark any companions too so finding either counts
-    s.placed.push(idx); s.lastAt = Date.now(); this.save();
+    s.placed.push(idx); s.lastAt = simNow(); this.save();
     log("system", `The Keeper's trail: piece ${idx} of ${BEATS.length} has been left somewhere on the island (${BEATS[idx - 1].kind}).`);
   }
 

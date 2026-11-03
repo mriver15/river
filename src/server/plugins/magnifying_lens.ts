@@ -1,6 +1,6 @@
 // TEST_ARGS: {"stone":"smooth stone"}
 import { log } from "../bus.ts";
-import { ToolError, obj, str, type ToolDef } from "../toolkit.ts";
+import { ToolError, obj, str, type ToolDef, wait, rand } from "../toolkit.ts";
 
 const DETAILS = [
   "One bundle of twelve is cut left-handed — every stroke leans the other way. A different hand, or the same hand standing on the other side.",
@@ -10,7 +10,6 @@ const DETAILS = [
   "There is one bundle of thirteen. Every other is twelve. You check it three times and it stays thirteen.",
 ];
 
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const looksLikeLens = (it: any) =>
   /lens|clear|glass|quartz|crystal|polish/i.test(`${it.name} ${it.desc ?? ""}`);
 
@@ -51,7 +50,7 @@ const magnifyingLens: ToolDef = {
       if (!(s.kind === "stone" || /stone|flint|quartz/i.test(s.name)))
         throw new ToolError(`${s.name} won't grind down clear. You need a stone — something hard and fine-grained.`);
       w.setActivity("grinding a stone lens");
-      await sleep(8000);
+      await wait(8000);
       w.takeItem(s.id, 1);
       w.bump({ energy: -6, mood: -2 });
       w.addItem("crafted", "ground lens", "A disc of stone ground thin and wet-polished; light bends through its middle and makes small things large.", 1, { lens: true });
@@ -71,7 +70,7 @@ const magnifyingLens: ToolDef = {
     if (!p.tally) { p.tally = 9 * 12 + 1; p.bundles = 10; }
     p.readings = Array.isArray(p.readings) ? p.readings : [];
     const fresh = DETAILS.filter((d) => !p.readings.includes(d));
-    const detail = fresh.length ? fresh[Math.floor(Math.random() * fresh.length)] : null;
+    const detail = fresh.length ? fresh[Math.floor(rand() * fresh.length)] : null;
     if (detail) p.readings.push(detail);
     p.fine_read = true;
     p.read_by = p.read_by ?? "River";
@@ -79,7 +78,7 @@ const magnifyingLens: ToolDef = {
     w.putEntity(mono);
 
     w.setActivity("reading the fine scratches");
-    await sleep(5500);
+    await wait(5500);
     w.bump(first ? { energy: -3, curiosity: -18, mood: 8 } : { energy: -2, curiosity: -5, mood: 3 });
 
     if (first) {

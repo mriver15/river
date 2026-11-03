@@ -1,6 +1,6 @@
 // TEST_ARGS: {"action":"light","with":"stick","stone":"stone"}
 import { log } from "../bus.ts";
-import { ToolError, obj, str, num, type ToolDef } from "../toolkit.ts";
+import { ToolError, obj, str, num, type ToolDef, wait } from "../toolkit.ts";
 
 const FUEL_MAX = 12;
 const STICK_FUEL = 3;
@@ -51,7 +51,7 @@ const fire: ToolDef = {
         made = true;
       }
       w.setActivity(ember ? "coaxing an ember to flame" : "striking a spark");
-      await new Promise((r) => setTimeout(r, ember ? 3000 : 7000));
+      await wait(ember ? 3000 : 7000);
       w.bump({ energy: ember ? -2 : -7, mood: 6, curiosity: 2 });
       if (ember) w.takeItem(main.id, 1); else w.takeItem(kindling!.id, 1);
       const fuel = ember ? 2 : STICK_FUEL;
@@ -74,7 +74,7 @@ const fire: ToolDef = {
       if (cur >= FUEL_MAX) throw new ToolError(`The fire (${fireEnt.id}) is already banked as high as it will safely go.`);
       const n = Math.min(qty, feed.qty);
       w.setActivity("feeding the fire");
-      await new Promise((r) => setTimeout(r, 2000 + n * 600));
+      await wait(2000 + n * 600);
       w.takeItem(feed.id, n);
       const fuel = Math.min(FUEL_MAX, cur + n * STICK_FUEL);
       const p = (fireEnt.props ??= {});
@@ -94,7 +94,7 @@ const fire: ToolDef = {
       const n = Math.min(qty, it.qty), fuel = fuelOf(fireEnt);
       if (fuel < n) throw new ToolError(`The fire has ${fuel} fuel and needs ${n} to roast that. Feed it a stick first.`);
       w.setActivity("roasting over the fire");
-      await new Promise((r) => setTimeout(r, 3000 + n * 800));
+      await wait(3000 + n * 800);
       w.takeItem(it.id, n);
       w.addItem(it.kind, `roasted ${it.name}`, `Hot from the fire: ${it.name}, softened and sweet, the rawness singed out of it.`, n, { cooked: true });
       (fireEnt.props ??= {}).fuel = fuel - n;
@@ -108,7 +108,7 @@ const fire: ToolDef = {
       const fuel = fuelOf(fireEnt);
       if (fuel < 3) throw new ToolError(`The fire has only ${fuel} fuel — it can't spare an ember. Feed it a stick or two first.`);
       w.setActivity("drawing an ember");
-      await new Promise((r) => setTimeout(r, 2500));
+      await wait(2500);
       (fireEnt.props ??= {}).fuel = fuel - 2;
       w.putEntity(fireEnt);
       w.addItem("crafted", "glowing coal", "An ember from River's fire, nested in a curl of bark. It glows steadily and will light a new fire without a stone.", 1, { coal: true });
@@ -120,7 +120,7 @@ const fire: ToolDef = {
       if (!fireEnt) throw new ToolError("There's no fire here to put out.");
       if (!isLit(fireEnt)) throw new ToolError(`The fire (${fireEnt.id}) is already out.`);
       w.setActivity("smothering the fire");
-      await new Promise((r) => setTimeout(r, 2500));
+      await wait(2500);
       const p = (fireEnt.props ??= {});
       p.lit = false; p.fuel = 0; p.desc = "A cold ring of stones with grey ash in the middle — a hearth waiting to be relit.";
       w.putEntity(fireEnt);

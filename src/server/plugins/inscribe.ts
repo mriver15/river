@@ -1,6 +1,6 @@
 // TEST_ARGS: {"text":"dawn; 6 hums; cloud low from the west; 3 strokes","with":"stick"}
 import { log } from "../bus.ts";
-import { ToolError, obj, str, type ToolDef } from "../toolkit.ts";
+import { ToolError, obj, str, type ToolDef, wait } from "../toolkit.ts";
 
 const CAP = 10;
 const HEAD = "A damp clay tablet, scored with dated lines:";
@@ -60,7 +60,7 @@ const inscribe: ToolDef = {
         .sort((x, y) => w.dist(x) - w.dist(y))[0];
       if (!spot) throw new ToolError("No flat rock or standing stone within 4m to cut into. Make a clay tablet, or walk to one.");
       w.setActivity("cutting a line into stone");
-      await new Promise((r) => setTimeout(r, 6500));
+      await wait(6500);
       w.bump({ energy: -7, curiosity: -5, mood: 3 });
       const entry = `[${w.timeLabel()}] ${text}`;
       const marks: string[] = Array.isArray(spot.props.inscriptions) ? spot.props.inscriptions : [];
@@ -86,7 +86,7 @@ const inscribe: ToolDef = {
     if (lines.length >= CAP) throw new ToolError(`"${name}" is full at ${CAP} lines. Give a new tablet a new name (tablet: "clay tablet 2") and start it with a fresh lump of clay.`);
 
     w.setActivity("pressing a line into the clay tablet");
-    await new Promise((r) => setTimeout(r, 2600));
+    await wait(2600);
     w.bump({ energy: -2, curiosity: -4, mood: 2 });
 
     const entry = `[${w.timeLabel()}] ${text}`;

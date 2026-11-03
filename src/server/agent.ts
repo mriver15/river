@@ -13,6 +13,8 @@ import { ToolError, availableTools, findTool, placesText } from "./tools.ts";
 import { placeNear } from "./places.ts";
 import type { Emotions } from "./emotions.ts";
 import type { World } from "./world.ts";
+import { simNow, simRng, after, cancel, simPaused, simTick, simSpeed } from "./sim.ts";
+const sr = simRng("agent");
 
 // Higher than the default 1.0: River converges on obsessions, so it gets a wider spread of choices.
 export const MOCK = process.env.MOCK_LLM === "1";
@@ -57,7 +59,7 @@ export class Agent {
   paused = kvGet<boolean>("paused", false);
   private cycleTimes: number[] = kvGet<number[]>("cycleTimes", []);
   private cycleCount = kvGet<number>("cycleCount", 0);
-  private lastReflect = kvGet<number>("lastReflect", Date.now());
+  private lastReflect = kvGet<number>("lastReflect", simNow());
   private inbox: string[] = [];
   selfModel = kvGet<string>("selfModel", "I'm new here. I don't know yet who I am; I'll find out by living.");
   private errBackoff = 0;
@@ -69,7 +71,7 @@ export class Agent {
 
   stats() {
     const hourAgo = Date.now() - 3_600_000;
-    return { cyclesLastHour: this.cycleTimes.filter((t) => t > hourAgo).length, maxCyclesPerHour: maxCyclesNow(), paused: this.paused, mock: MOCK, model: MOCK ? "mock" : MODEL, ...usageStats() };
+    return { cyclesLastHour: this.cycleTimes.filter((t) => t > hourAgo).length, maxCyclesPerHour: maxCyclesNow(), paused: this.paused, mock: MOCK, model: MOCK ? "mock" : MODEL, worldPaused: simPaused(), simTick: simTick(), simSpeed: simSpeed(), ...usageStats() };
   }
   /** Clear the local token and cycle accounting, drop any error backoff, and start thinking again right away. */
   restartCycles() {
@@ -87,7 +89,7 @@ export class Agent {
   resume(fresh: boolean) {
     if (fresh) {
       this.cycleCount = 0; this.cycleTimes = []; this.inbox = []; this.errBackoff = 0; this.budgetNoted = false; this.paused = false;
-      this.selfModel = "I'm new here. I don't know yet who I am; I'll find out by living."; this.lastReflect = Date.now();
+      this.selfModel = "I'm new here. I don't know yet who I am; I'll find out by living."; this.lastReflect = simNow();
     }
     this.halted = false; bus.emit("state"); this.wake();
   }
@@ -101,7 +103,13 @@ export class Agent {
   notify(msg: string, wake = true) { this.inbox.push(msg); if (wake) this.wake(); }
   wake() { this.wakeResolve?.(); }
 
-  private idle(ms: number) { return new Promise<void>((r) => { const t = setTimeout(r, ms); this.wakeResolve = () => { clearTimeout(t); r(); }; }); }
+  /** Wait, but wake early on `wake()`. `inSim` waits in simulation time (the pause between thoughts); otherwise wall time (error backoff, budget). */
+  private idle(ms: number, inSim = false) {
+    return new Promise<void>((r) => {
+      const t = inSim ? after(ms, r) : setTimeout(r, ms);
+      this.wakeResolve = () => { inSim ? cancel(t as number) : clearTimeout(t as NodeJS.Timeout); r(); };
+    });
+  }
 
   async run() {
     if (this.running) return;
@@ -134,7 +142,7 @@ export class Agent {
         this.w.me.thinking = false;
         bus.emit("state");
         await this.maybeReflect();
-        await this.idle(cfg("thinkSeconds") * 1000 * paceFactor());
+        await this.idle(cfg("thinkSeconds") * 1000 * paceFactor(), true);
       } catch (err: any) {
         this.w.me.thinking = false;
         this.errBackoff = Math.min(300_000, (this.errBackoff || 5000) * 2);
@@ -225,7 +233,7 @@ export class Agent {
   private async maybeReflect() {
     const due = this.cycleCount % 10 === 0 || importanceSince(this.lastReflect) > 40;
     if (!due || (MOCK && this.cycleCount % 10 !== 0)) return;
-    this.lastReflect = Date.now(); kvSet("lastReflect", this.lastReflect);
+    this.lastReflect = simNow(); kvSet("lastReflect", this.lastReflect);
     decayInterests(); const forgot = forgetStale();
     if (forgot) log("system", `Forgot ${forgot} faded memories.`);
     if (MOCK) { addMemory("Reflection (mock): I keep walking in circles, but I like it here.", 6, ["reflection"], "reflection"); return; }
@@ -258,8 +266,8 @@ export class Agent {
       if (berry) { await act("eat", { item: berry.id }); }
       else { const b = w.nearby(60).find(({ e }) => e.kind === "bush" && e.props.stock > 0); if (b) { await act("move_to", { target: b.e.id }); await act("pick_up", { id: b.e.id }); } }
     }
-    const pool = w.nearby(45).filter(({ e }) => e.kind !== "tree" || Math.random() < 0.2);
-    const pick = pool[Math.floor(Math.random() * Math.min(pool.length, 12))]?.e;
+    const pool = w.nearby(45).filter(({ e }) => e.kind !== "tree" || sr() < 0.2);
+    const pick = pool[Math.floor(sr() * Math.min(pool.length, 12))]?.e;
     if (pick) {
       await act("move_to", { target: pick.id });
       await act("inspect", { id: pick.id });

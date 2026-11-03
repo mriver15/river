@@ -1,6 +1,6 @@
 // TEST_ARGS: {"action":"build","bow":"stick","box":"shell"}
 import { log } from "../bus.ts";
-import { ToolError, obj, str, num, type ToolDef } from "../toolkit.ts";
+import { ToolError, obj, str, num, type ToolDef, rand, wait } from "../toolkit.ts";
 
 const OPEN = 196.0; // the open string: mark 0, fixed for good
 const GRID = 10;    // cents between scratched marks
@@ -44,7 +44,7 @@ const drone: ToolDef = {
       }
       if (findDrone(w)) throw new ToolError("A drone already stands within reach. Tune that one — one is enough to listen to.");
       w.setActivity("building a drone");
-      await new Promise((r) => setTimeout(r, 8000));
+      await wait(8000);
       w.takeItem(box.id, 1);
       if (weight) w.takeItem(weight.id, 1);
       w.bump({ energy: -7, mood: 4, curiosity: 3 });
@@ -78,13 +78,13 @@ const drone: ToolDef = {
         if (wedge.kind !== "seed") throw new ToolError(`${wedge.name} won't jam anything. A seed would.`);
       }
       w.setActivity("sliding the drone's weight");
-      await new Promise((r) => setTimeout(r, Math.min(2000 + Math.abs(delta) * 25, 7000)));
+      await wait(Math.min(2000 + Math.abs(delta) * 25, 7000));
       w.bump({ energy: -2 });
       let target = from + delta;
       if (d.wedge || wedge) target = Math.round(target);
       else target = Math.round(target / GRID) * GRID;
       if (wedge) { w.takeItem(wedge.id, 1); d.wedge = true; }
-      const slip = d.weighted ? 0 : 2 * (0.3 + Math.random()) * (Math.random() < 0.5 ? -1 : 1);
+      const slip = d.weighted ? 0 : 2 * (0.3 + rand()) * (rand() < 0.5 ? -1 : 1);
       d.mark = target + slip; d.hz = hzOf(d.mark); w.putEntity(found);
       return `You ${delta > 0 ? "ease" : "draw"} the weight along the string, bowing as it settles. It stops at ${d.mark.toFixed(0)} cents above open — ${d.hz.toFixed(2)} vibrations a second.\n` +
         (d.wedge ? "The seed jams it: a cent at a time now." : "It sits on a mark; between marks it slides back. A seed jammed under it would hold finer than ten cents.") +
@@ -94,9 +94,9 @@ const drone: ToolDef = {
     if (act === "hold") {
       const secs = Math.max(3, Math.min(20, Number(a.seconds) || 8));
       w.setActivity("bowing the drone");
-      await new Promise((r) => setTimeout(r, Math.min(Math.round(secs * 400), 9000)));
+      await wait(Math.min(Math.round(secs * 400), 9000));
       w.bump({ energy: -Math.round(2 + secs / 4), mood: 3, curiosity: 1 });
-      const drift = ((d.weighted ? 0.8 : 3.5) + (d.wedge ? 0.5 : 0)) * (secs / 8) * (0.4 + Math.random()) * (Math.random() < 0.5 ? -1 : 1);
+      const drift = ((d.weighted ? 0.8 : 3.5) + (d.wedge ? 0.5 : 0)) * (secs / 8) * (0.4 + rand()) * (rand() < 0.5 ? -1 : 1);
       d.mark = cents(d.hz) + drift; d.hz = hzOf(d.mark); w.putEntity(found);
       return `You bow for ${secs} seconds and the string gives one unbroken note: ${d.hz.toFixed(2)} vibrations a second, mark ${d.mark.toFixed(0)}.\n` +
         `Set your flute against it and the two will beat. Count the beats over a known stretch and hand the count to 'beats'. ` +

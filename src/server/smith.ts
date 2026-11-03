@@ -49,14 +49,14 @@ const CHEATSHEET = `World API (the \`w\` argument of run):
 - Inventory: w.addItem(kind, name, desc, qty=1, props?); w.findItem(idOrName) -> item|undefined; w.takeItem(item.id, qty) consumes; items have {id, kind, name, desc, qty}. Stock item kinds: stick, stone, seed, berry, flower, mushroom, shell, book, crafted.
 - log(kind, text, data?) from "../bus.ts": kind must be one of "world" | "observation" | "thought" | "speech" | "desire" | "system" | "need" | "inscription" (use "world" for happenings).
 - w.bump({ energy?, hunger?, mood?, curiosity? }) adds (can be negative); w.setActivity("text"); w.spotNearMe(dist) -> {x,z} free spot near the agent; w.timeLabel().
-- Takes real time? await new Promise(r => setTimeout(r, ms)) (keep under 15s).
+- Takes time? \`await wait(ms)\` (import { wait } from "../toolkit.ts"; keep under 15s). It runs on the world clock and stops while the world is frozen. Need chance? \`rand()\` (import from "../toolkit.ts") returns [0,1). Never use setTimeout, Math.random or Date.now.
 - Validate inputs and throw new ToolError("clear message the character can act on") for normal failures (missing item, too far away, nothing to do). Return a vivid second-person string describing what happens.`;
 
 const SYSTEM = `You write small plugins ("tools") for River's island world, in TypeScript. A character named River asked for a tool; you implement exactly that request, grounded in how the world actually works.
 
 Rules:
 - Output ONE file in a single \`\`\`ts code block, nothing else but that block.
-- Allowed imports ONLY: "../toolkit.ts" (ToolError, obj, str, num, type ToolDef) and "../bus.ts" (log). No node: modules, no other imports.
+- Allowed imports ONLY: "../toolkit.ts" (ToolError, obj, str, num, wait, rand, type ToolDef) and "../bus.ts" (log). No node: modules, no other imports.
 - Default-export a ToolDef whose \`name\` is exactly the requested name.
 - The first line must be a comment with a realistic JSON argument object for a smoke test: // TEST_ARGS: {"with":"stick"}
 - No network, no filesystem, no process/env access, no eval/dynamic import. Pure world logic.
@@ -71,7 +71,7 @@ ${read(path.join(ROOT, "src/server/toolkit.ts"))}
 ${read(path.join(PLUGINS, "dig.ts"))}`;
 
 // ---------- checks ----------
-const FORBIDDEN = /\b(process|require|eval|Function|child_process|globalThis|fetch|XMLHttpRequest|WebSocket|Deno|Bun)\b|\bimport\s*\(|__proto__|\.constructor\b|node:/;
+const FORBIDDEN = /\b(process|require|eval|Function|child_process|globalThis|fetch|XMLHttpRequest|WebSocket|Deno|Bun|setTimeout|setInterval|setImmediate)\b|Math\.random|Date\.now|new Date\b|\bimport\s*\(|__proto__|\.constructor\b|node:/;
 function staticCheck(code: string, name: string): string[] {
   const problems: string[] = [];
   if (code.length > 12_000) problems.push("file too large");

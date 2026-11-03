@@ -95,6 +95,8 @@ export interface ConfigView { defs: ConfigDef[]; values: Record<string, number |
 
 export interface Stats {
   cyclesLastHour: number; maxCyclesPerHour: number; paused: boolean; mock: boolean; model: string;
+  /** the world clock: frozen, the tick it is at, and its speed (1 = the canonical 24-minute day) */
+  worldPaused: boolean; simTick: number; simSpeed: number;
   tokensLastHour: number; tokensLast24h: number; maxTokensPerHour: number; cacheHitPct: number; offPeak: boolean;
 }
 
@@ -120,6 +122,7 @@ export type ClientMsg =
   | { t: "approve"; id: number; note?: string; builtin?: string }
   | { t: "deny"; id: number; note?: string }
   | { t: "pause"; paused: boolean }
+  | { t: "sim_pause"; paused: boolean }
   | { t: "dream_seed"; text: string }
   | { t: "reset_budget" }
   | { t: "reset_river"; code: string; world: boolean }

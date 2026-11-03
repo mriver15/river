@@ -3,11 +3,12 @@
 import { bus, log } from "./bus.ts";
 import { db } from "./db.ts";
 import type { Moment } from "../shared/types.ts";
+import { simNow } from "./sim.ts";
 
 const row = (r: any): Moment => ({ id: r.id, ts: r.ts, kind: r.kind, title: r.title, text: r.text, intensity: r.intensity, emotions: JSON.parse(r.emotions), x: r.x, z: r.z });
 
 export function recordMoment(m: Omit<Moment, "id" | "ts">): Moment {
-  const ts = Date.now();
+  const ts = simNow();
   const r = db.prepare("INSERT INTO moments(ts, kind, title, text, intensity, emotions, x, z) VALUES(?,?,?,?,?,?,?,?)").run(ts, m.kind, m.title, m.text, m.intensity, JSON.stringify(m.emotions), m.x, m.z);
   const moment: Moment = { ...m, id: Number(r.lastInsertRowid), ts };
   log("moment", m.title, { intensity: m.intensity, kind: m.kind, emotions: m.emotions });

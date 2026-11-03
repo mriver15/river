@@ -22,6 +22,8 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { ToolError, obj, num, str, type ToolDef } from "./toolkit.ts";
+import { simNow, simRng } from "./sim.ts";
+const sr = simRng("tools");
 export { ToolError, type ToolDef };
 
 function findEntity(w: World, ref: string): Entity | undefined {
@@ -130,7 +132,7 @@ export const BASE_TOOLS: ToolDef[] = [
       if (!w.inReach(e)) throw new ToolError(`${e.name} is ${w.dist(e).toFixed(0)}m away. move_to it first.`);
       if (e.props.yields) {
         if (e.props.stock <= 0) throw new ToolError(`${e.name} is picked clean for now. It regrows slowly.`);
-        const kind: string = e.props.yields[Math.floor(Math.random() * e.props.yields.length)];
+        const kind: string = e.props.yields[Math.floor(sr() * e.props.yields.length)];
         const names: Record<string, [string, string]> = {
           berry: ["wild berry", "A small red berry. Edible."], stick: ["stick", "A sturdy stick."],
           stone: ["stone", "A smooth, heavy stone."], seed: ["seed", "A small seed. It could be planted."],
@@ -139,7 +141,7 @@ export const BASE_TOOLS: ToolDef[] = [
           bark: ["strip of bark", "A long, flexible strip of bark, peeled loose. It bends without breaking."],
           moss: ["handful of moss", "Soft green moss, damp and springy."], charcoal: ["piece of charcoal", "A black, brittle remnant of burnt wood. It leaves a mark."],
         };
-        e.props.stock--; e.props.lastTake = Date.now(); w.putEntity(e);
+        e.props.stock--; e.props.lastTake = simNow(); w.putEntity(e);
         w.addItem(kind, names[kind][0], names[kind][1]);
         return `You gathered a ${names[kind][0]} from the ${e.name}.`;
       }
@@ -314,7 +316,7 @@ export const GATED_TOOLS: ToolDef[] = [
       const grown = g === "tree" ? { stock: 3, max: 4, yields: ["stick", "seed"], desc: "A tree you planted." }
         : g === "bush" ? { stock: 2, max: 5, yields: ["berry"], desc: "A berry bush you planted." }
         : { takeable: true, item: "flower", desc: "A flower you planted." };
-      w.spawn("sprout", "tiny sprout", p.x, p.z, { desc: "A fragile sprout you planted. It will grow with time.", born: Date.now(), ms: 150_000, grow: g, grownName: `planted ${g}`, grown });
+      w.spawn("sprout", "tiny sprout", p.x, p.z, { desc: "A fragile sprout you planted. It will grow with time.", born: simNow(), ms: 150_000, grow: g, grownName: `planted ${g}`, grown });
       w.bump({ mood: 5 });
       return `You planted a seed. It should grow into a ${g} in a few minutes.`;
     },

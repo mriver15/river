@@ -13,6 +13,7 @@ import { align } from "./taste.ts";
 import type { Moment } from "../shared/types.ts";
 import { BITTERSWEET, EMOTIONS, EMOTION_ORDER, intensityWord, type EmotionName } from "../shared/emotions.ts";
 import type { World } from "./world.ts";
+import { simNow, every, after } from "./sim.ts";
 
 const clamp = (v: number, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
 const clip = (s: string, n = 70) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
@@ -37,8 +38,8 @@ export class Emotions {
   private places = new Map<string, number>();
   private concerns: { text: string; v: Float32Array }[] = [];
   private concernsKey = ""; private concernsAt = 0;
-  private cand: Omit<Moment, "id" | "ts"> | null = null; private candTimer: NodeJS.Timeout | null = null; private lastMomentAt = 0;
-  private lastSave = 0; private lastCalm = Date.now(); private prevDread = 0;
+  private cand: Omit<Moment, "id" | "ts"> | null = null; private candTimer: number | null = null; private lastMomentAt = 0;
+  private lastSave = 0; private lastCalm = simNow(); private prevDread = 0;
 
   constructor(private w: World) {
     const s = kvGet<{ level?: Partial<Record<EmotionName, number>>; why?: Partial<Record<EmotionName, string>> } | null>("emotions", null);
@@ -53,14 +54,14 @@ export class Emotions {
     bus.on("story", (e: { text: string; final: boolean }) => void this.storyBeat(e).catch(() => {}));
   }
 
-  start() { setInterval(() => this.tick(1), 1000); }
+  start() { every(1000, () => this.tick(1), "emotions"); }
   reset() { for (const n of EMOTION_ORDER) this.level[n] = 0; this.why = {}; this.edge = {}; this.momentAt = {}; this.habit = {}; this.recent = []; this.acts = []; this.fails.clear(); this.places.clear(); this.concerns = []; this.concernsKey = ""; kvSet("emotions", { level: this.level, why: this.why }); kvSet("habit", {}); }
 
   // ---------- core ----------
   bump(n: EmotionName, amt: number, why = "", c: Ctx = {}) {
     const prev = this.level[n]; this.level[n] = clamp(prev + amt); const delta = this.level[n] - prev;
     if (amt > 0 && why) this.why[n] = why;
-    const now = Date.now(), crossed = prev < 0.55 && this.level[n] >= 0.55 && now - (this.edge[n] ?? 0) > 8 * 60_000;
+    const now = simNow(), crossed = prev < 0.55 && this.level[n] >= 0.55 && now - (this.edge[n] ?? 0) > 8 * 60_000;
     // a big enough change is a moment: it is shown to the viewer and goes into the story
     const intensity = clamp(0.3 + delta * 1.2 + (c.first ? 0.2 : 0) + ((c.relevance ?? 0) > 0.6 ? 0.15 : 0));
     if (delta >= 0.22 && (now - (this.momentAt[n] ?? 0) > 90_000 || intensity > 0.8)) {
@@ -74,11 +75,11 @@ export class Emotions {
   /** One event often stirs several feelings at once. Gather them for a moment and keep only the strongest, and space moments out. */
   private queueMoment(m: Omit<Moment, "id" | "ts">) {
     if (!this.cand || m.intensity > this.cand.intensity) this.cand = m;
-    this.candTimer ??= setTimeout(() => {
+    this.candTimer ??= after(1500, () => {
       const best = this.cand!; this.cand = null; this.candTimer = null;
-      if (Date.now() - this.lastMomentAt < 20_000 && best.intensity < 0.85) { log("feeling", best.title, { intensity: best.intensity }); return; }   // too soon after the last: note it quietly
-      this.lastMomentAt = Date.now(); recordMoment(best);
-    }, 1500);
+      if (simNow() - this.lastMomentAt < 20_000 && best.intensity < 0.85) { log("feeling", best.title, { intensity: best.intensity }); return; }   // too soon after the last: note it quietly
+      this.lastMomentAt = simNow(); recordMoment(best);
+    });
   }
   /** Raise to at least `v` (for continuous conditions like standing near a fire). */
   private floor(n: EmotionName, v: number, why: string) { if (this.level[n] < v) this.bump(n, v - this.level[n], why); }
@@ -104,11 +105,11 @@ export class Emotions {
     // the quiet after fear: the director answers it with something gentle (see ambient.ts)
     if (this.prevDread >= 0.5 && this.level.dread < 0.25) bus.emit("relief", {});
     this.prevDread = this.level.dread;
-    if (this.arousal() > 0.3) this.lastCalm = Date.now();
+    if (this.arousal() > 0.3) this.lastCalm = simNow();
     // feelings pull on the plain needs: a good heart lifts mood, a heavy one drags; restlessness feeds curiosity
     w.bump({ mood: this.valence() * 0.02 * dt, curiosity: this.level.boredom * 0.015 * dt });
     w.feelings = this.view();
-    if (Date.now() - this.lastSave > 15_000) { this.lastSave = Date.now(); kvSet("emotions", { level: this.level, why: this.why }); kvSet("habit", this.habit); }
+    if (simNow() - this.lastSave > 15_000) { this.lastSave = simNow(); kvSet("emotions", { level: this.level, why: this.why }); kvSet("habit", this.habit); }
   }
 
   valence() {
@@ -117,14 +118,14 @@ export class Emotions {
   }
   arousal() { const L = this.level; return clamp(L.dread * 0.9 + L.wonder * 0.8 + L.frustration * 0.7 + L.playfulness * 0.6 + L.boredom * 0.5 + L.grief * 0.2); }
   /** ms since River's heart was last stirred (used to pace the world's surprises). */
-  calmFor() { return Date.now() - this.lastCalm; }
+  calmFor() { return simNow() - this.lastCalm; }
   /** A lively heart explores more widely: sampling temperature follows arousal. */
   temperature(base: number) { return clamp(base * (0.9 + 0.3 * this.arousal()), 0.9, 1.5); }
   private bittersweet() { const L = this.level; return Math.min(Math.max(L.wonder, L.playfulness, L.pride), Math.max(L.longing, L.grief, L.loneliness * 0.8)); }
 
   /** Deep in making something: a run of successful, related work. The world should not interrupt it with trivia. */
   absorbed(): boolean {
-    const now = Date.now(), a = this.acts.filter((x) => now - x.t < 4 * 60_000);
+    const now = simNow(), a = this.acts.filter((x) => now - x.t < 4 * 60_000);
     return a.length >= 6 && a.filter((x) => x.ok).length / a.length >= 0.8 && new Set(a.map((x) => x.name)).size <= 2 && a.every((x) => FLOW_TOOLS.has(x.name)) && this.level.boredom < 0.4;
   }
 
@@ -144,7 +145,7 @@ export class Emotions {
   // ---------- appraisal ----------
   /** What River currently cares about, as vectors. Refreshed at most every 30s, only re-embedded when it changes. */
   private async refreshConcerns() {
-    if (Date.now() - this.concernsAt < 30_000) return; this.concernsAt = Date.now();
+    if (simNow() - this.concernsAt < 30_000) return; this.concernsAt = simNow();
     const texts = [...activeDesires().slice(0, 8).map((d) => d.text), ...interests().slice(0, 6).map((i) => i.topic), ...listPlaces().map((p) => `${p.name} ${p.note}`.trim())].map((t) => t.slice(0, 200));
     const key = texts.join("|"); if (key === this.concernsKey) return; this.concernsKey = key;
     const vs = texts.length ? await embed(texts, "document") : []; this.concerns = vs ? texts.map((t, i) => ({ text: t, v: vs[i] })) : [];
@@ -158,7 +159,7 @@ export class Emotions {
     return { r: best, top };
   }
   private habituate(key: string): { f: number; first: boolean } {
-    const now = Date.now(), h = this.habit[key], eff = h ? h.n * Math.pow(0.5, (now - h.t) / HALF_LIFE_HABIT_MS) : 0;
+    const now = simNow(), h = this.habit[key], eff = h ? h.n * Math.pow(0.5, (now - h.t) / HALF_LIFE_HABIT_MS) : 0;
     this.habit[key] = { n: eff + 1, t: now };
     return { f: 1 / (1 + 0.7 * eff), first: !h };
   }
@@ -240,10 +241,10 @@ export class Emotions {
   private async process(name: string, input: Record<string, any>, ok: boolean, out: string) {
     const key = `${name}:${input.id ?? input.target ?? input.item ?? ""}`, novel = !this.recent.includes(key);
     this.recent.push(key); if (this.recent.length > 14) this.recent.shift();
-    this.acts.push({ t: Date.now(), name, ok }); if (this.acts.length > 12) this.acts.shift();
+    this.acts.push({ t: simNow(), name, ok }); if (this.acts.length > 12) this.acts.shift();
     const text = `${name} ${Object.values(input).filter((v) => typeof v === "string").join(" ")} ${out}`;
     if (!ok) {
-      const soft = /away|too far|move_to/i.test(out), now = Date.now(), again = now - (this.fails.get(name) ?? 0) < 60_000;
+      const soft = /away|too far|move_to/i.test(out), now = simNow(), again = now - (this.fails.get(name) ?? 0) < 60_000;
       this.fails.set(name, now);
       await this.appraise({ key: `fail:${name}`, emotion: "frustration", base: soft ? 0.03 : again ? 0.16 : 0.09, text, why: `${name} didn't work`, habit: false }); return;
     }
@@ -272,9 +273,9 @@ export class Emotions {
       if (target > this.level.boredom) this.bump("boredom", (target - this.level.boredom) * 0.4, "doing the same things again and again");
     }
     const me = this.w.me, cell = `${Math.round(me.x / 10)},${Math.round(me.z / 10)}`;
-    if (Date.now() - (this.places.get(cell) ?? 0) > 40 * 60_000) {
-      const r = db.prepare("SELECT COUNT(*) c FROM memories WHERE x BETWEEN ? AND ? AND z BETWEEN ? AND ? AND ts < ? AND importance >= 5 AND kind != 'dream'").get(me.x - 9, me.x + 9, me.z - 9, me.z + 9, Date.now() - 3 * 3_600_000) as { c: number };
-      if (r.c >= 2) { this.places.set(cell, Date.now()); this.bump("longing", 0.35, "this place remembers"); }
+    if (simNow() - (this.places.get(cell) ?? 0) > 40 * 60_000) {
+      const r = db.prepare("SELECT COUNT(*) c FROM memories WHERE x BETWEEN ? AND ? AND z BETWEEN ? AND ? AND ts < ? AND importance >= 5 AND kind != 'dream'").get(me.x - 9, me.x + 9, me.z - 9, me.z + 9, simNow() - 3 * 3_600_000) as { c: number };
+      if (r.c >= 2) { this.places.set(cell, simNow()); this.bump("longing", 0.35, "this place remembers"); }
     }
   }
 }

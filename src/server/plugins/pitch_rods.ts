@@ -1,10 +1,9 @@
 // TEST_ARGS: {"action":"ring","fine":true,"label":"the half tone down"}
 import { log } from "../bus.ts";
-import { ToolError, obj, str, type ToolDef } from "../toolkit.ts";
+import { ToolError, obj, str, type ToolDef, wait } from "../toolkit.ts";
 
 const RODS = "set of tuning rods";
 const STEPS = ["a unison", "a minor second", "a major second", "a minor third", "a major third", "a perfect fourth", "a tritone", "a perfect fifth", "a minor sixth", "a major sixth", "a minor seventh", "a major seventh"];
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const hash = (s: string) => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
 // A monolith's hum belongs to the stone: same id, same pitch, every visit.
 const humOf = (id: string) => { const h = hash(id); return { semis: (h % 24) - 12, cents: ((h >>> 8) % 90) - 45 }; };

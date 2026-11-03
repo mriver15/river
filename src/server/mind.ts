@@ -2,12 +2,13 @@ import { db } from "./db.ts";
 import { dot, embed, relevance } from "./embed.ts";
 import { bus, log } from "./bus.ts";
 import type { Desire, Interest, ToolInfo, ToolRequest } from "../shared/types.ts";
+import { simNow } from "./sim.ts";
 
 // ---------- desires ----------
 export function addDesire(text: string, priority = 5): Desire {
   const dup = (db.prepare("SELECT * FROM desires WHERE status='active' AND lower(text)=lower(?)").get(text) as any);
   if (dup) return rowToDesire(dup);
-  const r = db.prepare("INSERT INTO desires(text, priority, created) VALUES(?,?,?)").run(text, Math.max(1, Math.min(10, priority)), Date.now());
+  const r = db.prepare("INSERT INTO desires(text, priority, created) VALUES(?,?,?)").run(text, Math.max(1, Math.min(10, priority)), simNow());
   log("desire", `New desire: ${text} (priority ${priority})`);
   bus.emit("state");
   return rowToDesire(db.prepare("SELECT * FROM desires WHERE id=?").get(r.lastInsertRowid));
@@ -31,8 +32,8 @@ export function touchInterest(topic: string, why = "", delta = 1) {
   const t = topic.trim().toLowerCase().slice(0, 60);
   if (!t) return;
   const row = db.prepare("SELECT * FROM interests WHERE topic=?").get(t) as any;
-  if (row) db.prepare("UPDATE interests SET weight=MIN(10, weight+?), why=?, updated=? WHERE topic=?").run(delta, why || row.why, Date.now(), t);
-  else { db.prepare("INSERT INTO interests(topic, weight, why, updated) VALUES(?,?,?,?)").run(t, Math.max(1, Math.min(10, delta)), why, Date.now()); log("desire", `New interest: ${t}${why ? ` — ${why}` : ""}`); }
+  if (row) db.prepare("UPDATE interests SET weight=MIN(10, weight+?), why=?, updated=? WHERE topic=?").run(delta, why || row.why, simNow(), t);
+  else { db.prepare("INSERT INTO interests(topic, weight, why, updated) VALUES(?,?,?,?)").run(t, Math.max(1, Math.min(10, delta)), why, simNow()); log("desire", `New interest: ${t}${why ? ` — ${why}` : ""}`); }
   bus.emit("state");
 }
 /** Interests fade unless fed. */
@@ -74,7 +75,7 @@ export function requestTool(name: string, reason: string): { req: ToolRequest; m
   if (key in GATED && isApproved(key)) return { req: null as any, message: `You already have ${key}.` };
   const open = db.prepare("SELECT * FROM tool_requests WHERE name=? AND status='pending'").get(key) as any;
   if (open) return { req: rowToReq(open), message: `Your request for ${key} is still waiting for the human's decision.` };
-  const r = db.prepare("INSERT INTO tool_requests(ts, name, reason, custom) VALUES(?,?,?,?)").run(Date.now(), key, reason, key in GATED ? 0 : 1);
+  const r = db.prepare("INSERT INTO tool_requests(ts, name, reason, custom) VALUES(?,?,?,?)").run(simNow(), key, reason, key in GATED ? 0 : 1);
   const req = rowToReq(db.prepare("SELECT * FROM tool_requests WHERE id=?").get(r.lastInsertRowid));
   log("request", `Requested tool "${key}"${req.custom ? " (new, not in catalog)" : ""}: ${reason}`, { id: req.id });
   if (req.custom) void matchBuiltin(`${key.replace(/_/g, " ")}. ${reason}`).then((m) => { if (m.length) { db.prepare("UPDATE tool_requests SET matches=? WHERE id=?").run(JSON.stringify(m), req.id); bus.emit("state"); } }).catch(() => {});

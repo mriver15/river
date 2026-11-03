@@ -1,6 +1,7 @@
 import { db } from "./db.ts";
 import { bus, log } from "./bus.ts";
 import type { Place } from "../shared/types.ts";
+import { simNow } from "./sim.ts";
 
 const row = (r: any): Place => ({ id: r.id, name: r.name, x: r.x, z: r.z, note: r.note });
 export const listPlaces = (): Place[] => (db.prepare("SELECT * FROM places ORDER BY id").all() as any[]).map(row);
@@ -11,7 +12,7 @@ export function addPlace(name: string, x: number, z: number, note = ""): Place {
   const near = placeNear(x, z, 8);
   if (near) throw new Error(`You are already at "${near.name}" (named earlier). Pick another spot.`);
   if (db.prepare("SELECT 1 FROM places WHERE name = ?").get(clean)) throw new Error(`Another place is already called "${clean}".`);
-  const r = db.prepare("INSERT INTO places(name, x, z, note, ts) VALUES(?,?,?,?,?)").run(clean, x, z, note.slice(0, 200), Date.now());
+  const r = db.prepare("INSERT INTO places(name, x, z, note, ts) VALUES(?,?,?,?,?)").run(clean, x, z, note.slice(0, 200), simNow());
   log("desire", `Named a place: ${clean}${note ? ` — ${note}` : ""}`, { x, z });
   bus.emit("state");
   return row(db.prepare("SELECT * FROM places WHERE id = ?").get(r.lastInsertRowid));

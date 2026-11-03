@@ -6,6 +6,8 @@ import { db } from "./db.ts";
 import { ToolError, obj, str, type ToolDef } from "./toolkit.ts";
 import type { Entity } from "../shared/types.ts";
 import type { World } from "./world.ts";
+import { simNow, simRng, every } from "./sim.ts";
+const sr = simRng("creatures");
 
 export type Trait = "gentle" | "skittish" | "bold" | "curious";
 export const SHY_MULT: Record<Trait, number> = { gentle: 0.9, skittish: 1.4, bold: 0.7, curious: 0.8 };
@@ -28,7 +30,7 @@ export class Creatures {
     for (const r of db.prepare("SELECT * FROM creatures").all() as any[])
       this.rows.set(r.id, { id: r.id, species: r.species, trait: r.trait, name: r.name, trust: r.trust, met: r.met, lastSeen: r.last_seen, alive: !!r.alive });
   }
-  start() { setInterval(() => this.tick(1), 1000); }
+  start() { every(1000, () => this.tick(1), "creatures"); }
   reset() { this.rows.clear(); this.dirty.clear(); }
 
   get(e: Entity): Creature | undefined { return e.props.creature ? this.rows.get(e.props.creature) : undefined; }
@@ -38,7 +40,7 @@ export class Creatures {
   presence(species: string, count: number, allowed: boolean, desc: string, pick: () => { x: number; z: number }) {
     const alive = [...this.rows.values()].filter((c) => c.species === species && c.alive);
     for (let i = alive.length; i < count; i++) {
-      const traits = TRAITS[species] ?? ["curious"], c: Creature = { id: `cr_${species}_${Date.now().toString(36)}${i}`, species, trait: traits[Math.floor(Math.random() * traits.length)], name: null, trust: 0, met: 0, lastSeen: 0, alive: true };
+      const traits = TRAITS[species] ?? ["curious"], c: Creature = { id: `cr_${species}_${simNow().toString(36)}${i}`, species, trait: traits[Math.floor(sr() * traits.length)], name: null, trust: 0, met: 0, lastSeen: 0, alive: true };
       this.rows.set(c.id, c); this.save(c); alive.push(c);
     }
     const ents = [...this.w.entities.values()].filter((e) => e.kind === "animal" && e.props.species === species);
@@ -47,13 +49,13 @@ export class Creatures {
     }
     if (!allowed) { ents.forEach((e) => this.w.removeEntity(e.id)); return; }
     for (const c of alive) if (!ents.some((e) => e.props.creature === c.id)) {
-      const p = pick(); this.w.spawn("animal", label(c).replace(/^the /, ""), p.x, p.z, { species, creature: c.id, desc, heading: Math.random() * 6.28, trust: +c.trust.toFixed(2), cname: c.name, trait: c.trait, met: c.met });
+      const p = pick(); this.w.spawn("animal", label(c).replace(/^the /, ""), p.x, p.z, { species, creature: c.id, desc, heading: sr() * 6.28, trust: +c.trust.toFixed(2), cname: c.name, trait: c.trait, met: c.met });
     }
   }
   private syncEntity(e: Entity, c: Creature) { Object.assign(e.props, { trust: +c.trust.toFixed(2), cname: c.name, trait: c.trait, met: c.met }); e.name = c.name ? `${c.name} the ${c.species}` : c.species; }
 
   tick(dt: number) {
-    const now = Date.now(), me = this.w.me;
+    const now = simNow(), me = this.w.me;
     for (const e of this.w.entities.values()) {
       if (e.kind !== "animal") continue; const c = this.get(e); if (!c) continue;
       const d = Math.hypot(e.x - me.x, e.z - me.z), before = stage(c.trust);
@@ -81,7 +83,7 @@ export class Creatures {
   /** A creature caught in flames. Loyal ones stay beside River even near danger, which is how they are lost. */
   hazard(e: Entity, dt: number) {
     const near = [...this.w.entities.values()].some((f) => f.props.burning && Math.hypot(f.x - e.x, f.z - e.z) < 1.8);
-    if (!near || Math.random() > 0.1 * dt) return false;
+    if (!near || sr() > 0.1 * dt) return false;
     const c = this.get(e); this.w.removeEntity(e.id);
     if (c) { c.alive = false; this.save(c); bus.emit("loss", { name: label(c), kind: "creature", x: e.x, z: e.z, named: !!c.name, trust: c.trust }); }
     this.say(`${c ? label(c)[0].toUpperCase() + label(c).slice(1) : "A creature"} was caught in the fire.`, e, 60);
@@ -131,7 +133,7 @@ export const OFFER_TOOL: ToolDef = {
     if (!(DIET[c.species] ?? []).includes(it.kind)) throw new ToolError(`The ${c.species} sniffs at the ${it.name} and turns its head away.`);
     if ((e.props.fleeing ?? false) && c.trust < 0.2) throw new ToolError(`The ${c.species} is too frightened to come near your hand.`);
     w.takeItem(it.id, 1);
-    c.trust = Math.min(1, c.trust + 0.12 * TRUST_RATE[c.trait]); e.props.calmUntil = Date.now() + 60_000; creatures(w)["save"](c);
+    c.trust = Math.min(1, c.trust + 0.12 * TRUST_RATE[c.trait]); e.props.calmUntil = simNow() + 60_000; creatures(w)["save"](c);
     return `You hold out the ${it.name} and keep very still. After a long moment the ${c.species} steps in and takes it from your hand. ${c.trust >= 0.7 ? "It lingers beside you afterwards." : "It doesn't go far afterwards."}`;
   },
 };

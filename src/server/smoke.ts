@@ -5,6 +5,8 @@ const [file, argsJson] = process.argv.slice(2);
 const { World } = await import("./world.ts");
 const { ToolError } = await import("./toolkit.ts");
 
+const sim = await import("./sim.ts");
+sim.setSimSpeed(100); sim.start(100);   // the world clock drives wait(); run it fast so a throwaway world does not take real minutes
 const w = new World(); w.init();
 for (const [kind, name] of [["stick", "stick"], ["stone", "stone"], ["seed", "seed"], ["berry", "wild berry"], ["flower", "blue starflower"], ["mushroom", "brown mushroom"]])
   w.addItem(kind, name, `A ${name}.`, 3);

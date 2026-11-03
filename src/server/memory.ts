@@ -2,6 +2,7 @@ import { db, kvGet, kvSet } from "./db.ts";
 import { log } from "./bus.ts";
 import { EMBED_ENABLED, EMBED_VERSION, dot, embed, fromBlob, relevance, toBlob } from "./embed.ts";
 import type { MemoryRow } from "../shared/types.ts";
+import { simNow } from "./sim.ts";
 
 export type MemoryKind = "episodic" | "semantic" | "reflection" | "human" | "dream";
 
@@ -15,7 +16,7 @@ export function addMemory(text: string, importance: number, tags: string[] = [],
   const imp = Math.max(1, Math.min(10, importance));
   const at = kind === "dream" ? null : locate();   // dreams happen nowhere
   const r = db.prepare("INSERT INTO memories(ts, kind, text, importance, tags, x, z) VALUES(?,?,?,?,?,?,?)")
-    .run(Date.now(), kind, text, imp, tags.join(" ").toLowerCase(), at?.x ?? null, at?.z ?? null);
+    .run(simNow(), kind, text, imp, tags.join(" ").toLowerCase(), at?.x ?? null, at?.z ?? null);
   log("memory", `[${kind} · ${imp}/10] ${text}`, { tags });
   scheduleEmbedding();
   return Number(r.lastInsertRowid);
@@ -64,7 +65,7 @@ async function queryVec(q: string): Promise<Float32Array | null> {
  */
 export async function recall(query: string, limit = 6, near?: { x: number; z: number }): Promise<MemoryRow[]> {
   const terms = tokens(query);
-  const now = Date.now();
+  const now = simNow();
   type Cand = MemoryRow & { kw: number; sem: number; x?: number | null; z?: number | null };
   const cand = new Map<number, Cand>();
   const add = (r: any) => { let c = cand.get(r.id); if (!c) { c = { id: r.id, ts: r.ts, kind: r.kind, text: r.text, importance: r.importance, tags: r.tags, x: r.x, z: r.z, kw: 0, sem: 0 }; cand.set(r.id, c); } return c; };
@@ -129,7 +130,7 @@ export function memoryCount(): number {
 
 /** Forgetting: drop old, unimportant, never-recalled memories so the store stays meaningful. */
 export function forgetStale(): number {
-  const cutoff = Date.now() - 72 * 3_600_000;
+  const cutoff = simNow() - 72 * 3_600_000;
   const r = db.prepare("DELETE FROM memories WHERE kind = 'episodic' AND importance <= 3 AND ts < ? AND access_count = 0").run(cutoff);
   return Number(r.changes);
 }

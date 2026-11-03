@@ -1,5 +1,5 @@
 import { log } from "../bus.ts";
-import { ToolError, obj, str, type ToolDef } from "../toolkit.ts";
+import { ToolError, obj, str, type ToolDef, rand, wait } from "../toolkit.ts";
 
 const FINDS = [
   { kind: "stone", name: "stone", desc: "A smooth, heavy stone.", w: 4 },
@@ -8,7 +8,7 @@ const FINDS = [
   { kind: "seed", name: "seed", desc: "A small seed. It could be planted.", w: 2 },
   { kind: "bone", name: "old bone", desc: "A small, very old bone, weathered smooth. Whose?", w: 1 },
 ];
-const pickWeighted = () => { let r = Math.random() * FINDS.reduce((a, f) => a + f.w, 0); return FINDS.find((f) => (r -= f.w) < 0)!; };
+const pickWeighted = () => { let r = rand() * FINDS.reduce((a, f) => a + f.w, 0); return FINDS.find((f) => (r -= f.w) < 0)!; };
 
 const dig: ToolDef = {
   name: "dig",
@@ -25,7 +25,7 @@ const dig: ToolDef = {
     let pit = w.nearby(1.8).map((o) => o.e).find((e) => e.kind === "pit");
     const depth = (pit?.props.depth ?? 0) + (tool ? 2 : 1);
     w.setActivity("digging");
-    await new Promise((r) => setTimeout(r, tool ? 6000 : 9000));
+    await wait(tool ? 6000 : 9000);
     w.bump({ energy: tool ? -3 : -6 });
 
     if (pit) { pit.props.depth = depth; w.putEntity(pit); }
@@ -43,7 +43,7 @@ const dig: ToolDef = {
       if (!pit.props.mycelium) { pit.props.mycelium = true; pit.props.desc = "A pit exposing a web of pale mycelium around tree roots."; w.putEntity(pit); log("observation", "River found the underground fungal web.", { pit: pit.id }); }
       w.bump({ curiosity: -15, mood: 8 });
     } else if (depth < 3) out.push("Just leaf litter and dark soil so far. Digging deeper would show more.");
-    if (Math.random() < (tool ? 0.55 : 0.25)) {
+    if (rand() < (tool ? 0.55 : 0.25)) {
       const f = pickWeighted();
       w.addItem(f.kind, f.name, f.desc);
       out.push(`You unearth: ${f.name}.`);

@@ -1,9 +1,8 @@
 // TEST_ARGS: {"what":"wrap"}
 import { log } from "../bus.ts";
-import { ToolError, obj, str, type ToolDef } from "../toolkit.ts";
+import { ToolError, obj, str, type ToolDef, wait, rand } from "../toolkit.ts";
 
 const FIBRE = /bark|fibre|fiber|vine|moss|grass|reed|sedge|willow|nettle|root|sinew|stem/i;
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const RECIPES: Record<string, { units: number; weaveMs: number; energy: number; label: string }> = {
   cord: { units: 2, weaveMs: 1800, energy: 2, label: "cord" },
@@ -93,19 +92,19 @@ const weave: ToolDef = {
 
     w.setActivity(`weaving a ${what}`);
     if (gathered) {
-      await sleep(Math.min(4000, gathered * 800));
+      await wait(Math.min(4000, gathered * 800));
       w.bump({ energy: -gathered });
       out.push(`You peel ${peeled.join(" and ")}. The sap is cool, the strips supple — they bend without cracking.`);
     }
-    await sleep(recipe.weaveMs);
+    await wait(recipe.weaveMs);
     w.bump({ energy: -recipe.energy });
 
     const skill = skillOf(w);
     (w.me as any).weaveXp = skill + 1;
-    const q = Math.max(0.05, Math.min(1, 0.22 + skill * 0.11 + Math.random() * 0.34));
+    const q = Math.max(0.05, Math.min(1, 0.22 + skill * 0.11 + rand() * 0.34));
     const tier = TIERS.find((t) => q >= t.min)!;
 
-    if ((what === "mat" || what === "basket") && Math.random() < Math.max(0, 0.45 - skill * 0.08)) {
+    if ((what === "mat" || what === "basket") && rand() < Math.max(0, 0.45 - skill * 0.08)) {
       w.bump({ mood: -3, curiosity: -2 });
       log("world", `River's attempt at a woven ${what} fell apart.`, { quality: q });
       out.push(

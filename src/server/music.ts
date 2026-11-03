@@ -6,6 +6,7 @@ import { touchInterest } from "./mind.ts";
 import { ToolError, obj, num, str, type ToolDef } from "./toolkit.ts";
 import { INSTRUMENTS, MusicError, analyze, compile, noteName, type ComposeSpec, type Score } from "../shared/music.ts";
 import type { World } from "./world.ts";
+import { simNow, simSleep } from "./sim.ts";
 
 /** The monolith hums A1 and drops a semitone with each shift; this is the pitch class it is on now. */
 const humPitchClass = (shifts: number) => (((9 - shifts) % 12) + 12) % 12;
@@ -62,17 +63,17 @@ export const COMPOSE_TOOL: ToolDef = {
     try { score = compile(spec); } catch (e: any) { throw new ToolError(e instanceof MusicError ? e.message : `Could not read that piece: ${e.message}`); }
     if (score.voices.some((v) => v.instrument === "flute") && !windInstrument(w)) throw new ToolError("A wind voice needs something to blow through, and you aren't carrying anything like that. Your own voice, strings, chimes and stones are always with you.");
     const an = analyze(score);
-    if (fresh) db.prepare("INSERT INTO compositions(title, spec, ts) VALUES(?,?,?) ON CONFLICT(title) DO UPDATE SET spec = excluded.spec, ts = excluded.ts").run(score.title, JSON.stringify(spec), Date.now());
+    if (fresh) db.prepare("INSERT INTO compositions(title, spec, ts) VALUES(?,?,?) ON CONFLICT(title) DO UPDATE SET spec = excluded.spec, ts = excluded.ts").run(score.title, JSON.stringify(spec), simNow());
     const row = byTitle(score.title)!; const plays = row.plays;
     db.prepare("UPDATE compositions SET plays = plays + 1 WHERE id = ?").run(row.id);
 
     bus.emit("score", { t: "score", title: score.title, score });
     w.setActivity(`performing "${score.title}"`);
     log("action", `River ${fresh ? "composes and performs" : "performs"} "${score.title}" (${Math.round(score.seconds)}s, ${score.voices.map((v) => v.instrument).join(" + ")})`, { analysis: an.text });
-    await new Promise((r) => setTimeout(r, Math.min(score.seconds, 90) * 1000));
+    await simSleep(Math.min(score.seconds, 90) * 1000);
 
     // the island listens
-    const heard: string[] = [], now = Date.now();
+    const heard: string[] = [], now = simNow();
     const animals = w.nearby(26).map((o) => o.e).filter((e) => e.kind === "animal"), species = new Map<string, number>();
     for (const e of animals) { e.props.calmUntil = now + 90_000 + score.seconds * 1000; species.set(e.props.species, (species.get(e.props.species) ?? 0) + 1); }
     for (const [sp, n] of species) heard.push(sp === "firefly" ? "fireflies gather and drift in time with it" : `${n > 1 ? `${n} ${sp}s` : `a ${sp}`} stop${n > 1 ? "" : "s"} to listen`);

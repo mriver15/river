@@ -7,12 +7,13 @@ import { MOCK } from "./agent.ts";
 import { overBudget } from "./usage.ts";
 import { momentsBetween } from "./moments.ts";
 import type { JournalEntry } from "../shared/types.ts";
+import { simNow, every } from "./sim.ts";
 
 export const journalList = (limit = 30): JournalEntry[] => db.prepare("SELECT * FROM journal ORDER BY day DESC LIMIT ?").all(limit) as any;
 const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "…" : s);
 
 export function startJournal(w: World) {
-  setInterval(() => void tick(w).catch((e) => log("system", `Journal failed: ${e.message}`)), 30_000);
+  every(30_000, () => void tick(w).catch((e) => log("system", `Journal failed: ${e.message}`)), "journal");
 }
 
 export async function tick(w: World) {
@@ -35,7 +36,7 @@ export async function tick(w: World) {
     text = r.text.trim();
   }
   if (!text) return;
-  db.prepare("INSERT OR REPLACE INTO journal(day, text, ts) VALUES(?,?,?)").run(want, text, Date.now());
+  db.prepare("INSERT OR REPLACE INTO journal(day, text, ts) VALUES(?,?,?)").run(want, text, simNow());
   kvSet("journalDone", want);
   log("system", `Story written for day ${want}.`);
   bus.emit("state");

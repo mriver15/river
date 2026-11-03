@@ -13,6 +13,8 @@ import { ToolError, obj, str, type ToolDef } from "./toolkit.ts";
 import type { Entity } from "../shared/types.ts";
 import type { Emotions } from "./emotions.ts";
 import type { World } from "./world.ts";
+import { simNow, simRng, simSleep, every, after } from "./sim.ts";
+const sr = simRng("wildlife");
 
 type Cls = "snake" | "bug" | "fish" | "bird" | "predator";
 type Habitat = "land" | "water" | "shore" | "air" | "tree";
@@ -34,7 +36,7 @@ export const WILD: Record<string, Sp> = {
 export const wildSound = (species: string) => WILD[species]?.sound;
 
 interface St { hits?: number; nextHit?: number; tx: number; tz: number; wait: number; mode: string; until: number; cool: number; ang: number; warnedAt: number; perch?: { x: number; z: number } }
-const rand = (a: number, b: number) => a + Math.random() * (b - a);
+const rand = (a: number, b: number) => a + sr() * (b - a);
 const clamp = (v: number, a = 0, b = 1) => Math.max(a, Math.min(b, v));
 const isNight = (w: World) => { const t = w.worldTime(); return t < 0.23 || t > 0.78; };
 let freezeUntil = 0, noiseUntil = 0, instance: Wildlife | null = null;
@@ -44,8 +46,8 @@ export class Wildlife {
   private lastPersist = 0;
   constructor(private w: World, public emo: Emotions, private say: (text: string, at?: { x: number; z: number }, r?: number) => boolean, private notify: (msg: string) => void) { instance = this; }
   /** River has struck it: it fights back. */
-  provoke(e: Entity) { const st = this.st.get(e.id); if (st && !(st.mode === "fight" || st.mode === "charge" || st.mode === "retreat")) { st.mode = "charge"; st.until = Date.now() + 10_000; } }
-  start() { setInterval(() => this.sync(), 15_000); setInterval(() => this.tick(0.5), 500); setTimeout(() => this.sync(), 1500); }
+  provoke(e: Entity) { const st = this.st.get(e.id); if (st && !(st.mode === "fight" || st.mode === "charge" || st.mode === "retreat")) { st.mode = "charge"; st.until = simNow() + 10_000; } }
+  start() { every(15_000, () => this.sync(), "wildlife.sync"); every(500, () => this.tick(0.5), "wildlife"); after(1500, () => this.sync()); }
   reset() { this.st.clear(); }
 
   // ---------- who is here ----------
@@ -55,7 +57,7 @@ export class Wildlife {
       const x = rand(-HALF + 8, HALF - 8), z = rand(-HALF + 8, HALF - 8);
       if (!isLand(x, z, w.seed) || Math.hypot(x - w.me.x, z - w.me.z) < minFromMe) continue;
       if (sp.habitat === "land" || sp.habitat === "air") return { x, z };
-      if (sp.habitat === "tree") { const t = [...w.entities.values()].filter((e) => e.kind === "tree").sort(() => Math.random() - 0.5).find((e) => Math.hypot(e.x - w.me.x, e.z - w.me.z) >= minFromMe); return t ? { x: t.x, z: t.z, perch: { x: t.x, z: t.z } } : null; }
+      if (sp.habitat === "tree") { const t = [...w.entities.values()].filter((e) => e.kind === "tree").sort(() => sr() - 0.5).find((e) => Math.hypot(e.x - w.me.x, e.z - w.me.z) >= minFromMe); return t ? { x: t.x, z: t.z, perch: { x: t.x, z: t.z } } : null; }
       // shore and water: walk outward from the land point, in a random direction, until the sea
       const a = rand(0, 6.28); let k = 0;
       while (k < 60 && isLand(x + Math.cos(a) * k, z + Math.sin(a) * k, w.seed)) k++;
@@ -91,7 +93,7 @@ export class Wildlife {
 
   // ---------- life ----------
   private tick(dt: number) {
-    const w = this.w, now = Date.now(), persist = now - this.lastPersist > 30_000; if (persist) this.lastPersist = now;
+    const w = this.w, now = simNow(), persist = now - this.lastPersist > 30_000; if (persist) this.lastPersist = now;
     const prot = this.fireNear(), shel = this.sheltered(), frozen = now < freezeUntil, night = isNight(w);
     for (const e of [...w.entities.values()]) {
       if (e.kind !== "animal" || !e.props.wild) continue;
@@ -117,7 +119,7 @@ export class Wildlife {
           break;
         case "fish":
           if (d < 3.2) { const a = Math.atan2(e.z - w.me.z, e.x - w.me.x); go(e.x + Math.cos(a) * 5, e.z + Math.sin(a) * 5, speed * 3); }
-          else { roam(7, 1, 4); if (Math.random() < 0.004 * dt * 10 && d < 30) { e.props.leap = now; } }
+          else { roam(7, 1, 4); if (sr() < 0.004 * dt * 10 && d < 30) { e.props.leap = now; } }
           break;
         case "bird": this.bird(e, sp, st, d, go, roam, night); break;
         case "predator": this.predator(e, sp, st, d, dt, prot, shel, frozen, night, go, roam, setDesc); break;
@@ -129,13 +131,13 @@ export class Wildlife {
 
   // ---------- snakes: they hold still, and they strike what steps on them ----------
   private snake(e: Entity, sp: Sp, st: St, d: number, dt: number, night: boolean, frozen: boolean, go: (x: number, z: number, s?: number) => void, roam: (r: number, lo?: number, hi?: number) => void, setDesc: (s: string, p?: string) => void) {
-    const w = this.w, now = Date.now(), cold = night || w.weather === "rain" || w.weather === "storm";
+    const w = this.w, now = simNow(), cold = night || w.weather === "rain" || w.weather === "storm";
     if (d < 4.5 && !w.me.sleeping) {
       setDesc("A snake, coiled tight with its head raised, tongue flickering. It is watching you and ready to strike.", "coiled");
       if (now - st.warnedAt > 90_000) { st.warnedAt = now; this.say("A dry hiss, close by. A snake lies coiled in the grass, head raised, its eyes fixed on you.", e, 8); }
-      if (d < 1.3 && !frozen && now > st.cool && Math.random() < 0.6 * dt) {
+      if (d < 1.3 && !frozen && now > st.cool && sr() < 0.6 * dt) {
         st.cool = now + 40_000;
-        const part = Math.random() < 0.65 ? "shin" : "palm", venom = Math.random() < 0.35;
+        const part = sr() < 0.65 ? "shin" : "palm", venom = sr() < 0.35;
         const text = bodyApi.wound("bite", part, rand(0.3, 0.6), venom ? 40 : 25, "a snake bite", venom, rand(3, 8) * cfg("damageScale"), 1.5);
         w.stopWalk("a snake struck you"); this.emo.bump("dread", 0.5, "a snake's strike"); w.bump({ mood: -6, energy: -2 });
         this.notify(`A snake lunges out of the grass and bites: now there is ${text}.${venom ? " Something burns under the skin, and your head begins to swim." : ""}`);
@@ -148,7 +150,7 @@ export class Wildlife {
 
   // ---------- midges: they find River at night near the water ----------
   private midges(e: Entity, st: St, d: number, go: (x: number, z: number, s?: number) => void, roam: (r: number) => void, prot: boolean) {
-    const w = this.w, now = Date.now();
+    const w = this.w, now = simNow();
     if (d < 20 && !prot && w.weather !== "rain" && w.weather !== "storm") { go(w.me.x + Math.cos(now / 900) * 1.2, w.me.z + Math.sin(now / 900) * 1.2, 1.4); } else roam(6);
     if (d < 2.2 && !prot && now > st.cool && !w.me.sleeping) {
       st.cool = now + 45_000; const text = bodyApi.wound("welt", "forearm", 0.15, 12, "midges");
@@ -158,18 +160,18 @@ export class Wildlife {
 
   // ---------- birds ----------
   private bird(e: Entity, sp: Sp, st: St, d: number, go: (x: number, z: number, s?: number) => void, roam: (r: number, lo?: number, hi?: number) => void, night: boolean) {
-    const w = this.w, now = Date.now(), name = e.props.species;
+    const w = this.w, now = simNow(), name = e.props.species;
     if (name === "gull") {                                    // circling the shore, now and then settling
       e.props.alt = st.mode === "land" ? 0.15 : 3.5 + Math.sin(now / 2500 + e.x) * 1.2;
       if (st.mode === "land" && now > st.until || d < 4) { st.mode = "fly"; }
-      if (st.mode !== "land") { st.ang += 0.06; const R = 18; go(st.tx + Math.cos(st.ang) * R * 0.5, st.tz + Math.sin(st.ang) * R * 0.5, sp.speed); if (Math.random() < 0.002) { st.mode = "land"; st.until = now + rand(15, 40) * 1000; } }
+      if (st.mode !== "land") { st.ang += 0.06; const R = 18; go(st.tx + Math.cos(st.ang) * R * 0.5, st.tz + Math.sin(st.ang) * R * 0.5, sp.speed); if (sr() < 0.002) { st.mode = "land"; st.until = now + rand(15, 40) * 1000; } }
     } else if (name === "heron") {
       if (d < 8) { e.props.alt = 2.5; const a = Math.atan2(e.z - w.me.z, e.x - w.me.x); go(e.x + Math.cos(a) * 10, e.z + Math.sin(a) * 10, 2.4); } else { e.props.alt = 0; roam(2.5, 6, 20); }
     } else if (name === "owl") {
       e.props.alt = sp.alt;
       if (night && d < 6 && now - st.warnedAt > 120_000) { st.warnedAt = now; this.say("High in the branches, two round, pale eyes turn to follow you. An owl.", e, 9); }
       if (!night) return;
-      if (d < 2.5) { const t = [...w.entities.values()].filter((x) => x.kind === "tree").sort(() => Math.random() - 0.5)[0]; if (t) go(t.x, t.z, 4); }
+      if (d < 2.5) { const t = [...w.entities.values()].filter((x) => x.kind === "tree").sort(() => sr() - 0.5)[0]; if (t) go(t.x, t.z, 4); }
     } else {                                                  // songbirds flit tree to tree
       e.props.alt = 2.2 + Math.sin(now / 700 + e.x * 3) * 0.3;
       if (d < 3) { const a = Math.atan2(e.z - w.me.z, e.x - w.me.x); go(e.x + Math.cos(a) * 8, e.z + Math.sin(a) * 8, 4); } else roam(8, 2, 8);
@@ -178,7 +180,7 @@ export class Wildlife {
 
   // ---------- the large and dangerous ----------
   private predator(e: Entity, sp: Sp, st: St, d: number, dt: number, prot: boolean, shel: boolean, frozen: boolean, night: boolean, go: (x: number, z: number, s?: number) => void, roam: (r: number, lo?: number, hi?: number) => void, setDesc: (s: string, p?: string) => void) {
-    const w = this.w, me = w.me, now = Date.now(), key = e.props.species as string, scared = (e.props.scaredUntil ?? 0) > now;
+    const w = this.w, me = w.me, now = simNow(), key = e.props.species as string, scared = (e.props.scaredUntil ?? 0) > now;
     const away = (k: number) => { const a = Math.atan2(e.z - me.z, e.x - me.x); st.tx = e.x + Math.cos(a) * k; st.tz = e.z + Math.sin(a) * k; };
     const retreat = (secs: number, why: string) => { st.mode = "retreat"; st.until = now + secs * 1000; away(18); setDesc(`${sp.desc} It is backing off, wary, ${why}.`, "retreating"); };
     if (e.props.hp === undefined && sp.hp) { e.props.hp = sp.hp; e.props.maxHp = sp.hp; }
@@ -201,7 +203,7 @@ export class Wildlife {
       case "warn": {                                                            // a boar or bear giving River one last chance
         e.props.heading = Math.atan2(me.z - e.z, me.x - e.x);
         if (now > st.until) {
-          if (d < (key === "bear" ? 7 : 6) && !shel && !prot && !(frozen && Math.random() < 0.6)) { st.mode = "charge"; st.until = now + 8000; e.props.bluff = key === "bear" && Math.random() < 0.4; }
+          if (d < (key === "bear" ? 7 : 6) && !shel && !prot && !(frozen && sr() < 0.6)) { st.mode = "charge"; st.until = now + 8000; e.props.bluff = key === "bear" && sr() < 0.4; }
           else retreat(20, "the moment passed");
         }
         break;
@@ -246,14 +248,14 @@ export class Wildlife {
 
   private attack(e: Entity, sp: Sp, shel: boolean, frozen: boolean) {
     const w = this.w, me = w.me, key = e.props.species as string;
-    if (shel && Math.random() < 0.8) return void this.notify(`The ${key} hits the edge of your shelter and veers off, snarling.`);
-    if (key === "bear" && frozen && Math.random() < 0.5) return void this.notify("The bear rears over you, sniffs, and lumbers away. Staying still saved you.");
+    if (shel && sr() < 0.8) return void this.notify(`The ${key} hits the edge of your shelter and veers off, snarling.`);
+    if (key === "bear" && frozen && sr() < 0.5) return void this.notify("The bear rears over you, sniffs, and lumbers away. Staying still saved you.");
     const [kind, parts, lo, hi, heal, msg] =
       key === "wolf" ? ["bite", ["shin", "forearm", "shoulder"], 0.35, 0.7, 45, "A wolf lunges and sinks its teeth into you."]
       : key === "boar" ? ["gore", ["hip", "shin", "side"], 0.45, 0.85, 60, "The boar slams into you and rips upward with a tusk."]
       : ["claw", ["shoulder", "back", "forearm"], 0.65, 0.95, 90, "The bear's paw swings and knocks you flat, claws raking you."] as const;
     const dmg = (key === "wolf" ? rand(8, 16) : key === "boar" ? rand(15, 28) : rand(24, 42)) * cfg("damageScale"), bleed = key === "wolf" ? 5 : key === "boar" ? 4 : 11;
-    const text = bodyApi.wound(kind as any, parts[Math.floor(Math.random() * parts.length)], rand(lo, hi), heal, `a ${key}`, false, dmg, bleed);
+    const text = bodyApi.wound(kind as any, parts[Math.floor(sr() * parts.length)], rand(lo, hi), heal, `a ${key}`, false, dmg, bleed);
     w.stopWalk(`a ${key} attacked you`); if (me.sleeping) w.wake();
     this.emo.bump("dread", 0.6, `mauled by a ${key}`); w.bump({ energy: -6, mood: -9 });
     this.notify(`${msg} Now there is ${text}.`);
@@ -275,7 +277,7 @@ const weapon = (w: World) => {
 /** An animal dies: it becomes something River can butcher. */
 function kill(e: Entity, w: World, emo: Emotions | null) {
   const sp = e.props.species as string; w.removeEntity(e.id);
-  w.spawn("carcass", `${sp} carcass`, e.x, e.z, { species: sp, desc: `The ${sp}, dead. There is meat on it, and a hide worth taking.`, yields: ["meat", "hide"], stock: 3, max: 3, noRegrow: true, expires: Date.now() + 25 * 60_000 });
+  w.spawn("carcass", `${sp} carcass`, e.x, e.z, { species: sp, desc: `The ${sp}, dead. There is meat on it, and a hide worth taking.`, yields: ["meat", "hide"], stock: 3, max: 3, noRegrow: true, expires: simNow() + 25 * 60_000 });
   emo?.bump("pride", 0.4, `killed a ${sp}`); emo?.bump("dread", -0.2);
   log("world", `River killed a ${sp}.`, { perceived: true }); addMemory(`I killed a ${sp} at (${w.me.x.toFixed(0)}, ${w.me.z.toFixed(0)}) with ${weapon(w).name}.`, 7, ["danger"]);
 }
@@ -288,27 +290,27 @@ export const DEFEND_TOOL: ToolDef = {
     "`sharpen`: whittle a stick to a point, with a stone to scrape it. `bind`: lash a stone point and a strip of bark to a sharpened stick to make a spear. Fire and a shelter also keep animals away.",
   input_schema: obj({ action: { type: "string", enum: ["strike", "shout", "throw", "freeze", "sharpen", "bind"], description: "what to do" }, item: str("throw: the stone to throw (default: a stone)") }, ["action"]),
   run: async (a, w: World) => {
-    const act = String(a.action ?? ""), now = Date.now();
+    const act = String(a.action ?? ""), now = simNow();
     if (act === "sharpen") {
       const stick = w.findItem("stick"), stone = w.findItem("stone");
       if (!stick || !stone) throw new ToolError("To make a point you need a stick and a stone to scrape it on.");
-      w.setActivity("sharpening a stick"); await new Promise((r) => setTimeout(r, 4000)); w.takeItem(stick.id, 1);
+      w.setActivity("sharpening a stick"); await simSleep(4000); w.takeItem(stick.id, 1);
       w.addItem("weapon", "sharpened stick", "A stick whittled to a hard point. It will pierce.", 1, { dmg: 9, reach: 2.2 }); w.bump({ energy: -3 });
       return "You scrape the end of the stick against the stone until it holds a hard, narrow point.";
     }
     if (act === "bind") {
       const pt = w.findItem("sharpened stick"), stone = w.findItem("stone"), bark = [...w.inventory.values()].find((i) => i.kind === "bark" || i.kind === "hide");
       if (!pt || !stone || !bark) throw new ToolError("A spear needs a sharpened stick, a stone for the point, and a strip of bark or hide to lash it with.");
-      w.setActivity("binding a spear"); await new Promise((r) => setTimeout(r, 5000)); w.takeItem(pt.id, 1); w.takeItem(stone.id, 1); w.takeItem(bark.id, 1);
+      w.setActivity("binding a spear"); await simSleep(5000); w.takeItem(pt.id, 1); w.takeItem(stone.id, 1); w.takeItem(bark.id, 1);
       w.addItem("weapon", "stone-tipped spear", "A long stick with a chipped stone lashed to its end. It reaches well and cuts deep.", 1, { dmg: 17, reach: 2.7 }); w.bump({ energy: -3, mood: 4 });
       return "You wedge the stone into a split in the shaft and bind it tight, wrap after wrap. It has weight, and reach. It is a spear.";
     }
-    if (act === "freeze") { freezeUntil = now + 25_000; w.setActivity("holding perfectly still"); await new Promise((r) => setTimeout(r, 4000)); return "You go still, hardly breathing, and let the world move around you. It will last a while if you don't move."; }
+    if (act === "freeze") { freezeUntil = now + 25_000; w.setActivity("holding perfectly still"); await simSleep(4000); return "You go still, hardly breathing, and let the world move around you. It will last a while if you don't move."; }
     const threats = wildNear(w, 30).filter((o) => WILD[o.e.props.species].cls === "predator");
     if (act === "strike") {
       const wp = weapon(w), t = threats[0];
       if (!t || t.d > wp.reach + 1.1) throw new ToolError(t ? `The nearest threat is ${t.d.toFixed(0)}m away; with ${wp.name} you must be within ${(wp.reach + 1.1).toFixed(0)}m.` : "Nothing dangerous is close enough to strike.");
-      w.setActivity("fighting"); await new Promise((r) => setTimeout(r, 900)); w.bump({ energy: -3 });
+      w.setActivity("fighting"); await simSleep(900); w.bump({ energy: -3 });
       const e = t.e, dmg = wp.dmg * rand(0.7, 1.3), max = e.props.maxHp ?? 40;
       e.props.hp = (e.props.hp ?? max) - dmg; instance?.provoke(e);
       if (e.props.hp <= 0) { kill(e, w, (instance as any)?.emo ?? null); return `You drive ${wp.name} home and the ${e.props.species} staggers, drops, and does not get up. It is dead. Your hands are shaking.`; }
@@ -317,18 +319,18 @@ export const DEFEND_TOOL: ToolDef = {
       return `You strike the ${e.props.species} with ${wp.name}. ${left > 0.7 ? "It barely seems to notice." : left > 0.4 ? "It howls and its blows come wilder." : "It is badly hurt; it is wavering, looking for a way out."}`;
     }
     if (act === "shout") {
-      w.setActivity("shouting"); await new Promise((r) => setTimeout(r, 1500)); w.bump({ energy: -2 }); noiseUntil = now + 10_000;
+      w.setActivity("shouting"); await simSleep(1500); w.bump({ energy: -2 }); noiseUntil = now + 10_000;
       if (!threats.length) return "You shout. Your voice goes out over the island and nothing answers.";
       const out: string[] = [];
-      for (const { e, d } of threats) if (d < 24) { const chance = e.props.species === "bear" ? 0.4 : 0.6; if (Math.random() < chance) { e.props.scaredUntil = now + 40_000; out.push(`the ${e.props.species} flinches and backs away`); } else out.push(`the ${e.props.species} is not impressed`); }
+      for (const { e, d } of threats) if (d < 24) { const chance = e.props.species === "bear" ? 0.4 : 0.6; if (sr() < chance) { e.props.scaredUntil = now + 40_000; out.push(`the ${e.props.species} flinches and backs away`); } else out.push(`the ${e.props.species} is not impressed`); }
       return out.length ? `You roar at the dark. ${out.join("; ")}.` : "You shout, but nothing is near enough to hear it.";
     }
     if (act === "throw") {
       const stone = a.item ? w.findItem(String(a.item)) : w.findItem("stone");
       if (!stone || stone.kind !== "stone") throw new ToolError("You need a stone in your hands to throw.");
       const t = threats.find((o) => o.d < 14); if (!t) throw new ToolError("There's no dangerous animal close enough to throw at.");
-      w.setActivity("throwing a stone"); w.takeItem(stone.id, 1); await new Promise((r) => setTimeout(r, 1200));
-      const hit = Math.random() < clamp(0.85 - t.d * 0.035, 0.25, 0.8);
+      w.setActivity("throwing a stone"); w.takeItem(stone.id, 1); await simSleep(1200);
+      const hit = sr() < clamp(0.85 - t.d * 0.035, 0.25, 0.8);
       if (hit) { t.e.props.hp = (t.e.props.hp ?? 40) - 5; if (t.e.props.hp > 0) { t.e.props.scaredUntil = now + 25_000; return `The stone cracks against the ${t.e.props.species}'s flank. It yelps and shies away, for now.`; } kill(t.e, w, null); return `The stone catches the ${t.e.props.species} and it falls. It is dead.`; }
       return `Your stone skips past the ${t.e.props.species}. It doesn't even turn its head.`;
     }
@@ -347,8 +349,8 @@ export const FISH_TOOL: ToolDef = {
     if (!shore) throw new ToolError("You are not at the water's edge. Walk to the shore first.");
     const fish = wildNear(w, 7).find((o) => o.e.props.species === "fish");
     if (!fish) throw new ToolError("You crouch and wait, but no fish come near enough to the shore.");
-    w.setActivity("waiting for a fish"); await new Promise((r) => setTimeout(r, 6000));
-    const calm = Date.now() > noiseUntil ? 0.15 : 0, got = Math.random() < 0.3 + calm - fish.d * 0.02;
+    w.setActivity("waiting for a fish"); await simSleep(6000);
+    const calm = simNow() > noiseUntil ? 0.15 : 0, got = sr() < 0.3 + calm - fish.d * 0.02;
     w.bump({ energy: -3, curiosity: -2 });
     if (!got) return "A silver shape glides past your fingers and is gone. You wait for another.";
     w.removeEntity(fish.e.id); w.addItem("fish", "silver fish", "A cold, silver fish, still twitching. Good food, better cooked.", 1);

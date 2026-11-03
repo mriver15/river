@@ -6,6 +6,7 @@ import { isLand, mulberry32, heightAt } from "../shared/noise.ts";
 import type { CatalogEntry, Entity } from "../shared/types.ts";
 import type { Story } from "./story.ts";
 import type { World } from "./world.ts";
+import { simNow } from "./sim.ts";
 
 export const BOOKS: [string, string, string][] = [
   ["On Tides", "tides", "The sea breathes in and out twice a day, pulled by a moon that never touches it. Fishers say the best things wash up an hour after the lowest ebb."],
@@ -48,7 +49,7 @@ export class Catalog {
     this.load();
     for (const b of BUILTINS) {
       let r = this.rows.get(`b_${b.key}`);
-      if (!r) { r = { id: `b_${b.key}`, name: b.name, kind: b.kind, builtin: true, spec: { key: b.key, desc: b.desc, needs: b.needs, usual: b.kind === "pack" ? null : this.usualSpot(b.key) }, status: "available", x: null, z: null, ids: [], ts: Date.now() }; this.rows.set(r.id, r); this.save(r); }
+      if (!r) { r = { id: `b_${b.key}`, name: b.name, kind: b.kind, builtin: true, spec: { key: b.key, desc: b.desc, needs: b.needs, usual: b.kind === "pack" ? null : this.usualSpot(b.key) }, status: "available", x: null, z: null, ids: [], ts: simNow() }; this.rows.set(r.id, r); this.save(r); }
     }
     const ents = [...this.w.entities.values()], taken = new Set([...this.rows.values()].flatMap((r) => r.ids));
     const adopt = (key: string, pick: (e: Entity) => boolean, more: (e: Entity) => string[] = () => []) => {
@@ -90,8 +91,8 @@ export class Catalog {
 
   add(o: { name: string; desc: string; text?: string; glow?: boolean; fixed?: boolean }): string {
     const name = o.name.trim().slice(0, 60); if (!name) throw new Error("Give it a name.");
-    const id = `c_${slug(name)}_${Date.now().toString(36)}`;
-    const r: Row = { id, name, kind: o.fixed || o.glow ? "structure" : "item", builtin: false, spec: { desc: o.desc.trim().slice(0, 400) || "Something that wasn't here before.", text: o.text?.trim().slice(0, 1200) || undefined, glow: !!o.glow, fixed: !!o.fixed }, status: "available", x: null, z: null, ids: [], ts: Date.now() };
+    const id = `c_${slug(name)}_${simNow().toString(36)}`;
+    const r: Row = { id, name, kind: o.fixed || o.glow ? "structure" : "item", builtin: false, spec: { desc: o.desc.trim().slice(0, 400) || "Something that wasn't here before.", text: o.text?.trim().slice(0, 1200) || undefined, glow: !!o.glow, fixed: !!o.fixed }, status: "available", x: null, z: null, ids: [], ts: simNow() };
     this.rows.set(id, r); this.save(r); bus.emit("state"); return id;
   }
 

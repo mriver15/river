@@ -9,10 +9,12 @@ import type { Entity, FxKind, Weather } from "../shared/types.ts";
 import type { Emotions } from "./emotions.ts";
 import { SHY_MULT, type Creatures } from "./creatures.ts";
 import type { World } from "./world.ts";
+import { simNow, simRng, every, after } from "./sim.ts";
+const sr = simRng("ambient");
 
-const rand = (a: number, b: number) => a + Math.random() * (b - a);
-const pick = <T,>(xs: T[]): T => xs[Math.floor(Math.random() * xs.length)];
-const weighted = <T extends { weight: number }>(xs: T[]): T => { let r = Math.random() * xs.reduce((a, x) => a + x.weight, 0); return xs.find((x) => (r -= x.weight) < 0) ?? xs[0]; };
+const rand = (a: number, b: number) => a + sr() * (b - a);
+const pick = <T,>(xs: T[]): T => xs[Math.floor(sr() * xs.length)];
+const weighted = <T extends { weight: number }>(xs: T[]): T => { let r = sr() * xs.reduce((a, x) => a + x.weight, 0); return xs.find((x) => (r -= x.weight) < 0) ?? xs[0]; };
 const isNight = (w: World) => { const t = w.worldTime(); return t < 0.23 || t > 0.78; };
 
 // ---------- senses (also used by `look` and the per-cycle context) ----------
@@ -20,7 +22,7 @@ const WEATHER_TEXT: Record<Weather, string> = {
   clear: "clear sky", cloudy: "overcast, low grey cloud", rain: "steady rain", fog: "thick fog; the far trees are gone", storm: "a storm, wind and rain lashing", windy: "a strong, gusting wind",
 };
 export function sensesText(w: World): string {
-  const m = w.me, sounds: string[] = [], seed = Math.floor(Date.now() / 90_000);
+  const m = w.me, sounds: string[] = [], seed = Math.floor(simNow() / 90_000);
   const water = ([["east", 1, 0], ["south", 0, 1], ["west", -1, 0], ["north", 0, -1]] as const).filter(([, dx, dz]) => !w.isLandAt(m.x + dx * 14, m.z + dz * 14)).map(([n]) => n);
   if (water.length) sounds.push(`surf to the ${water.join(" and ")}`);
   const near = (kind: string, r: number) => w.nearby(r).some(({ e }) => e.kind === kind);
@@ -103,7 +105,7 @@ interface WEvent { name: string; weight: number; when?: (c: Ctx) => boolean; run
 
 function shorePoint(w: World) {
   for (let i = 0; i < 400; i++) {
-    const a = Math.random() * Math.PI * 2, r = rand(14, HALF - 4), x = Math.cos(a) * r, z = Math.sin(a) * r, h = heightAt(x, z, w.seed);
+    const a = sr() * Math.PI * 2, r = rand(14, HALF - 4), x = Math.cos(a) * r, z = Math.sin(a) * r, h = heightAt(x, z, w.seed);
     if (isLand(x, z, w.seed) && h > 0.3 && h < 1.1) return { x, z };
   }
   return null;
@@ -134,22 +136,22 @@ const EVENTS: WEvent[] = [
   { name: "bottle", weight: 3, run: (c) => {
       const p = shorePoint(c.w); if (!p) return;
       const text = pick(BOTTLE_NOTES);
-      c.w.spawn("item", "sealed bottle", p.x, p.z, { takeable: true, item: "bottle", itemName: "sealed bottle", desc: "A glass bottle sealed with wax, a rolled scrap of paper inside.", text, expires: Date.now() + 3 * HOUR });
+      c.w.spawn("item", "sealed bottle", p.x, p.z, { takeable: true, item: "bottle", itemName: "sealed bottle", desc: "A glass bottle sealed with wax, a rolled scrap of paper inside.", text, expires: simNow() + 3 * HOUR });
       c.say(`Something small glints at the waterline to the ${c.w.compass(p)}.`, p, 45);
     } },
   { name: "driftwood", weight: 3, run: (c) => {
       const p = shorePoint(c.w); if (!p) return;
-      c.w.spawn("item", "driftwood plank", p.x, p.z, { takeable: true, item: "plank", itemName: "driftwood plank", desc: "A bleached, salt-stiff plank of driftwood. Someone's boat, once.", expires: Date.now() + 3 * HOUR });
+      c.w.spawn("item", "driftwood plank", p.x, p.z, { takeable: true, item: "plank", itemName: "driftwood plank", desc: "A bleached, salt-stiff plank of driftwood. Someone's boat, once.", expires: simNow() + 3 * HOUR });
       c.say(`The tide has left a pale plank of driftwood on the shore to the ${c.w.compass(p)}.`, p, 40);
     } },
   { name: "footprints", weight: 2, run: (c) => {
       const p = landPoint(c.w);
-      c.w.spawn("trace", "strange footprints", p.x, p.z, { desc: "Bare footprints, a little larger than yours. They begin in the middle of the clearing and lead nowhere.", expires: Date.now() + 0.5 * HOUR });
+      c.w.spawn("trace", "strange footprints", p.x, p.z, { desc: "Bare footprints, a little larger than yours. They begin in the middle of the clearing and lead nowhere.", expires: simNow() + 0.5 * HOUR });
       c.say("There are footprints in the soft ground here that you do not remember making.", p, 18);
     } },
   { name: "offering", weight: 2, when: (c) => !!find(c.w, "shrine"), run: (c) => {
       const s = find(c.w, "shrine")!;
-      c.w.spawn("trace", "ring of white pebbles", s.x + 1.8, s.z + 0.4, { desc: "A neat ring of white pebbles, laid at the foot of the shrine. The stones are dry.", expires: Date.now() + 1 * HOUR });
+      c.w.spawn("trace", "ring of white pebbles", s.x + 1.8, s.z + 0.4, { desc: "A neat ring of white pebbles, laid at the foot of the shrine. The stones are dry.", expires: simNow() + 1 * HOUR });
       c.say("A ring of white pebbles has appeared at the foot of the shrine.", s, 22);
     } },
   { name: "symbol", weight: 2, run: (c) => {
@@ -161,31 +163,31 @@ const EVENTS: WEvent[] = [
       const l = find(c.w, "library")!;
       const have = new Set([...c.w.entities.values()].filter((e) => e.kind === "book").map((e) => e.props.title));
       const fresh = BOOKS.filter(([t]) => !have.has(t)); if (!fresh.length) return;
-      const [title, topic, text] = pick(fresh), a = Math.random() * Math.PI * 2;
+      const [title, topic, text] = pick(fresh), a = sr() * Math.PI * 2;
       c.w.spawn("book", `book: ${title}`, l.x + Math.cos(a) * 1.8, l.z + Math.sin(a) * 1.8, { takeable: true, item: "book", desc: `A book titled "${title}". The cover is still dry.`, text, topic, title });
       c.say("There is a book in the Old Library that wasn't there before. Its cover is still dry.", l, 30);
     } },
-  { name: "golden-light", weight: 2, when: (c) => !c.night, run: (c) => { c.w.weather = "clear"; kvSet("weather", { w: "clear", until: Date.now() + rand(240_000, 480_000) }); c.say("The cloud breaks, and low gold light floods the island, every leaf and wet stone lit from within."); } },
-  { name: "stars-clear", weight: 2, when: (c) => c.night, run: (c) => { c.w.weather = "clear"; kvSet("weather", { w: "clear", until: Date.now() + rand(240_000, 480_000) }); c.say("The cloud draws back and the stars come out, thick and close, as if the sky had leaned in to look."); } },
+  { name: "golden-light", weight: 2, when: (c) => !c.night, run: (c) => { c.w.weather = "clear"; kvSet("weather", { w: "clear", until: simNow() + rand(240_000, 480_000) }); c.say("The cloud breaks, and low gold light floods the island, every leaf and wet stone lit from within."); } },
+  { name: "stars-clear", weight: 2, when: (c) => c.night, run: (c) => { c.w.weather = "clear"; kvSet("weather", { w: "clear", until: simNow() + rand(240_000, 480_000) }); c.say("The cloud draws back and the stars come out, thick and close, as if the sky had leaned in to look."); } },
   { name: "animals-return", weight: 2, run: (c) => {
-      const me = c.w.me, a = Math.random() * Math.PI * 2, x = me.x + Math.cos(a) * 9, z = me.z + Math.sin(a) * 9; if (!isLand(x, z, c.w.seed)) return;
-      const e = c.w.spawn("animal", "deer", x, z, { species: "deer", desc: SPECIES.deer.desc, heading: a + Math.PI, calmUntil: Date.now() + 150_000 });
+      const me = c.w.me, a = sr() * Math.PI * 2, x = me.x + Math.cos(a) * 9, z = me.z + Math.sin(a) * 9; if (!isLand(x, z, c.w.seed)) return;
+      const e = c.w.spawn("animal", "deer", x, z, { species: "deer", desc: SPECIES.deer.desc, heading: a + Math.PI, calmUntil: simNow() + 150_000 });
       c.say(`A deer steps out of the trees and stands at the edge of the clearing, simply looking at you.`, e, 20);
     } },
   { name: "rustle", weight: 3, when: (c) => c.night, run: (c) => {
       c.say("Something moves in the dark, just past where you can see.");
-      setTimeout(() => {       // it stays ambiguous for a while, and then it is a fox, or it is nothing
+      after(28_000, () => {       // it stays ambiguous for a while, and then it is a fox, or it is nothing
         const fox = [...c.w.entities.values()].find((e) => e.kind === "animal" && e.props.species === "fox" && c.w.dist(e) < 45);
         c.say(fox ? "A fox's eyes catch the light for an instant, then it is gone." : "Nothing. Only the wind in the leaves, you tell yourself.");
-      }, 28_000);
+      });
     } },
   { name: "dew-web", weight: 2, when: (c) => !c.night && c.w.worldTime() < 0.4 && c.w.weather !== "rain" && c.w.weather !== "storm", run: (c) => c.say("In the early light every spider's web on the island is strung with beads of dew, thousands of small bright constellations hung between the branches.") },
   { name: "tide-pool", weight: 2, when: (c) => !c.night && !!shorePoint(c.w), run: (c) => { const p = shorePoint(c.w)!; c.say(`The tide has drawn back far enough to leave a mirror-flat pool on the shore to the ${c.w.compass(p)}, and in it the sky is perfectly still.`, p, 70); } },
   { name: "seed-drift", weight: 2, when: (c) => !c.night && c.w.weather !== "rain", run: (c) => {
       const me = c.w.me; let first: Entity | null = null;
       for (let i = 0; i < 3; i++) {
-        const a = Math.random() * Math.PI * 2, r = rand(6, 18), x = me.x + Math.cos(a) * r, z = me.z + Math.sin(a) * r; if (!isLand(x, z, c.w.seed)) continue;
-        const e = c.w.spawn("sprout", "tiny sprout", x, z, { desc: "A tiny shoot where there was nothing before. A seed must have drifted here.", born: Date.now(), ms: 140_000, grow: "flower", grownName: "windflower", grown: { takeable: true, item: "flower", itemName: "windflower", desc: "A pale flower that grew from a drifting seed." } });
+        const a = sr() * Math.PI * 2, r = rand(6, 18), x = me.x + Math.cos(a) * r, z = me.z + Math.sin(a) * r; if (!isLand(x, z, c.w.seed)) continue;
+        const e = c.w.spawn("sprout", "tiny sprout", x, z, { desc: "A tiny shoot where there was nothing before. A seed must have drifted here.", born: simNow(), ms: 140_000, grow: "flower", grownName: "windflower", grown: { takeable: true, item: "flower", itemName: "windflower", desc: "A pale flower that grew from a drifting seed." } });
         first ??= e;
       }
       c.say("Pale seeds drift across the clearing on the air like slow snow, and settle in the grass.", first ?? undefined, 40);
@@ -201,7 +203,7 @@ const WEATHER_START: Record<Weather, string> = {
 
 export class Ambient {
   private weatherUntil = kvGet<{ until: number }>("weather", { until: 0 }).until;
-  private nextEvent = Date.now() + rand(40_000, 120_000);
+  private nextEvent = simNow() + rand(40_000, 120_000);
   private last = new Map<string, number>();
   private noted = new Map<string, number>();
   private animalState = new Map<string, { tx: number; tz: number; wait: number }>();
@@ -215,7 +217,7 @@ export class Ambient {
 
   constructor(private w: World, private notify: (msg: string) => void) {
     // after a scare passes, the world offers something gentle
-    bus.on("relief", () => setTimeout(() => this.offerRelief(), rand(8_000, 20_000)));
+    bus.on("relief", () => after(rand(8_000, 20_000), () => this.offerRelief()));
   }
 
   /**
@@ -234,7 +236,7 @@ export class Ambient {
     return 1;
   }
   /** Choose the next strange happening: what is possible now, shaped by tone (contrast with River's heart) and theme (variety). */
-  pickEvent(now = Date.now()): WEvent | null {
+  pickEvent(now = simNow()): WEvent | null {
     const ctx: Ctx = { w: this.w, say: this.say, fx: this.fx, night: isNight(this.w) };
     const ok = EVENTS.filter((e) => (this.last.get(e.name) ?? 0) < now - 10 * 60_000 && (!e.when || e.when(ctx)));
     return ok.length ? weighted(ok.map((x) => ({ x, weight: x.weight * this.toneWeight(TONE[x.name] ?? "mystery") * this.themeWeight(x.name) }))).x : null;
@@ -242,12 +244,12 @@ export class Ambient {
   private offerRelief() {
     const ctx: Ctx = { w: this.w, say: this.say, fx: this.fx, night: isNight(this.w) };
     const ok = EVENTS.filter((e) => (TONE[e.name] === "calm" || TONE[e.name] === "beauty") && (!e.when || e.when(ctx)));
-    if (ok.length) { const e = weighted(ok); this.last.set(e.name, Date.now()); this.current = e.name; e.run(ctx); }
+    if (ok.length) { const e = weighted(ok); this.last.set(e.name, simNow()); this.current = e.name; e.run(ctx); }
   }
 
   /** A new world: forget schedules and creatures, then repopulate. */
   reset() {
-    this.weatherUntil = 0; this.nextEvent = Date.now() + rand(40_000, 120_000);
+    this.weatherUntil = 0; this.nextEvent = simNow() + rand(40_000, 120_000);
     this.last.clear(); this.noted.clear(); this.animalState.clear();
     this.syncWildlife();
   }
@@ -255,8 +257,8 @@ export class Ambient {
   start() {
     if (cfg("ambientRate") <= 0) return;
     this.expire(); this.syncWildlife();
-    setInterval(() => this.slow(), 1000);
-    setInterval(() => this.animals(0.5), 500);
+    every(1000, () => this.slow(), "ambient.slow");
+    every(500, () => this.animals(0.5), "ambient.animals");
   }
 
   /** Fire a named happening now (debugging / testing). */
@@ -277,9 +279,9 @@ export class Ambient {
   private fx = (kind: FxKind) => bus.emit("fx", { t: "fx", kind });
 
   private slow() {
-    const now = Date.now(), w = this.w;
+    const now = simNow(), w = this.w;
     if (now >= this.weatherUntil) this.changeWeather();
-    if (w.weather === "storm" && Math.random() < 0.03) { this.fx("lightning"); if (Math.random() < 0.3) bus.emit("strike"); if (Math.random() < 0.4) this.say("Thunder cracks, close enough to feel in your chest."); }
+    if (w.weather === "storm" && sr() < 0.03) { this.fx("lightning"); if (sr() < 0.3) bus.emit("strike"); if (sr() < 0.4) this.say("Thunder cracks, close enough to feel in your chest."); }
     if (now >= this.nextEvent) {
       if (this.emotions?.absorbed() && this.deferred < 3) { this.deferred++; this.nextEvent = now + 120_000; }       // don't interrupt deep work with trivia
       else {
@@ -296,7 +298,7 @@ export class Ambient {
     const emo = this.emotions, calmLong = (emo?.calmFor() ?? 0) > 20 * 60_000, strained = (emo?.arousal() ?? 0) > 0.55;
     let next = weighted(WEATHERS.filter((x) => x.w !== prev).map((x) => ({ ...x, weight: x.weight * (x.w === "storm" ? (strained ? 0 : calmLong ? 2.5 : 1) : 1) }))).w;
     if (prev === "storm") next = "rain";
-    w.weather = cfg("weather") ? next : "clear"; this.weatherUntil = Date.now() + rand(180_000, 540_000) / cfg("ambientRate");
+    w.weather = cfg("weather") ? next : "clear"; this.weatherUntil = simNow() + rand(180_000, 540_000) / cfg("ambientRate");
     kvSet("weather", { w: next, until: this.weatherUntil });
     if (prev === w.weather) return;
     this.say(WEATHER_START[next]);
@@ -307,19 +309,19 @@ export class Ambient {
     const w = this.w, trees = [...w.entities.values()].filter((e) => e.kind === "tree");
     if (!trees.length) return;
     let first: Entity | null = null;
-    for (let i = 0; i < 3 + Math.floor(Math.random() * 3); i++) {
-      const t = pick(trees), a = Math.random() * 6.28, x = t.x + Math.cos(a) * 1.8, z = t.z + Math.sin(a) * 1.8;
+    for (let i = 0; i < 3 + Math.floor(sr() * 3); i++) {
+      const t = pick(trees), a = sr() * 6.28, x = t.x + Math.cos(a) * 1.8, z = t.z + Math.sin(a) * 1.8;
       if (!isLand(x, z, w.seed)) continue;
-      const glow = Math.random() < 0.15;
-      const e = w.spawn("mushroom", glow ? "glowcap mushroom" : "brown mushroom", x, z, { takeable: true, item: "mushroom", desc: "A mushroom, new since the rain.", expires: Date.now() + 2 * HOUR });
+      const glow = sr() < 0.15;
+      const e = w.spawn("mushroom", glow ? "glowcap mushroom" : "brown mushroom", x, z, { takeable: true, item: "mushroom", desc: "A mushroom, new since the rain.", expires: simNow() + 2 * HOUR });
       first ??= e;
     }
     if (first) this.say("After the rain, mushrooms have pushed up through the leaf litter.", first, 30);
-    if (w.worldTime() > 0.25 && w.worldTime() < 0.75 && Math.random() < 0.6) this.say("A rainbow arches over the island, one foot somewhere out in the sea.");
+    if (w.worldTime() > 0.25 && w.worldTime() < 0.75 && sr() < 0.6) this.say("A rainbow arches over the island, one foot somewhere out in the sea.");
   }
 
   private expire() {
-    const now = Date.now();
+    const now = simNow();
     for (const e of [...this.w.entities.values()]) if (e.props.expires && e.props.expires < now) this.w.removeEntity(e.id);
   }
 
@@ -334,14 +336,14 @@ export class Ambient {
       if (!allowed) { list.forEach((e) => w.removeEntity(e.id)); continue; }
       for (let i = list.length; i < s.count; i++) {
         const p = landPoint(w, undefined, HALF - 8);
-        const e = w.spawn("animal", s.name, p.x, p.z, { species: key, desc: s.desc, heading: Math.random() * 6.28 });
+        const e = w.spawn("animal", s.name, p.x, p.z, { species: key, desc: s.desc, heading: sr() * 6.28 });
         this.animalState.set(e.id, { tx: p.x, tz: p.z, wait: rand(1, 6) });
       }
     }
   }
 
   private animals(dt: number) {
-    const w = this.w, now = Date.now(), persist = now - this.lastPersist > 30_000;
+    const w = this.w, now = simNow(), persist = now - this.lastPersist > 30_000;
     if (persist) this.lastPersist = now;
     for (const e of w.entities.values()) {
       if (e.kind !== "animal") continue;
@@ -365,7 +367,7 @@ export class Ambient {
       } else if (st.wait > 0) { st.wait -= dt; if (e.props.species === "firefly") { e.x += rand(-0.2, 0.2); e.z += rand(-0.2, 0.2); w.moveEntity(e); } continue; }
       if (!(s.shy && !calm && dMe < shy)) e.props.fleeing = false;
       let dx = st.tx - e.x, dz = st.tz - e.z; const d = Math.hypot(dx, dz);
-      if (d < 0.4) { st.wait = rand(3, 12); const a = Math.random() * 6.28, r = rand(3, 9); st.tx = e.x + Math.cos(a) * r; st.tz = e.z + Math.sin(a) * r; continue; }
+      if (d < 0.4) { st.wait = rand(3, 12); const a = sr() * 6.28, r = rand(3, 9); st.tx = e.x + Math.cos(a) * r; st.tz = e.z + Math.sin(a) * r; continue; }
       const nx = e.x + (dx / d) * speed * dt, nz = e.z + (dz / d) * speed * dt;
       if (!isLand(nx, nz, w.seed)) { st.tx = e.x - dx; st.tz = e.z - dz; st.wait = 0; continue; }
       e.x = nx; e.z = nz; e.props.heading = Math.atan2(dz, dx);

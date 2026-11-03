@@ -16,3 +16,9 @@ export interface ToolDef {
 export const str = (d: string) => ({ type: "string", description: d });
 export const num = (d: string) => ({ type: "number", description: d });
 export const obj = (properties: Record<string, any>, required: string[] = []) => ({ type: "object" as const, properties, required, additionalProperties: false as const });
+
+// Simulation time and chance. Plugins must use these, never setTimeout or Math.random: the world can pause, speed up and replay.
+export { simSleep as wait } from "./sim.ts";
+import { simRng } from "./sim.ts";
+/** Seeded random number in [0, 1) from the shared plugin stream. */
+export const rand = simRng("plugin");

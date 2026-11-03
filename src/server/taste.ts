@@ -6,6 +6,7 @@ import { db } from "./db.ts";
 import { palette } from "./colour.ts";
 import { ToolError, obj, str, type ToolDef } from "./toolkit.ts";
 import type { Opinion, TasteView, Work } from "../shared/types.ts";
+import { simNow } from "./sim.ts";
 
 const SCORE = { love: 2, like: 1, dislike: -1, hate: -2 } as const;
 const rowOp = (r: any): Opinion => ({ id: r.id, subject: r.subject, stance: r.stance, why: r.why, ts: r.ts, strength: r.strength });
@@ -16,10 +17,10 @@ export function setOpinion(subject: string, stance: Opinion["stance"], why: stri
   const prev = db.prepare("SELECT * FROM opinions WHERE subject = ?").get(s) as any;
   if (prev) {                        // holding an opinion again deepens it; reversing it is a change of heart
     const same = prev.stance === stance, strength = same ? prev.strength + 1 : 1;
-    db.prepare("UPDATE opinions SET stance=?, why=?, ts=?, strength=? WHERE id=?").run(stance, why || prev.why, Date.now(), strength, prev.id);
+    db.prepare("UPDATE opinions SET stance=?, why=?, ts=?, strength=? WHERE id=?").run(stance, why || prev.why, simNow(), strength, prev.id);
     bus.emit("state"); return { op: rowOp(db.prepare("SELECT * FROM opinions WHERE id=?").get(prev.id)), changed: !same };
   }
-  const r = db.prepare("INSERT INTO opinions(subject, stance, why, ts) VALUES(?,?,?,?)").run(s, stance, why.slice(0, 240), Date.now());
+  const r = db.prepare("INSERT INTO opinions(subject, stance, why, ts) VALUES(?,?,?,?)").run(s, stance, why.slice(0, 240), simNow());
   log("desire", `Opinion: ${stance} ${s}${why ? ` — ${why}` : ""}`); bus.emit("state");
   return { op: rowOp(db.prepare("SELECT * FROM opinions WHERE id=?").get(r.lastInsertRowid)), changed: false };
 }
@@ -39,7 +40,7 @@ export function align(tags: string[]): { score: number; liked: string[]; dislike
 
 // ---------- what River has made ----------
 export function addWork(w: Omit<Work, "id" | "ts">, entity: string) {
-  db.prepare("INSERT INTO works(ts,name,shape,size,materials,colors,color_names,x,z,entity) VALUES(?,?,?,?,?,?,?,?,?,?)").run(Date.now(), w.name, w.shape, w.size, JSON.stringify(w.materials), JSON.stringify(w.colors), JSON.stringify(w.colorNames), w.x, w.z, entity);
+  db.prepare("INSERT INTO works(ts,name,shape,size,materials,colors,color_names,x,z,entity) VALUES(?,?,?,?,?,?,?,?,?,?)").run(simNow(), w.name, w.shape, w.size, JSON.stringify(w.materials), JSON.stringify(w.colors), JSON.stringify(w.colorNames), w.x, w.z, entity);
   bus.emit("state");
 }
 export const works = (n = 12): Work[] => (db.prepare("SELECT * FROM works ORDER BY id DESC LIMIT ?").all(n) as any[]).map((r) => ({ id: r.id, ts: r.ts, name: r.name, shape: r.shape, size: r.size, materials: JSON.parse(r.materials), colors: JSON.parse(r.colors), colorNames: JSON.parse(r.color_names), x: r.x, z: r.z }));

@@ -7,8 +7,11 @@ import { DEFAULT_SEED, HALF, WORLD_SIZE, groveness, heightAt, isLand, mulberry32
 import { HEAT_N } from "../shared/types.ts";
 import type { EmotionName } from "../shared/emotions.ts";
 import type { AgentView, Entity, EntityKind, InventoryItem, Needs, Weather } from "../shared/types.ts";
+import { simNow, simRng, after, DAY_MS, legacyWallBoot } from "./sim.ts";
+const sr = simRng("world");
 
-export const dayMs = () => cfg("dayMinutes") * 60_000;
+/** One canonical day. Day length is now the clock speed (cfg dayMinutes), not a property of the calendar. */
+export const dayMs = () => DAY_MS;
 /** distance from a point to a line segment */
 export function segDist(px: number, pz: number, x1: number, z1: number, x2: number, z2: number): number {
   const dx = x2 - x1, dz = z2 - z1, l2 = dx * dx + dz * dz || 1, t = Math.max(0, Math.min(1, ((px - x1) * dx + (pz - z1) * dz) / l2));
@@ -57,7 +60,11 @@ export class World {
   init() {
     this.seed = kvGet<number>("seed", DEFAULT_SEED);
     this.epoch = kvGet<number>("epoch", 0);
-    if (!this.epoch) { this.epoch = Date.now() - 0.3 * dayMs(); kvSet("epoch", this.epoch); }
+    if (!kvGet<boolean>("epochOnSim", false)) {            // legacy worlds measured the epoch on the wall clock, in cfg dayMinutes-long days
+      if (this.epoch) this.epoch = simNow() - ((legacyWallBoot - this.epoch) / (cfg("dayMinutes") * 60_000)) * DAY_MS;
+      kvSet("epochOnSim", true); if (this.epoch) kvSet("epoch", this.epoch);
+    }
+    if (!this.epoch) { this.epoch = simNow() - 0.3 * dayMs(); kvSet("epoch", this.epoch); }
     this.nextId = kvGet<number>("nextId", 1);
     this.weather = kvGet<{ w: Weather }>("weather", { w: "clear" }).w;
     const rows = db.prepare("SELECT * FROM entities").all() as any[];
@@ -165,9 +172,9 @@ export class World {
     for (const e of [...this.entities.values()]) if (e.props.beat) this.removeEntity(e.id);   // the old story's traces
     if (freshWorld) {
       this.quiet = true;
-      this.seed = Math.floor(Math.random() * 2_000_000_000); kvSet("seed", this.seed);
+      this.seed = Math.floor(sr() * 2_000_000_000); kvSet("seed", this.seed);
       this.entities.clear(); this.nextId = 1; kvSet("nextId", 1);
-      this.epoch = Date.now() - 0.3 * dayMs(); kvSet("epoch", this.epoch);
+      this.epoch = simNow() - 0.3 * dayMs(); kvSet("epoch", this.epoch);
       this.weather = "clear"; kvSet("weather", { w: "clear", until: 0 });
       this.heat.fill(0); this.scorch.fill(0); kvSet("heat", []); kvSet("scorch", []);
       this.generate(); this.ensureMaterials();
@@ -272,10 +279,8 @@ export class World {
     const dm = dayMs(), f = this.worldTime(), adv = ((f < 0.25 ? 0.25 - f : 1.25 - f)) * dm;
     this.epoch -= adv; kvSet("epoch", this.epoch); return this.day();
   }
-  /** Day length changed: keep the same moment of the same day. */
-  rebaseDay(oldMs: number) { const elapsed = (Date.now() - this.epoch) / oldMs; this.epoch = Date.now() - elapsed * dayMs(); kvSet("epoch", this.epoch); }
-  worldTime() { return (((Date.now() - this.epoch) / dayMs()) % 1 + 1) % 1; }
-  day() { return Math.floor((Date.now() - this.epoch) / dayMs()) + 1; }
+  worldTime() { return (((simNow() - this.epoch) / dayMs()) % 1 + 1) % 1; }
+  day() { return Math.floor((simNow() - this.epoch) / dayMs()) + 1; }
   timeLabel() {
     const t = this.worldTime() * 24, h = Math.floor(t), m = Math.floor((t - h) * 60);
     const part = h < 5 ? "deep night" : h < 8 ? "dawn" : h < 12 ? "morning" : h < 17 ? "afternoon" : h < 20 ? "evening" : "night";
@@ -284,7 +289,7 @@ export class World {
 
   // ---------- agent actions ----------
   setActivity(a: string) { this.me.activity = a; }
-  say(text: string) { this.me.speech = text; this.me.speechUntil = Date.now() + Math.min(12000, 3000 + text.length * 60); }
+  say(text: string) { this.me.speech = text; this.me.speechUntil = simNow() + Math.min(12000, 3000 + text.length * 60); }
   bump(n: Partial<Needs>) {
     for (const k of Object.keys(n) as (keyof Needs)[]) this.me.needs[k] = Math.max(0, Math.min(100, this.me.needs[k] + (n[k] ?? 0)));
   }
@@ -297,7 +302,7 @@ export class World {
       this.walk = { x, z, label, resolve, stuck: 0, lastD: Infinity };
       this.me.activity = `walking to ${label}`;
       // safety timeout
-      setTimeout(() => { if (this.walk?.resolve === resolve) this.finishWalk(false, "took too long"); }, 90_000);
+      after(90_000, () => { if (this.walk?.resolve === resolve) this.finishWalk(false, "took too long"); });
     });
   }
   /** Something stops River mid-step (a fall, say). The walk reports why. */
@@ -308,13 +313,13 @@ export class World {
   }
   restFor(seconds: number): Promise<void> {
     const s = Math.max(3, Math.min(60, seconds));
-    this.sleepStart = Date.now(); this.me.sleeping = true; this.me.sleepUntil = Date.now() + s * 1000; this.me.activity = "resting";
-    return new Promise((r) => setTimeout(() => { this.wake(); r(); }, s * 1000));
+    this.sleepStart = simNow(); this.me.sleeping = true; this.me.sleepUntil = simNow() + s * 1000; this.me.activity = "resting";
+    return new Promise((r) => after(s * 1000, () => { this.wake(); r(); }));
   }
   /** End sleep (idempotent). Long sleeps are announced so the agent can dream. */
   wake() {
     if (!this.me.sleeping) return;
-    const secs = (Date.now() - (this.sleepStart || Date.now())) / 1000;
+    const secs = (simNow() - (this.sleepStart || simNow())) / 1000;
     this.me.sleeping = false; this.me.activity = "idle"; this.sleepStart = 0;
     if (secs >= 15) bus.emit("slept", { seconds: secs });
   }
@@ -329,7 +334,7 @@ export class World {
       const i = gz * HEAT_N + gx; this.scorch[i] = Math.min(4, this.scorch[i] + amount * (1 - d / (radius + 0.01) * 0.6));
     }
     kvSet("scorch", Array.from(this.scorch, (v) => Math.round(v * 100) / 100));
-    if (Date.now() - this.lastScorchEmit > 1500) { this.lastScorchEmit = Date.now(); bus.emit("heat"); }
+    if (simNow() - this.lastScorchEmit > 1500) { this.lastScorchEmit = simNow(); bus.emit("heat"); }
   }
 
   private stamp(x: number, z: number, dt: number) {
@@ -369,9 +374,9 @@ export class World {
     return false;
   }
 
-  /** 10Hz simulation step */
+  /** One simulation step (called every tick; dt is 0.1 s) */
   tick(dt: number) {
-    const m = this.me, now = Date.now();
+    const m = this.me, now = simNow();
     if (m.speech && now > m.speechUntil) m.speech = null;
 
     // needs

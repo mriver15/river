@@ -8,6 +8,8 @@ import { bus, log } from "./bus.ts";
 import { ToolError, obj, str, type ToolDef } from "./toolkit.ts";
 import type { Entity, Weather } from "../shared/types.ts";
 import type { World } from "./world.ts";
+import { simNow, simRng, simSleep, every } from "./sim.ts";
+const sr = simRng("fire");
 
 interface Flam { dur: number; radius: number; p: number }
 /** seconds to burn out, spread radius (m), per-second chance to ignite each neighbour in range */
@@ -18,7 +20,7 @@ const FLAM: Record<string, Flam> = {
 };
 const flam = (e: Entity): Flam | null => (e.kind === "structure" && e.props.flammable === false ? null : e.kind === "item" ? (["plank", "flute"].includes(e.props.item) ? FLAM.item : null) : FLAM[e.kind] ?? null);
 const WEATHER_SPREAD: Record<Weather, number> = { clear: 1, cloudy: 0.9, windy: 1.7, fog: 0.5, rain: 0.15, storm: 0.05 };
-const rand = (a: number, b: number) => a + Math.random() * (b - a);
+const rand = (a: number, b: number) => a + sr() * (b - a);
 const CHAR_REGROW_MS = 30 * 60_000;
 
 export const isBurning = (e: Entity) => !!e.props.burning;
@@ -31,7 +33,7 @@ export class Fire {
   constructor(private w: World, private say: (text: string, at?: { x: number; z: number }, r?: number) => boolean, private notify: (m: string) => void) {}
 
   start() {
-    setInterval(() => this.tick(), 1000);
+    every(1000, () => this.tick(), "fire");
     bus.on("strike", () => this.lightning());
   }
 
@@ -40,7 +42,7 @@ export class Fire {
   ignite(e: Entity, cause: "river" | "lightning" | "spread"): boolean {
     const f = flam(e); if (!f || isBurning(e)) return false;
     const wet = this.w.weather === "rain" ? 0.7 : this.w.weather === "storm" ? 0.5 : 1;
-    e.props.burning = { since: Date.now(), ends: Date.now() + f.dur * 1000 * rand(0.8, 1.25) * wet };
+    e.props.burning = { since: simNow(), ends: simNow() + f.dur * 1000 * rand(0.8, 1.25) * wet };
     this.w.putEntity(e);
     if (cause !== "spread") log("world", cause === "river" ? `${this.w.me.name} set the ${e.name} alight.` : `Lightning struck the ${e.name}; it caught fire.`, { id: e.id });
     return true;
@@ -49,14 +51,14 @@ export class Fire {
   private lightning() {
     const trees = [...this.w.entities.values()].filter((e) => e.kind === "tree" && !isBurning(e));
     if (!trees.length) return;
-    const t = trees[Math.floor(Math.random() * trees.length)];
+    const t = trees[Math.floor(sr() * trees.length)];
     if (this.ignite(t, "lightning")) {
       this.say(`A fork of lightning hits the ${t.name} to the ${this.w.compass(t)}; it splits and catches fire.`, t, 80);
     }
   }
 
   private tick() {
-    const w = this.w, now = Date.now(); this.tickN++;
+    const w = this.w, now = simNow(); this.tickN++;
     const burning = [...w.entities.values()].filter(isBurning);
     if (this.tickN % 10 === 0) this.regrow();
     if (!burning.length) return;
@@ -70,7 +72,7 @@ export class Fire {
         if (o === e || isBurning(o)) continue;
         const of = flam(o); if (!of) continue;
         const d = Math.hypot(o.x - e.x, o.z - e.z); if (d > f.radius) continue;
-        if (Math.random() < f.p * wk * (1 - 0.5 * d / f.radius)) { if (this.ignite(o, "spread")) caught.push(o); }
+        if (sr() < f.p * wk * (1 - 0.5 * d / f.radius)) { if (this.ignite(o, "spread")) caught.push(o); }
       }
       if (now >= e.props.burning.ends) this.burnOut(e);
     }
@@ -99,7 +101,7 @@ export class Fire {
     w.burnMark(e.x, e.z, oldKind === "tree" || oldKind === "structure" ? 2.8 : 1.6, oldKind === "tree" ? 1.4 : 1);
     if (oldKind === "tree" || oldKind === "bush" || oldKind === "structure") {
       e.kind = "char"; e.name = `burnt ${name}`;
-      e.props = { wasKind: oldKind, was: name, desc: `What is left of the ${name}: blackened, brittle, still warm to the touch. Ash lies thick around it.`, regrowAt: Date.now() + CHAR_REGROW_MS, yields: ["charcoal"], stock: 2, max: 2, noRegrow: true };
+      e.props = { wasKind: oldKind, was: name, desc: `What is left of the ${name}: blackened, brittle, still warm to the touch. Ash lies thick around it.`, regrowAt: simNow() + CHAR_REGROW_MS, yields: ["charcoal"], stock: 2, max: 2, noRegrow: true };
       w.putEntity(e);
     } else w.removeEntity(e.id);                                  // small plants, books, planks: gone
     this.say(`The ${name} has burnt itself out.`, e, 40);
@@ -107,7 +109,7 @@ export class Fire {
 
   /** Time heals: burnt ground greens first with fireweed. */
   private regrow() {
-    const now = Date.now();
+    const now = simNow();
     for (const e of [...this.w.entities.values()]) {
       if (e.kind !== "char" || !e.props.regrowAt || e.props.regrowAt > now) continue;
       this.w.removeEntity(e.id);
@@ -138,9 +140,9 @@ export const BURN_TOOL: ToolDef = {
     if (a.action === "smother") {
       if (!isBurning(e)) throw new ToolError(`${e.name} isn't burning.`);
       w.setActivity("beating at the flames");
-      await new Promise((r) => setTimeout(r, 5000));
+      await simSleep(5000);
       if (!isBurning(e)) return `By the time you reach it, the ${e.name} has already burnt itself out.`;
-      if (Math.random() < 0.65) {
+      if (sr() < 0.65) {
         delete e.props.burning; w.putEntity(e); w.burnMark(e.x, e.z, 1.2, 0.6); w.bump({ energy: -6, mood: 5 });
         return `You smother the flames on the ${e.name} with armfuls of earth and wet leaves until they gutter and die. Black, but standing. Your hands are shaking.`;
       }
@@ -163,7 +165,7 @@ export const BURN_TOOL: ToolDef = {
     else throw new ToolError("You have no way to make a spark. A glowing coal, or a stick and a stone, or a stick and a fire to light it from.");
 
     w.setActivity("setting a fire");
-    await new Promise((r) => setTimeout(r, 4000));
+    await simSleep(4000);
     fire.ignite(e, "river");
     w.bump({ curiosity: -6, mood: 3 });
     const wind = w.weather === "windy" ? " The wind is tugging the flames sideways." : w.weather === "rain" || w.weather === "storm" ? " The rain is working against you." : "";

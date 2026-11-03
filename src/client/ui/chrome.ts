@@ -75,6 +75,7 @@ export function renderBudget() {
   chip.classList.toggle("high", pct >= 70 && pct < 95); chip.classList.toggle("full", pct >= 95);
   chip.title = `${s.mock ? "Mock brain" : s.model}\n${(s.tokensLastHour / 1000).toFixed(0)}k of ${(s.maxTokensPerHour / 1000).toFixed(0)}k tokens this hour\n${s.cyclesLastHour} of ${s.maxCyclesPerHour} cycles\n${s.offPeak ? "Off-peak (half price, budget doubled)" : "Peak pricing"}${s.cacheHitPct ? `\n${s.cacheHitPct}% of input cached` : ""}`;
   const p = $("btn-pause"); setIcon(p, s.paused ? "play" : "pause"); p.classList.toggle("on", s.paused); p.title = s.paused ? "Resume River (P)" : "Pause River (P)";
+  const fz = $("btn-freeze"); fz.classList.toggle("on", s.worldPaused); fz.title = s.worldPaused ? "Thaw the world (W)" : "Freeze the whole world (W)";
 }
 
 export function setConn(live: boolean) { const c = $("conn"); c.textContent = live ? "live" : "offline"; c.className = `conn ${live ? "good" : "bad"}`; }
@@ -86,6 +87,7 @@ function initActions() {
   btn("btn-follow", "follow", "Camera follows River (F)", toggleFollow).classList.add("on");
   btn("btn-sound", "volume", "Ambient sound (M)", toggleSound);
   btn("btn-pause", "pause", "Pause River (P)", () => send({ t: "pause", paused: !S.stats?.paused }));
+  btn("btn-freeze", "freeze", "Freeze the whole world (W)", () => send({ t: "sim_pause", paused: !S.stats?.worldPaused }));
   box.append(el("span", "sep"));
   btn("btn-nextday", "sunrise", "Skip to the next dawn", () => { if (confirm("Skip ahead to the next dawn?")) send({ t: "skip_day" }); });
   btn("btn-controls", "sliders", "Controls: budget, new River", openControls);
@@ -195,6 +197,7 @@ function initKeys() {
     if (e.key === "\\") setSide(document.body.dataset.side !== "open");
     else if (e.key === "f") toggleFollow(); else if (e.key === "m") toggleSound();
     else if (e.key === "p") send({ t: "pause", paused: !S.stats?.paused });
+    else if (e.key === "w") send({ t: "sim_pause", paused: !S.stats?.worldPaused });
     else if (e.key === "/") { e.preventDefault(); showTab("log"); $("logsearch").focus(); }
     else if (e.key === "Escape") inspect(null);
   });

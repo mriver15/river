@@ -10,6 +10,8 @@ import { worn } from "./clothing.ts";
 import type { Emotions } from "./emotions.ts";
 import type { World } from "./world.ts";
 import type { BodyView, Mark } from "../shared/types.ts";
+import { simNow, simRng, every } from "./sim.ts";
+const sr = simRng("body");
 
 type Kind = "bruise" | "scrape" | "burn" | "sprain" | "blister" | "bite" | "claw" | "gore" | "welt";
 interface Injury { bleed: number; dressed?: boolean; cleaned?: boolean; id: number; kind: Kind; part: string; side: "left" | "right"; sev: number; born: number; heal: number; cause: string }
@@ -17,15 +19,15 @@ interface Saved { health: number; infection: number; born: number; dead: { cause
 
 const MIN = 60_000, LEGS = new Set(["knee", "shin", "ankle", "foot", "hip"]);
 let w: World, emo: Emotions, notify: (msg: string) => void = () => {};
-const fresh = (): Saved => ({ health: 100, infection: 0, born: Date.now(), dead: null, injuries: [], strain: 0, ailment: null, walked: 0, next: 1 });
+const fresh = (): Saved => ({ health: 100, infection: 0, born: simNow(), dead: null, injuries: [], strain: 0, ailment: null, walked: 0, next: 1 });
 let st: Saved = fresh();
 let lastFaint = 0;
 let prev: { x: number; z: number } | null = null, lastBurn = 0, lastSave = 0, sensations: { text: string; p: number }[] = [], shaking = 0;
 
 const clamp = (v: number, a = 0, b = 1) => Math.max(a, Math.min(b, v));
-const rnd = (a: number, b: number) => a + Math.random() * (b - a);
-const pick = <T,>(l: T[]) => l[Math.floor(Math.random() * l.length)];
-const frac = (i: Injury) => clamp((Date.now() - i.born) / i.heal);
+const rnd = (a: number, b: number) => a + sr() * (b - a);
+const pick = <T,>(l: T[]) => l[Math.floor(sr() * l.length)];
+const frac = (i: Injury) => clamp((simNow() - i.born) / i.heal);
 
 /** how a mark looks at this age: the colour of the skin around it, and how strongly it shows */
 function look(i: Injury): { hex: string; stage: string } {
@@ -45,9 +47,9 @@ const say = (i: Injury) => `${KIND_WORD[i.kind] ?? `a ${i.kind}`} on your ${i.si
 const pain = (i: Injury) => i.sev * (1 - frac(i)) * (i.kind === "sprain" ? 1.2 : i.kind === "gore" || i.kind === "claw" ? 1.3 : i.kind === "bruise" ? 0.7 : i.kind === "welt" ? 0.15 : 1);
 
 function hurt(kind: Kind, part: string, sev: number, heal: number, cause: string, bleed = 0): Injury {
-  const side = Math.random() < 0.5 ? "left" : "right", old = st.injuries.find((i) => i.part === part && i.side === side && i.kind === kind);
-  if (old) { old.sev = clamp(Math.max(old.sev, sev) + 0.15); old.born = Date.now(); old.heal = Math.max(old.heal, heal); old.bleed += bleed; old.dressed = false; return old; }
-  const i: Injury = { bleed, id: st.next++, kind, part, side, sev, born: Date.now(), heal, cause };
+  const side = sr() < 0.5 ? "left" : "right", old = st.injuries.find((i) => i.part === part && i.side === side && i.kind === kind);
+  if (old) { old.sev = clamp(Math.max(old.sev, sev) + 0.15); old.born = simNow(); old.heal = Math.max(old.heal, heal); old.bleed += bleed; old.dressed = false; return old; }
+  const i: Injury = { bleed, id: st.next++, kind, part, side, sev, born: simNow(), heal, cause };
   st.injuries.push(i); if (st.injuries.length > 8) st.injuries.shift();
   return i;
 }
@@ -59,7 +61,7 @@ function damage(n: number, cause: string) {
   if (st.health <= 0) { if (!cfg("lethal")) { st.health = 4; return; } die(cause); }
 }
 function die(cause: string) {
-  st.dead = { cause, at: Date.now() }; st.health = 0; kvSet("body", st);
+  st.dead = { cause, at: simNow() }; st.health = 0; kvSet("body", st);
   w.me.activity = "dead"; w.me.sleeping = false;
   bus.emit("died", { cause, born: st.born, at: st.dead.at, x: w.me.x, z: w.me.z });
   bus.emit("state");
@@ -70,7 +72,7 @@ function fall(slope: number, why: string) {
   const worse = worn().some((g) => g.slot === "body") ? 0.85 : 1;
   const sev = clamp((0.2 + slope * 0.7 + rnd(0, 0.3)) * worse, 0.15, 0.9);
   const part = pick(["knee", "knee", "knee", "palm", "palm", "elbow", "shin", "shin", "hip", "ankle"]);
-  const kind: Kind = part === "ankle" && sev > 0.45 ? "sprain" : ["knee", "palm", "elbow"].includes(part) && Math.random() < 0.5 ? "scrape" : "bruise";
+  const kind: Kind = part === "ankle" && sev > 0.45 ? "sprain" : ["knee", "palm", "elbow"].includes(part) && sr() < 0.5 ? "scrape" : "bruise";
   const i = hurt(kind, part, sev, (kind === "sprain" ? rnd(60, 90) : kind === "scrape" ? rnd(15, 40) : rnd(25, 70)) * MIN, why, kind === "scrape" && sev > 0.5 ? 2 : 0);
   damage(sev * (slope > 0.5 ? 18 : 9), why.includes("slope") ? "a fall from a slope" : "a fall");
   w.stopWalk("you stumbled and fell");
@@ -83,7 +85,7 @@ function fall(slope: number, why: string) {
 }
 
 function burn() {
-  if (Date.now() - lastBurn < 20_000) return; lastBurn = Date.now();
+  if (simNow() - lastBurn < 20_000) return; lastBurn = simNow();
   const part = pick(["palm", "forearm", "shin"]), sev = rnd(0.3, 0.7);
   const i = hurt("burn", part, sev, rnd(45, 100) * MIN, "fire");
   damage(sev * 16, "burns");
@@ -117,7 +119,7 @@ function feel(dt: number) {
 
 function tick(dt: number) {
   if (st.dead) return;
-  const m = w.me, now = Date.now();
+  const m = w.me, now = simNow();
   // movement: the ground, the dark and tiredness decide whether it goes well
   let moving = false;
   if (prev && !m.sleeping) {
@@ -128,7 +130,7 @@ function tick(dt: number) {
       const slope = Math.abs(heightAt(m.x, m.z, w.seed) - heightAt(prev.x, prev.z, w.seed)) / d, t = w.worldTime();
       const night = t < 0.23 || t > 0.78, wet = w.weather === "rain" || w.weather === "storm";
       const p = 0.003 + 0.08 * Math.max(0, slope - 0.3) + (night ? 0.006 : 0) + (wet ? 0.008 : 0) + (m.needs.energy < 20 ? 0.012 : 0) + emo.level.dread * 0.01;
-      if (Math.random() < p * cfg("fallRate") * dt) fall(slope, wet && slope > 0.2 ? "slipped on the wet ground" : night ? "missed your footing in the dark" : slope > 0.35 ? "lost your footing on the slope" : m.needs.energy < 20 ? "stumbled from tiredness" : "tripped");
+      if (sr() < p * cfg("fallRate") * dt) fall(slope, wet && slope > 0.2 ? "slipped on the wet ground" : night ? "missed your footing in the dark" : slope > 0.35 ? "lost your footing on the slope" : m.needs.energy < 20 ? "stumbled from tiredness" : "tripped");
     }
   }
   prev = { x: m.x, z: m.z };
@@ -174,20 +176,20 @@ function tick(dt: number) {
 export const bodyApi = {
   attach(world: World, emotions: Emotions, say: (msg: string) => void) {
     w = world; emo = emotions; notify = say;
-    st = { ...st, ...kvGet<Partial<Saved>>("body", {}) }; if (!st.born) st.born = Date.now();
+    st = { ...st, ...kvGet<Partial<Saved>>("body", {}) }; if (!st.born) st.born = simNow();
     bus.on("scorched", () => burn());
   },
   /** Something living hurt River: a bite, claws, a goring. Returns how the wound reads. Venom brings a sickness on top. */
   wound(kind: Kind, part: string, sev: number, healMin: number, cause: string, venom = false, dmg = 0, bleed = 0): string {
     const i = hurt(kind, part, clamp(sev, 0.1, 1), healMin * MIN, cause, bleed); damage(dmg, cause);
-    if (venom) { st.ailment = { name: "a sick, swimming head and a burning limb from the venom", until: Date.now() + rnd(10, 16) * MIN, venom: true }; }
+    if (venom) { st.ailment = { name: "a sick, swimming head and a burning limb from the venom", until: simNow() + rnd(10, 16) * MIN, venom: true }; }
     bus.emit("state"); return say(i);
   },
   /** How much River hurts right now, summed over its wounds. */
   pain: () => clamp(st.injuries.reduce((a, i) => a + pain(i), 0), 0, 3),
   /** A fall caused by something outside the walking rules (a collapse, a tumble). */
   trip: (slope: number, why: string) => fall(slope, why),
-  start() { setInterval(() => tick(0.5), 500); },
+  start() { every(500, () => tick(0.5), "body"); },
   reset() { st = fresh(); sensations = []; shaking = 0; kvSet("body", st); },
   /** Advance the body by dt seconds (the server runs this on a timer). */
   tick: (dt: number) => tick(dt),
@@ -195,9 +197,9 @@ export const bodyApi = {
   health: () => st.health,
   /** Open wounds, for first aid. */
   wounds: () => st.injuries.map((i) => ({ id: i.id, kind: i.kind, part: i.part, side: i.side, bleeding: i.bleed > 0.5, dressed: !!i.dressed, cleaned: !!i.cleaned, text: say(i), open: ["bite", "claw", "gore", "scrape", "burn"].includes(i.kind) })),
-  cleanWounds() { let n = 0; for (const i of st.injuries) if (!i.cleaned && ["bite", "claw", "gore", "scrape", "burn"].includes(i.kind)) { i.cleaned = true; n++; } st.infection = Math.max(0, st.infection - 0.35); if (st.ailment?.venom && n) st.ailment.until = Math.min(st.ailment.until, Date.now() + 5 * MIN); bus.emit("state"); return n; },
+  cleanWounds() { let n = 0; for (const i of st.injuries) if (!i.cleaned && ["bite", "claw", "gore", "scrape", "burn"].includes(i.kind)) { i.cleaned = true; n++; } st.infection = Math.max(0, st.infection - 0.35); if (st.ailment?.venom && n) st.ailment.until = Math.min(st.ailment.until, simNow() + 5 * MIN); bus.emit("state"); return n; },
   dress(n: number, antiseptic: boolean) { let k = 0; for (const i of st.injuries.filter((x) => !x.dressed && ["bite", "claw", "gore", "scrape", "burn"].includes(x.kind)).sort((a, b) => b.bleed - a.bleed)) { if (k >= n) break; i.dressed = true; i.bleed *= 0.15; if (antiseptic) i.cleaned = true; k++; } if (antiseptic) st.infection = Math.max(0, st.infection - 0.15); bus.emit("state"); return k; },
-  splint() { const s = st.injuries.filter((i) => i.kind === "sprain"); for (const i of s) { i.heal = Math.max((Date.now() - i.born) + 10 * MIN, i.heal * 0.5); i.sev *= 0.6; } return s.length; },
+  splint() { const s = st.injuries.filter((i) => i.kind === "sprain"); for (const i of s) { i.heal = Math.max((simNow() - i.born) + 10 * MIN, i.heal * 0.5); i.sev *= 0.6; } return s.length; },
 };
 
 /** What River feels, as a section of its context. Empty when nothing is noteworthy. */

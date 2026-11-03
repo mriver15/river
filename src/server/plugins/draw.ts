@@ -1,6 +1,6 @@
 // TEST_ARGS: {"mark":"sleep here, dry ground","on":"pine","toward":"campfire"}
 import { log } from "../bus.ts";
-import { ToolError, obj, str, type ToolDef } from "../toolkit.ts";
+import { ToolError, obj, str, type ToolDef, wait } from "../toolkit.ts";
 
 const DRAWABLE = new Set(["rock", "monolith", "structure", "tree", "item", "book"]);
 const CAP: Record<string, number> = { tree: 3, rock: 4, monolith: 4, structure: 3, item: 2, book: 2 };
@@ -95,7 +95,7 @@ const draw: ToolDef = {
       : `the ${target.name}`;
 
     w.setActivity(`drawing on the ${target.name}`);
-    await new Promise((r) => setTimeout(r, 2500));
+    await wait(2500);
 
     const left = (Number(chalk.qty) || 1) - 1;
     w.takeItem(chalk.id, 1);

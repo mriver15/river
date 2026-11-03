@@ -1,6 +1,6 @@
 // TEST_ARGS: {"with":"stick","against":"monolith"}
 import { log } from "../bus.ts";
-import { ToolError, obj, str, type ToolDef } from "../toolkit.ts";
+import { ToolError, obj, str, type ToolDef, rand, wait } from "../toolkit.ts";
 
 const FAR = [
   "the Net, a slack square of faint stars",
@@ -43,7 +43,7 @@ const lookUp: ToolDef = {
     const label = w.timeLabel();
     const night = /night|dark|dusk|evening|midnight|moon|star|small hours|late/i.test(label);
     w.setActivity("looking up at the sky");
-    await new Promise((r) => setTimeout(r, night ? 4000 : 2000));
+    await wait(night ? 4000 : 2000);
 
     if (!night) {
       w.bump({ energy: -1, curiosity: 2, mood: 1 });
@@ -51,7 +51,7 @@ const lookUp: ToolDef = {
     }
 
     const mark = landmark(w, a.against);
-    const star = FAR[Math.floor(Math.random() * FAR.length)];
+    const star = FAR[Math.floor(rand() * FAR.length)];
     if (!mark) {
       w.bump({ energy: -1, curiosity: 2, mood: 2 });
       return `You tip your head back and the dark opens. ${star.charAt(0).toUpperCase() + star.slice(1)} hangs off to one side, and the Lantern's three stars are up, the third already clear of the treeline.\nNothing upright stands within 40m to sight it against, so the reading is only a guess. Find the monolith and look again.`;
@@ -59,7 +59,7 @@ const lookUp: ToolDef = {
 
     const props = mark.props;
     const before = typeof props.lantern === "number" ? props.lantern : 1;
-    const step = before >= 88 ? 0 : 5 + Math.random() * 6;
+    const step = before >= 88 ? 0 : 5 + rand() * 6;
     const alt = Math.min(89, before + step);
     const read = aid ? Math.round(alt) : Math.round(alt / 5) * 5;
     const dir = w.compass(mark);

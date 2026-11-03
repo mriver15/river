@@ -1,12 +1,13 @@
 import { EventEmitter } from "node:events";
 import { db } from "./db.ts";
 import type { LogEntry, LogKind } from "../shared/types.ts";
+import { simNow } from "./sim.ts";
 
 export const bus = new EventEmitter();
 
 /** Append to the persistent action log and broadcast it. */
 export function log(kind: LogKind, text: string, data?: Record<string, any>): LogEntry {
-  const ts = Date.now();
+  const ts = simNow();
   const r = db.prepare("INSERT INTO events(ts, kind, text, data) VALUES(?,?,?,?)")
     .run(ts, kind, text, data ? JSON.stringify(data) : null);
   const entry: LogEntry = { id: Number(r.lastInsertRowid), ts, kind, text, data };

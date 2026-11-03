@@ -6,6 +6,7 @@ import { describeColour } from "./colour.ts";
 import { ToolError, obj, str, type ToolDef } from "./toolkit.ts";
 import type { World } from "./world.ts";
 import type { Worn } from "../shared/types.ts";
+import { simSleep } from "./sim.ts";
 
 type Slot = Worn["slot"];
 /** what each garment is, where it goes on the body, what it takes, and how much cold it keeps off */
@@ -67,7 +68,7 @@ export const CLOTHE_TOOL: ToolDef = {
         if (!p || p.kind !== "pigment" || !p.props?.hex) throw new ToolError(`You aren't holding a pigment called "${a.colour}".`);
         w.takeItem(p.id, 1); hex = p.props.hex; dyed = ` dyed ${p.name.replace(/ pigment \(.*\)$/, "")}`;
       }
-      w.setActivity(`sewing a ${a.garment}`); await new Promise((r) => setTimeout(r, 3500));
+      w.setActivity(`sewing a ${a.garment}`); await simSleep(3500);
       for (const u of used) w.takeItem(u.it.id, u.n);
       const name = String(a.name ?? "").trim().slice(0, 40) || `${describeColour(hex)} ${a.garment}`;
       const mats = used.map((u) => FIBRE[u.it.kind].word);

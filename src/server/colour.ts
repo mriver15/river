@@ -4,6 +4,7 @@ import { bus } from "./bus.ts";
 import { db } from "./db.ts";
 import { ToolError, num, obj, str, type ToolDef } from "./toolkit.ts";
 import type { World } from "./world.ts";
+import { simNow, simSleep } from "./sim.ts";
 
 export const hexToRgb = (h: string): [number, number, number] => { const n = parseInt(h.replace("#", ""), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
 export const rgbToHex = (r: number, g: number, b: number) => "#" + [r, g, b].map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0")).join("");
@@ -36,7 +37,7 @@ const SOURCES: { test: (n: string, k: string) => boolean; hex: string }[] = [
 ];
 const hash = (s: string) => [...s].reduce((a, c) => (a * 31 + c.charCodeAt(0)) | 0, 7);
 /** Nature isn't uniform: each batch comes out a shade differently, which is what makes finding a colour you like feel like finding it. */
-const jitter = (hex: string, seed: string) => { const rgb = hexToRgb(hex), h = hash(seed + Math.floor(Date.now() / 3_600_000)); return rgbToHex(rgb[0] * (1 + (((h >> 3) % 17) - 8) / 100), rgb[1] * (1 + (((h >> 7) % 17) - 8) / 100), rgb[2] * (1 + (((h >> 11) % 17) - 8) / 100)); };
+const jitter = (hex: string, seed: string) => { const rgb = hexToRgb(hex), h = hash(seed + Math.floor(simNow() / 3_600_000)); return rgbToHex(rgb[0] * (1 + (((h >> 3) % 17) - 8) / 100), rgb[1] * (1 + (((h >> 7) % 17) - 8) / 100), rgb[2] * (1 + (((h >> 11) % 17) - 8) / 100)); };
 
 export const palette = (): { name: string; hex: string }[] => db.prepare("SELECT name, hex FROM palette ORDER BY ts").all() as any;
 export const pigmentHex = (it: { props?: Record<string, any> } | undefined) => (it?.props?.hex as string | undefined);
@@ -63,7 +64,7 @@ export const COLOUR_TOOL: ToolDef = {
     if (act === "grind") {
       const s = sourceOf(w, String(a.item ?? "")); if (!s) throw new ToolError("You aren't carrying that.");
       if (!s.src) throw new ToolError(`Crushing the ${s.it.name} gives nothing that would stain.`);
-      w.setActivity("grinding a pigment"); await new Promise((r) => setTimeout(r, 2500));
+      w.setActivity("grinding a pigment"); await simSleep(2500);
       w.takeItem(s.it.id, 1);
       const hex = jitter(s.src.hex, s.it.name), words = describeColour(hex);
       w.addItem("pigment", `${words} pigment (${hex.slice(1)})`, `A little pile of ground colour: ${words} (${hex}). It stains whatever it touches.`, 3, { hex });
@@ -77,7 +78,7 @@ export const COLOUR_TOOL: ToolDef = {
       const t = Math.max(0.05, Math.min(0.95, Number(a.amount_of_a ?? 0.5))), ca = hexToRgb(A.props!.hex), cb = hexToRgb(B.props!.hex);
       const [ha] = hsl(A.props!.hex), [hb] = hsl(B.props!.hex), clash = Math.min(Math.abs(ha - hb), 360 - Math.abs(ha - hb)) > 70 ? 0.9 : 1;     // opposites make mud: pigments, not light
       const mix = ca.map((v, i) => (v * t + cb[i] * (1 - t)) * clash), hex = rgbToHex(mix[0], mix[1], mix[2]), words = describeColour(hex);
-      w.setActivity("mixing colours"); await new Promise((r) => setTimeout(r, 2000));
+      w.setActivity("mixing colours"); await simSleep(2000);
       w.takeItem(A.id, 1); w.takeItem(B.id, 1);
       w.addItem("pigment", `${words} pigment (${hex.slice(1)})`, `A mixed colour: ${words} (${hex}).`, 2, { hex });
       w.bump({ curiosity: -5 });
@@ -88,7 +89,7 @@ export const COLOUR_TOOL: ToolDef = {
       const p = findPigment(w, String(a.pigment ?? "")); if (!p) throw new ToolError("You aren't holding a pigment like that.");
       const name = String(a.name ?? "").trim().replace(/[^\p{L}\p{N}' -]/gu, "").slice(0, 30);
       if (name.length < 2) throw new ToolError("Give it a name of at least two letters.");
-      const hex = p.props!.hex as string; db.prepare("INSERT INTO palette(name, hex, ts) VALUES(?,?,?) ON CONFLICT(name) DO UPDATE SET hex = excluded.hex").run(name, hex, Date.now());
+      const hex = p.props!.hex as string; db.prepare("INSERT INTO palette(name, hex, ts) VALUES(?,?,?) ON CONFLICT(name) DO UPDATE SET hex = excluded.hex").run(name, hex, simNow());
       w.renameItem(p.id, name); bus.emit("state");
       return `From now on this colour is "${name}" to you (${describeColour(hex)}, ${hex}).`;
     }

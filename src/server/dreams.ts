@@ -7,6 +7,7 @@ import { addMemory } from "./memory.ts";
 import { overBudget } from "./usage.ts";
 import { MOCK } from "./agent.ts";
 import type { World } from "./world.ts";
+import { simNow } from "./sim.ts";
 
 const COOLDOWN_MS = 8 * 60_000;
 const seeds: string[] = kvGet<string[]>("dreamSeeds", []);
@@ -28,7 +29,7 @@ export function startDreams(w: World, notify: (msg: string) => void, hooks?: Dre
 }
 
 async function dream(w: World, seconds: number, notify: (msg: string) => void, hooks?: DreamHooks) {
-  if (busy || Date.now() - lastAt < COOLDOWN_MS) return;
+  if (busy || simNow() - lastAt < COOLDOWN_MS) return;
   if (!MOCK && overBudget()) return;
   const today = w.day(), key = `dreams:${today}`;
   if (kvGet<number>(key, 0) >= cfg("dreams")) return;
@@ -53,7 +54,7 @@ async function dream(w: World, seconds: number, notify: (msg: string) => void, h
       text = String(j.dream ?? "").trim(); insight = String(j.insight ?? "").trim(); shift = Math.max(-8, Math.min(8, Number(j.mood_shift) || 0));
     }
     if (!text) return;
-    lastAt = Date.now(); kvSet("lastDream", lastAt); kvSet(key, kvGet<number>(key, 0) + 1);
+    lastAt = simNow(); kvSet("lastDream", lastAt); kvSet(key, kvGet<number>(key, 0) + 1);
     log("dream", `${w.me.name} dreams: ${text}${insight ? `\nOn waking: ${insight}` : ""}`, { seed: seed ?? null });
     addMemory(`I dreamed: ${text}`, 4, ["dream"], "dream");
     if (insight) addMemory(insight, 6, ["dream"], "reflection");

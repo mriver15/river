@@ -1,6 +1,6 @@
 // TEST_ARGS: {"strips":2}
 import { log } from "../bus.ts";
-import { ToolError, num, obj, str, type ToolDef } from "../toolkit.ts";
+import { ToolError, num, obj, str, type ToolDef, rand, wait } from "../toolkit.ts";
 
 const SHARP = /knife|blade|shard|flake|axe|chisel|sharp/i;
 const MAX_WOUNDS = 4; // a trunk ringed past this is girdled and dies
@@ -46,7 +46,7 @@ const stripBark: ToolDef = {
 
     const take = Math.min(want, left);
     w.setActivity(tool ? `stripping bark from the ${tree.name}` : `picking at the ${tree.name}'s bark`);
-    await new Promise((r) => setTimeout(r, (tool ? 2500 : 4500) * take));
+    await wait((tool ? 2500 : 4500) * take);
     w.bump({ energy: -(tool ? 2 : 4) * take });
 
     const base = tree.name.replace(/\s*(tree|sapling|trunk)$/i, "").trim() || tree.name;
@@ -58,7 +58,7 @@ const stripBark: ToolDef = {
 
     let got = 0;
     for (let i = 0; i < take; i++) {
-      if (!tool && Math.random() < 0.3) continue; // torn into a useless shred
+      if (!tool && rand() < 0.3) continue; // torn into a useless shred
       const long = !!tool;
       w.addItem(
         "crafted",
