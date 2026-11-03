@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>River World</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body data-side="open">
+  <canvas id="c"></canvas>
+
+  <header id="hud">
+    <section id="rivercard" class="glass">
+      <div class="id"><span id="dot" class="dot"></span><b id="name">River</b></div>
+      <div id="activity" class="activity muted">connecting…</div>
+      <div id="needs" class="needs" aria-label="Needs"></div>
+      <div id="feels" class="feels" aria-label="Feelings"></div>
+    </section>
+
+    <section id="chips" class="chips">
+      <span id="chip-time" class="chip glass"></span>
+      <span id="chip-weather" class="chip glass"></span>
+      <button id="chip-music" class="chip glass playing" hidden></button>
+      <span id="chip-budget" class="chip glass"><span class="meter"><i></i></span><span class="lbl"></span></span>
+    </section>
+
+    <section id="actions" class="actions glass"></section>
+  </header>
+
+  <div id="toasts" aria-live="polite"></div>
+  <aside id="inspector" class="glass" hidden></aside>
+
+  <aside id="side">
+    <div id="resizer" role="separator" aria-orientation="vertical" title="Drag to resize"></div>
+    <nav id="tabs" role="tablist"></nav>
+    <div id="panes">
+      <section id="tab-log" class="tab active" role="tabpanel">
+        <div class="logbar">
+          <div id="logpresets"></div>
+          <div class="search"><span id="logsearch-ico"></span><input id="logsearch" placeholder="Search the log…" autocomplete="off" /></div>
+          <button id="logfilter" class="iconbtn" aria-label="Choose event kinds" title="Choose event kinds"></button>
+        </div>
+        <div id="kindtray" hidden></div>
+        <div id="log" tabindex="0"></div>
+        <button id="jump" class="pill-btn" hidden></button>
+      </section>
+      <section id="tab-mind" class="tab" role="tabpanel"></section>
+      <section id="tab-story" class="tab" role="tabpanel"></section>
+      <section id="tab-map" class="tab" role="tabpanel"><div id="mapwrap"><canvas id="mapc"></canvas></div><div id="maplegend"></div><div id="catalog"></div></section>
+      <section id="tab-items" class="tab" role="tabpanel"></section>
+      <section id="tab-tools" class="tab" role="tabpanel"></section>
+      <section id="tab-memory" class="tab" role="tabpanel">
+        <form id="memform" class="search wide"><span id="memsearch-ico"></span><input id="memq" placeholder="Search memories by meaning or keyword…" autocomplete="off" /></form>
+        <div id="memkinds" class="chiprow"></div>
+        <div id="meminfo" class="muted small"></div>
+        <div id="memlist"></div>
+      </section>
+    </div>
+    <form id="speak">
+      <div class="composer">
+        <input id="speakin" placeholder="Say something to River…" autocomplete="off" maxlength="500" />
+        <button type="button" class="iconbtn" id="seedbtn" aria-label="Plant a thought in the next dream" title="Plant a thought in River's next dream"></button>
+        <button type="button" class="iconbtn" id="giftbtn" aria-label="Leave a gift" title="Leave a gift near River"></button>
+        <button type="submit" class="iconbtn send" aria-label="Send" title="Send"></button>
+      </div>
+    </form>
+  </aside>
+
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>

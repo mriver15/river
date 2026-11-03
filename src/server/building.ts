@@ -1,0 +1,223 @@
+// Building. River decides what to make, where, out of what, and in what colours; the world only checks that it makes sense
+// (level ground, nothing in the way, within reach, enough material, a real span for a bridge). When it doesn't, River is told why, and
+// where a good spot actually is. Nothing is pre-chosen: not the place, not the palette, not the look.
+import { bus, log } from "./bus.ts";
+import { ToolError, num, obj, str, type ToolDef } from "./toolkit.ts";
+import { heightAt, isLand } from "../shared/noise.ts";
+import { describeColour, hexToRgb, palette, rgbToHex } from "./colour.ts";
+import { findPlace } from "./places.ts";
+import { addWork } from "./taste.ts";
+import type { Entity } from "../shared/types.ts";
+import type { World } from "./world.ts";
+
+type Shape = "hut" | "lean-to" | "wall" | "fence" | "bench" | "cairn" | "tower" | "platform" | "bridge";
+const SIZE = { small: 1, medium: 1.6, large: 2.4 } as const;
+interface Spec { line: boolean; radius: number; need: (s: number, len: number) => number; allow: string[]; shelter?: boolean; walk?: boolean; roof?: boolean; parts: string[]; word: string }
+const ANY = ["stick", "plank", "stone", "clay", "chalk"];
+const SHAPES: Record<Shape, Spec> = {
+  hut:        { line: false, radius: 1.6, need: (s) => Math.round(8 * s), allow: ANY, shelter: true, roof: true, parts: ["walls", "roof", "trim"], word: "hut" },
+  "lean-to":  { line: false, radius: 1.4, need: (s) => Math.round(5 * s), allow: ["stick", "plank", "stone", "clay"], shelter: true, roof: true, parts: ["walls", "roof", "trim"], word: "lean-to" },
+  bench:      { line: false, radius: 0.8, need: (s) => Math.round(3 * s), allow: ANY, parts: ["walls", "trim"], word: "bench" },
+  cairn:      { line: false, radius: 0.7, need: (s) => Math.round(5 * s), allow: ["stone", "chalk"], parts: ["walls"], word: "cairn" },
+  tower:      { line: false, radius: 1.1, need: (s) => Math.round(10 * s), allow: ["stone", "clay", "chalk", "stick", "plank"], parts: ["walls", "trim"], word: "tower" },
+  platform:   { line: false, radius: 1.8, need: (s) => Math.round(6 * s), allow: ["stick", "plank", "stone"], walk: true, parts: ["deck", "trim"], word: "platform" },
+  wall:       { line: true, radius: 0.5, need: (_, l) => Math.ceil(l * 1.2), allow: ["stone", "clay", "chalk", "stick", "plank"], parts: ["walls", "trim"], word: "wall" },
+  fence:      { line: true, radius: 0.4, need: (_, l) => Math.ceil(l * 0.8), allow: ["stick", "plank"], parts: ["walls", "trim"], word: "fence" },
+  bridge:     { line: true, radius: 0.9, need: (_, l) => Math.ceil(l * 2.2), allow: ["stick", "plank", "stone"], walk: true, parts: ["deck", "trim"], word: "bridge" },
+};
+/** natural colour of each material, and how much structure one of it is worth */
+const MATERIAL: Record<string, { hex: string; units: number; word: string }> = {
+  stick: { hex: "#8a6a45", units: 1, word: "wood" }, plank: { hex: "#a88a60", units: 2, word: "driftwood" }, stone: { hex: "#8d9199", units: 1, word: "stone" },
+  clay: { hex: "#b5714a", units: 1, word: "clay" }, chalk: { hex: "#e6e2d6", units: 1, word: "chalk" },
+};
+const MOSS = "#5a8a46";
+const DIR: Record<string, number> = { east: 0, "south-east": Math.PI / 4, south: Math.PI / 2, "south-west": (3 * Math.PI) / 4, west: Math.PI, "north-west": -(3 * Math.PI) / 4, north: -Math.PI / 2, "north-east": -Math.PI / 4 };
+const dirAngle = (s?: string) => (s ? DIR[String(s).toLowerCase().replace(/\s+/g, "-").replace(/^(north|south)(east|west)$/, "$1-$2")] : undefined);
+type XZ = { x: number; z: number };
+const dist = (a: XZ, b: XZ) => Math.hypot(a.x - b.x, a.z - b.z);
+const compassOf = (from: XZ, to: XZ) => { const a = Math.atan2(to.z - from.z, to.x - from.x), n = ["east", "south-east", "south", "south-west", "west", "north-west", "north", "north-east"]; return n[(Math.round(a / (Math.PI / 4)) + 8) % 8]; };
+
+function target(w: World, ref: string): XZ | undefined {
+  const e = w.entities.get(ref) ?? w.nearby(90).map((o) => o.e).find((x) => x.name.toLowerCase().includes(ref.toLowerCase()));
+  return e ?? findPlace(ref);
+}
+/** "here", or beside something, or a distance in a direction, or coordinates. */
+function resolve(w: World, spec: any, origin: XZ, fallback?: () => XZ): XZ {
+  if (!spec || typeof spec !== "object") { if (fallback) return fallback(); throw new ToolError("Say where."); }
+  if (typeof spec.x === "number" && typeof spec.z === "number") return { x: spec.x, z: spec.z };
+  const d = Number.isFinite(Number(spec.distance)) ? Math.max(0.5, Math.min(40, Number(spec.distance))) : 3, ang = dirAngle(spec.direction);
+  if (spec.near) {
+    const t = target(w, String(spec.near)); if (!t) throw new ToolError(`You don't know of anything called "${spec.near}" to build beside.`);
+    const a = ang ?? Math.atan2(t.z - w.me.z, t.x - w.me.x);       // with no side given: on the far side of it from where you stand
+    return { x: t.x + Math.cos(a) * d, z: t.z + Math.sin(a) * d };
+  }
+  if (ang !== undefined) return { x: origin.x + Math.cos(ang) * d, z: origin.z + Math.sin(ang) * d };
+  if (fallback) return fallback(); throw new ToolError("Say where: coordinates, something to build beside, or a direction and distance.");
+}
+
+const BLOCKERS = new Set(["tree", "rock", "bush", "structure", "library", "shrine", "monolith", "campfire", "char"]);
+function samples(shape: Spec, a: XZ, b?: XZ): XZ[] {
+  if (shape.line && b) { const n = Math.max(2, Math.ceil(dist(a, b))); return Array.from({ length: n + 1 }, (_, i) => ({ x: a.x + ((b.x - a.x) * i) / n, z: a.z + ((b.z - a.z) * i) / n })); }
+  return [a, ...Array.from({ length: 6 }, (_, i) => ({ x: a.x + Math.cos((i * Math.PI) / 3) * shape.radius, z: a.z + Math.sin((i * Math.PI) / 3) * shape.radius }))];
+}
+/** Does this make sense as a place? Returns what is wrong, in plain words, or null. */
+function siteProblem(w: World, shapeName: Shape, a: XZ, b: XZ | undefined, spec: Spec): string | null {
+  const pts = samples(spec, a, b), bridge = shapeName === "bridge";
+  if (!bridge) {
+    const wet = pts.find((p) => !w.isLandAt(p.x, p.z)); if (wet) return `Part of that is water or open sea, near (${wet.x.toFixed(0)}, ${wet.z.toFixed(0)}).`;
+  } else {
+    const wet = pts.filter((p) => !isLand(p.x, p.z, w.seed)).length / pts.length;
+    if (!isLand(pts[0].x, pts[0].z, w.seed) || !isLand(pts[pts.length - 1].x, pts[pts.length - 1].z, w.seed)) return "A bridge has to start and end on firm ground; one end is in the water.";
+    if (wet < 0.3) return "There's hardly any water between those two points. A bridge is for crossing water; a wall or a path would suit that ground.";
+  }
+  const hs = pts.map((p) => heightAt(p.x, p.z, w.seed)).filter((_, i) => bridge ? i === 0 || i === pts.length - 1 : true), rise = Math.max(...hs) - Math.min(...hs);
+  if (bridge ? rise > 1.8 : rise > 0.9 + spec.radius * 0.35 + (spec.line ? 0.5 : 0)) return `The ground is too ${bridge ? "uneven between the two banks" : "steep there"}: it changes by ${rise.toFixed(1)}m across the spot.`;
+  for (const { e, d } of w.nearby(60)) {
+    if (!BLOCKERS.has(e.kind) || (e.props.walk && e.kind === "structure")) continue;
+    const clear = e.kind === "tree" ? 0.7 : e.kind === "structure" ? (e.props.radius ?? 1) + 0.4 : 0.6;
+    if (pts.some((p) => dist(p, e) < spec.radius + clear)) return `${/^[aeiou]/i.test(e.name) ? "An" : "A"} ${e.name} (${e.id}) is in the way, ${d.toFixed(0)}m from you at (${e.x.toFixed(0)}, ${e.z.toFixed(0)}).`;
+  }
+  return null;
+}
+/** Somewhere nearby that does work, so a refusal can point at a real alternative. */
+function suggest(w: World, shapeName: Shape, centre: XZ, spec: Spec): string {
+  if (spec.line) return "";
+  for (let r = 2; r <= 12; r += 1.5) for (let k = 0; k < 12; k++) {
+    const a = (k * Math.PI) / 6, p = { x: centre.x + Math.cos(a) * r, z: centre.z + Math.sin(a) * r };
+    if (!siteProblem(w, shapeName, p, undefined, spec) && dist(p, w.me) < 14) return ` A level, clear spot lies ${r.toFixed(0)}m to the ${compassOf(centre, p)} of there, at (${p.x.toFixed(0)}, ${p.z.toFixed(0)}).`;
+  }
+  return " Nothing close by is both level and clear; try further away.";
+}
+
+const hexOf = (it?: { props?: Record<string, any> }) => it?.props?.hex as string | undefined;
+const nameOfHex = (hex: string) => palette().find((p) => p.hex.toLowerCase() === hex.toLowerCase())?.name ?? describeColour(hex);
+const darker = (hex: string, f = 0.65) => { const c = hexToRgb(hex); return rgbToHex(c[0] * f, c[1] * f, c[2] * f); };
+
+export const BUILD_TOOL: ToolDef = {
+  name: "build",
+  description:
+    "Make something in the world with your hands. `raise`: build it (hut, lean-to, bench, cairn, tower, platform, wall, fence, or bridge). `plan`: ask what a build would take. `paint`: change the colours of something you built. `take_down`: dismantle something you built and get most of the materials back. " +
+    "YOU choose the shape, the size (small, medium or large), the materials, the colours and the spot. Where: `where` can be coordinates, something to build beside (with a direction and a distance), or a direction and distance from you; leave it out to build just in front of you. Walls, fences and bridges need both ends (`where` and `to`). " +
+    "You must be within about ten paces of where you build. Ground must be level and clear; bridges must cross water, from firm ground to firm ground, and people can walk across them. A closed hut or a lean-to keeps off some of the weather. " +
+    "Materials are things you carry: sticks, stones, clay, chalk and driftwood planks give structure (a plank is worth two); moss makes a roof. Say how many of each in `materials`. Without colours, a thing shows the colour of what it is made of; with pigment, you choose.",
+  input_schema: obj({
+    action: { type: "string", enum: ["raise", "plan", "paint", "take_down"], description: "raise (default), plan, paint, or take_down" },
+    shape: { type: "string", enum: Object.keys(SHAPES), description: "What to build" },
+    name: str("Your name for this particular thing"), description: str("What it is for, or how it feels. Optional."),
+    size: { type: "string", enum: ["small", "medium", "large"], description: "Default small" },
+    materials: { type: "object", description: "How many of each item to use, e.g. {\"stick\": 6, \"stone\": 2}. Names as in your inventory.", additionalProperties: { type: "number" } },
+    where: { type: "object", description: "Where. {x, z} or {near, direction, distance} or {direction, distance}. Omit for just in front of you." },
+    to: { type: "object", description: "For wall, fence and bridge: where it ends. Same forms as `where`; direction and distance are measured from the first end." },
+    colors: { type: "object", description: "Pigments to use, by their names in your inventory, for parts: walls, roof, trim, deck. e.g. {\"walls\": \"dusk\"}. One portion each.", additionalProperties: { type: "string" } },
+    target: str("paint / take_down: the thing you built (its id or name)"),
+  }, []),
+  run: async (a, w: World) => {
+    const act = String(a.action ?? "raise");
+    if (act === "paint") return paintIt(a, w);
+    if (act === "take_down") return takeDown(a, w);
+    const shapeName = String(a.shape ?? "") as Shape, spec = SHAPES[shapeName];
+    if (!spec) throw new ToolError(`Choose a shape: ${Object.keys(SHAPES).join(", ")}.`);
+    const size = (a.size && a.size in SIZE ? a.size : "small") as keyof typeof SIZE, s = SIZE[size];
+    const A = resolve(w, a.where, w.me, () => ({ x: w.me.x + Math.cos(w.me.heading) * 2.6, z: w.me.z + Math.sin(w.me.heading) * 2.6 }));
+    let B: XZ | undefined;
+    if (spec.line) { if (!a.to) throw new ToolError(`A ${spec.word} has two ends. Say where it ends with \`to\`.`); B = resolve(w, a.to, A); }
+    const length = B ? dist(A, B) : 0, need = spec.need(s, length);
+    if (spec.line && (length < 2 || length > (shapeName === "bridge" ? 14 : 30))) throw new ToolError(`A ${spec.word} that long (${length.toFixed(1)}m) isn't possible: make it between 2m and ${shapeName === "bridge" ? 14 : 30}m.`);
+
+    // what is held, and what it is worth
+    const held = [...w.inventory.values()].filter((i) => MATERIAL[i.kind]);
+    const holding = held.length ? held.map((i) => `${i.name}×${i.qty}`).join(", ") : "no building materials";
+    const rule = `A ${size} ${spec.word}${spec.line ? ` ${length.toFixed(0)}m long` : ""} needs about ${need} units of ${spec.allow.map((k) => MATERIAL[k].word).join(", ")} (each counts 1; a driftwood plank counts 2).`;
+    if (act === "plan") return `${rule} You are carrying ${holding}. ${spec.roof ? "Moss makes a roof. " : ""}You'd be building ${spec.line ? `from (${A.x.toFixed(0)}, ${A.z.toFixed(0)}) to (${B!.x.toFixed(0)}, ${B!.z.toFixed(0)})` : `at (${A.x.toFixed(0)}, ${A.z.toFixed(0)})`}. ${siteProblem(w, shapeName, A, B, spec) ?? "That spot would do."}`;
+
+    const near = spec.line ? Math.min(...samples(spec, A, B).map((p) => dist(p, w.me))) : dist(A, w.me);
+    if (near > 10) throw new ToolError(`That spot is ${near.toFixed(0)}m away. You build with your own hands, so walk over there first.`);
+    const problem = siteProblem(w, shapeName, A, B, spec);
+    if (problem) throw new ToolError(`You can't build there. ${problem}${suggest(w, shapeName, A, spec)}`);
+
+    // materials
+    const want: Record<string, number> = Array.isArray(a.materials) ? Object.fromEntries(a.materials.map((m: string) => [m, 1])) : (a.materials ?? {});
+    if (!Object.keys(want).length) throw new ToolError(`${rule} You are carrying ${holding}. Say what to use in \`materials\`.`);
+    const used: { it: NonNullable<ReturnType<World["findItem"]>>; n: number }[] = [];
+    let units = 0; let moss = 0;
+    for (const [ref, nRaw] of Object.entries(want)) {
+      const n = Math.floor(Number(nRaw)); const it = w.findItem(ref);
+      if (!it || !(n >= 1)) throw new ToolError(`You aren't carrying "${ref}"${n >= 1 ? "" : " (or the count isn't a whole number)"}. You have ${holding}.`);
+      if (it.qty < n) throw new ToolError(`You only have ${it.qty} of ${it.name}, not ${n}.`);
+      if (it.kind === "moss") { if (!spec.roof) throw new ToolError(`A ${spec.word} has no roof for moss to cover.`); moss += n; used.push({ it, n }); continue; }
+      if (!MATERIAL[it.kind]) throw new ToolError(`${it.name} can't hold a structure up. Sticks, stones, clay, chalk and driftwood planks can.`);
+      if (!spec.allow.includes(it.kind)) throw new ToolError(`${MATERIAL[it.kind].word[0].toUpperCase()}${MATERIAL[it.kind].word.slice(1)} won't do for a ${spec.word}. It needs ${spec.allow.map((k) => MATERIAL[k].word).join(", ")}.`);
+      units += n * MATERIAL[it.kind].units; used.push({ it, n });
+    }
+    if (units < need) throw new ToolError(`${rule} You offered ${units}. You are carrying ${holding}. You need ${need - units} more.`);
+    if (units > Math.ceil(need * 1.5)) throw new ToolError(`${units} units is more than a ${size} ${spec.word} can use (about ${need}). Use fewer, or build bigger.`);
+
+    // colours: natural unless River chooses pigment
+    const byKind = new Map<string, number>(); used.forEach(({ it, n }) => byKind.set(it.kind, (byKind.get(it.kind) ?? 0) + n * (MATERIAL[it.kind]?.units ?? 0)));
+    const ranked = [...byKind.entries()].filter(([k]) => MATERIAL[k]).sort((x, y) => y[1] - x[1]), main = ranked[0][0], second = ranked[1]?.[0];
+    const col: Record<string, string> = {}, colName: Record<string, string> = {}, spend: { it: NonNullable<ReturnType<World["findItem"]>> }[] = [];
+    col.walls = MATERIAL[main].hex; col.deck = MATERIAL[main].hex; col.trim = second ? MATERIAL[second].hex : darker(MATERIAL[main].hex, 0.75); col.roof = moss >= 2 ? MOSS : darker(MATERIAL[second ?? main].hex, 0.7);
+    for (const [part0, ref] of Object.entries(a.colors ?? {}) as [string, string][]) {
+      const part = part0 === "body" || part0 === "seat" ? "walls" : part0;
+      if (!spec.parts.includes(part)) throw new ToolError(`A ${spec.word} has no ${part0} to colour. It has: ${spec.parts.join(", ")}.`);
+      const p = w.findItem(String(ref)); if (!p || p.kind !== "pigment") throw new ToolError(`You aren't holding a pigment called "${ref}".`);
+      col[part] = hexOf(p)!; colName[part] = p.name; spend.push({ it: p });
+    }
+    const perPigment = new Map<string, number>(); spend.forEach(({ it }) => perPigment.set(it.id, (perPigment.get(it.id) ?? 0) + 1));
+    for (const [id, n] of perPigment) if ((w.inventory.get(id)?.qty ?? 0) < n) throw new ToolError(`You don't have enough of that pigment: ${n} portions are needed for those parts.`);
+
+    // all good: spend, build
+    used.forEach(({ it, n }) => w.takeItem(it.id, n)); for (const [id, n] of perPigment) w.takeItem(id, n);
+    const mid = spec.line ? { x: (A.x + B!.x) / 2, z: (A.z + B!.z) / 2 } : A;
+    const materials: Record<string, number> = {}, kinds: Record<string, string> = {}; used.forEach(({ it, n }) => { materials[it.name] = (materials[it.name] ?? 0) + n; kinds[it.name] = it.kind; });
+    const wood = (byKind.get("stick") ?? 0) + (byKind.get("plank") ?? 0), total = [...byKind.values()].reduce((x, y) => x + y, 0) || 1;
+    const deckY = shapeName === "bridge" ? Math.max(0.5, Math.max(heightAt(A.x, A.z, w.seed), heightAt(B!.x, B!.z, w.seed)) + 0.12) : undefined;
+    const heading = dirAngle(a.facing) ?? Math.atan2(w.me.z - mid.z, w.me.x - mid.x);                          // doors face the builder unless told
+    const palWords = (["walls", "roof", "trim", "deck"] as const).filter((p) => spec.parts.includes(p)).map((p) => `${p} ${colName[p] ?? describeColour(col[p])}`);
+    const look = `a ${size} ${spec.word} of ${[...byKind.keys()].filter((k) => MATERIAL[k]).map((k) => MATERIAL[k].word).join(" and ")}${moss >= 2 ? " with a moss roof" : ""}; ${palWords.join(", ")}`;
+    const name = String(a.name ?? "").trim().slice(0, 60) || `${size} ${spec.word}`;
+    const e = w.spawn("structure", name, mid.x, mid.z, {
+      shape: shapeName, size, look, desc: `${look}.${a.description ? ` ${String(a.description).slice(0, 240)}` : ""} Built by ${w.me.name}.`, materials, materialKinds: kinds,
+      colors: col, colorNames: colName, builtBy: w.me.name, radius: spec.line ? spec.radius : spec.radius * (shapeName === "bridge" ? 1 : 1.15), heading, shelter: !!spec.shelter, walk: !!spec.walk,
+      flammable: wood / total >= 0.5, ...(spec.line ? { path: { x1: A.x, z1: A.z, x2: B!.x, z2: B!.z, width: shapeName === "bridge" ? 1.8 : 0.5 } } : {}), ...(deckY !== undefined ? { deckY } : {}),
+    });
+    addWork({ name, shape: shapeName, size, materials, colors: col, colorNames: colName, x: mid.x, z: mid.z }, e.id);
+    w.bump({ mood: 8, curiosity: -6 });
+    const tags = [shapeName, size, ...Object.keys(kinds), ...Object.keys(materials), ...Object.values(colName), ...Object.values(col).map(describeColour), ...(a.description ? String(a.description).split(/\s+/) : [])];
+    bus.emit("made", { name, tags, kind: "build" });
+    log("world", `River built ${name} (${look}).`, { perceived: true });
+    return `You build "${name}": ${look}. It stands ${spec.line ? `from (${A.x.toFixed(0)}, ${A.z.toFixed(0)}) to (${B!.x.toFixed(0)}, ${B!.z.toFixed(0)})` : `at (${A.x.toFixed(0)}, ${A.z.toFixed(0)}), ${dist(A, w.me).toFixed(0)}m ${compassOf(w.me, A)} of you`}. Used ${Object.entries(materials).map(([k, n]) => `${n} ${k}`).join(", ")}.`;
+  },
+};
+
+function mine(w: World, ref: string): Entity {
+  const r = ref.toLowerCase(), e = w.entities.get(ref) ?? w.nearby(12).map((o) => o.e).find((x) => x.kind === "structure" && x.name.toLowerCase().includes(r));
+  if (!e || e.kind !== "structure" || !e.props.shape) throw new ToolError("There's nothing you built by that name within reach.");
+  if (dist(e, w.me) > (e.props.path ? 14 : 8)) throw new ToolError(`${e.name} is too far away to work on. Walk closer.`);
+  return e;
+}
+function paintIt(a: any, w: World): string {
+  const e = mine(w, String(a.target ?? "")), spec = SHAPES[e.props.shape as Shape], colors = a.colors ?? {};
+  if (!Object.keys(colors).length) throw new ToolError("Say which parts to colour and with what, e.g. {\"walls\": \"dusk\"}.");
+  const spend = new Map<string, number>(), changes: [string, string, string][] = [];
+  for (const [part0, ref] of Object.entries(colors) as [string, string][]) {
+    const part = part0 === "body" || part0 === "seat" ? "walls" : part0;
+    if (!spec.parts.includes(part)) throw new ToolError(`${e.name} has no ${part0}. It has: ${spec.parts.join(", ")}.`);
+    const p = w.findItem(String(ref)); if (!p || p.kind !== "pigment") throw new ToolError(`You aren't holding a pigment called "${ref}".`);
+    spend.set(p.id, (spend.get(p.id) ?? 0) + 1); changes.push([part, hexOf(p)!, p.name]);
+  }
+  for (const [id, n] of spend) if ((w.inventory.get(id)?.qty ?? 0) < n) throw new ToolError("You don't have enough of that pigment for all of those parts.");
+  for (const [id, n] of spend) w.takeItem(id, n);
+  for (const [part, hex, nm] of changes) { e.props.colors[part] = hex; e.props.colorNames = { ...(e.props.colorNames ?? {}), [part]: nm }; }
+  e.props.look = String(e.props.look).replace(/;.*$/, "") + `; ${spec.parts.map((p) => `${p} ${e.props.colorNames?.[p] ?? describeColour(e.props.colors[p])}`).join(", ")}`;
+  e.props.desc = `${e.props.look}. Built by ${w.me.name}.`; w.putEntity(e); w.bump({ mood: 4, curiosity: -3 });
+  bus.emit("made", { name: e.name, tags: [e.props.shape, ...changes.map((c) => c[2]), ...changes.map((c) => describeColour(c[1]))], kind: "paint" });
+  return `You colour ${e.name}: ${changes.map(([p, , n]) => `${p} ${n}`).join(", ")}. Now it is ${e.props.look}.`;
+}
+function takeDown(a: any, w: World): string {
+  const e = mine(w, String(a.target ?? "")); w.setActivity("taking something down");
+  const back: string[] = [];
+  for (const [name, n] of Object.entries(e.props.materials ?? {}) as [string, number][]) { const kind = e.props.materialKinds?.[name]; const k = Math.floor(n * 0.6); if (k >= 1 && kind) { w.addItem(kind, name, `${name}, reclaimed.`, k); back.push(`${k} ${name}`); } }
+  w.removeEntity(e.id); w.bump({ energy: -3 }); bus.emit("made", { name: e.name, tags: [], kind: "take_down" });
+  return `You take ${e.name} apart. ${back.length ? `You keep ${back.join(", ")}; the rest is broken or lost.` : "Nothing worth keeping comes back."}`;
+}
