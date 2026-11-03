@@ -13,7 +13,7 @@ import { ToolError, availableTools, findTool, placesText } from "./tools.ts";
 import { placeNear } from "./places.ts";
 import type { Emotions } from "./emotions.ts";
 import type { World } from "./world.ts";
-import { simNow, simRng, after, cancel, simPaused, simTick, simSpeed } from "./sim.ts";
+import { simNow, simRng, after, cancel, simPaused, simTick, simSpeed, inject } from "./sim.ts";
 import { recordCommand, finishCommand, admit } from "./recorder.ts";
 import { lifeGen, isStale, discarded } from "./lifecycle.ts";
 const sr = simRng("agent");
@@ -216,8 +216,8 @@ export class Agent {
   }
 
   /** Things the brain loop does to the world besides tool calls. Journaled, so replay (which has no brain) can repeat them. */
-  private activity(text: string) { this.applyBrain({ type: "set_activity", text }); }
-  private cycleEnd() { this.applyBrain({ type: "cycle_end" }); }
+  private activity(text: string) { void inject(() => this.applyBrain({ type: "set_activity", text })); }
+  private cycleEnd() { void inject(() => this.applyBrain({ type: "cycle_end" })); }
   applyBrain(c: { type: string; text?: string }) {
     const seq = recordCommand("brain", c.type, c);
     if (c.type === "set_activity") this.w.setActivity(c.text ?? "");
@@ -226,7 +226,11 @@ export class Agent {
   }
 
   /** Run one tool call as the character. Every call is journaled (with the tick it started on) so a life can be replayed. */
-  async exec(name: string, input: Record<string, any>, gen?: number, commandId?: string): Promise<{ content: string; is_error?: boolean }> {
+  exec(name: string, input: Record<string, any>, gen?: number, commandId?: string): Promise<{ content: string; is_error?: boolean }> {
+    return inject(() => this.execNow(name, input, gen, commandId));
+  }
+  /** The tool call itself, run at a tick boundary (live, through `exec`) or straight from the journal (replay). */
+  async execNow(name: string, input: Record<string, any>, gen?: number, commandId?: string): Promise<{ content: string; is_error?: boolean }> {
     if (this.halted) return { content: "Your life is being reset; nothing more happens.", is_error: true };
     if (gen !== undefined && isStale(gen)) { discarded(`call to ${name}`); return { content: "That belongs to a life that has ended; nothing happens.", is_error: true }; }
     const adm = admit("brain", "tool", { name, input }, commandId);

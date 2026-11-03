@@ -46,7 +46,7 @@ sim.setSimPaused(false);
 const drain = () => new Promise<void>((r) => setImmediate(r));
 const pending: Promise<unknown>[] = [];
 const apply = (c: (typeof cmds)[number]) => {
-  if (c.type === "tool" && c.source === "brain") pending.push(rt.agent.exec(c.payload.name, c.payload.input));
+  if (c.type === "tool" && c.source === "brain") pending.push(rt.agent.execNow(c.payload.name, c.payload.input));
   else if (c.source === "external" && c.type === "relevance") rt.emotions.resolveRelevance(c.payload);
   else if (c.source === "external" && c.type === "dream") applyDream(rt.world, c.payload, () => {}, { feelings: () => rt.emotions.describe(), after: () => rt.emotions.afterDream() });
   else if (c.source === "brain") rt.agent.applyBrain(c.payload);
@@ -57,6 +57,7 @@ if (sim.simTick() !== snap.tick) throw new Error(`restored tick ${sim.simTick()}
 let ci = 0;
 while (sim.simTick() < endTick) {
   while (ci < cmds.length && cmds[ci]!.tick <= sim.simTick()) { apply(cmds[ci++]!); await drain(); }   // one at a time: live ran them in sequence
+  if (sim.simPaused()) { if (ci >= cmds.length) break; continue; }      // a frozen world does not tick; the journal says when it thaws
   sim.runTicks(1);
   await drain();
 }

@@ -13,7 +13,7 @@ import { align } from "./taste.ts";
 import type { Moment } from "../shared/types.ts";
 import { BITTERSWEET, EMOTIONS, EMOTION_ORDER, intensityWord, type EmotionName } from "../shared/emotions.ts";
 import type { World } from "./world.ts";
-import { simNow, every, after } from "./sim.ts";
+import { simNow, every, after, inject } from "./sim.ts";
 import { recordCommand, finishCommand, isReplaying } from "./recorder.ts";
 import { lifeGen, isStale, discarded } from "./lifecycle.ts";
 
@@ -158,9 +158,11 @@ export class Emotions {
     const id = ++this.relId;
     if (isReplaying()) return new Promise((res) => this.relWaiting.set(id, res));
     const gen = lifeGen(), v = await this.relevanceLive(text);
-    if (isStale(gen)) { discarded("appraisal"); return null; }          // the life it was about has ended
-    finishCommand(recordCommand("external", "relevance", { id, ...v }), "ok", "");
-    return v;
+    return inject(() => {
+      if (isStale(gen)) { discarded("appraisal"); return null; }        // the life it was about has ended
+      finishCommand(recordCommand("external", "relevance", { id, ...v }), "ok", "");
+      return v;
+    });
   }
   private relId = 0;
   private relWaiting = new Map<number, (v: { r: number; top?: string }) => void>();

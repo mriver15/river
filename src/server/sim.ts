@@ -104,8 +104,27 @@ export function afterCommit(fn: () => void) { if (txOpen) afterQ.push(fn); else 
 export function suspendTx() { txSuspended = true; commitTx(); }
 export function resumeTx() { txSuspended = false; beginTx(); }
 
-let timer: NodeJS.Timeout | null = null;
+let timer: NodeJS.Timeout | null = null, hosted = false;
 const drain = () => new Promise<void>((r) => setImmediate(r));
+
+// ---- the injection queue ----
+// Everything that enters the world from outside the tick loop (a brain action, a model's answer, an embedding score) is queued and
+// run at a tick boundary, one item at a time, with the event loop drained after each. Independent async chains therefore never
+// interleave in an order that depends on timing, and replay, which applies the journal the same way, sees the same order.
+interface Injected { fn: () => unknown; resolve: (v: any) => void; reject: (e: unknown) => void }
+const injected: Injected[] = [];
+/** Run `fn` at the next tick boundary. The promise settles with its result. Without a running host loop, `fn` runs at once. */
+export function inject<T>(fn: () => T | Promise<T>): Promise<T> {
+  if (!hosted) return Promise.resolve().then(fn);
+  return new Promise<T>((resolve, reject) => injected.push({ fn, resolve, reject }));
+}
+async function flushInjected() {
+  while (injected.length) {
+    const it = injected.shift()!;
+    try { it.resolve(it.fn()); } catch (e) { it.reject(e); }
+    await drain();
+  }
+}
 /**
  * Host loop: a monotonic wall timer feeding the accumulator. Lag is carried, never dropped; work per turn is bounded.
  * Each tick is followed by a pass of the event loop, so the continuations of awaited sleeps always finish between ticks:
@@ -114,6 +133,7 @@ const drain = () => new Promise<void>((r) => setImmediate(r));
 export function start(hz = 40) {
   if (timer) return;
   let last = performance.now(), busy = false;
+  hosted = true;
   beginTx();
   timer = setInterval(async () => {
     if (busy) return;
@@ -121,7 +141,8 @@ export function start(hz = 40) {
     try {
       const t = performance.now(), owed = advanceWall(clock, t - last, 100); last = t;
       let done = 0;
-      for (; done < owed && !clock.paused; done++) { step(); await drain(); }
+      for (; done < owed && !clock.paused; done++) { step(); await drain(); await flushInjected(); }
+      await flushInjected();                              // also while the world is frozen: River may still act on a paused world
       consumeTicks(clock, done);
       commitTx();
     } finally { busy = false; }

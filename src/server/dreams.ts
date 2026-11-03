@@ -9,7 +9,7 @@ import { MOCK } from "./agent.ts";
 import { recordCommand, finishCommand, isReplaying } from "./recorder.ts";
 import { lifeGen, isStale, discarded } from "./lifecycle.ts";
 import type { World } from "./world.ts";
-import { simNow } from "./sim.ts";
+import { simNow, inject } from "./sim.ts";
 
 const COOLDOWN_MS = 8 * 60_000;
 const seeds: string[] = kvGet<string[]>("dreamSeeds", []);
@@ -57,12 +57,14 @@ async function dream(w: World, seconds: number, notify: (msg: string) => void, h
       text = String(j.dream ?? "").trim(); insight = String(j.insight ?? "").trim(); shift = Math.max(-8, Math.min(8, Number(j.mood_shift) || 0));
     }
     if (!text) return;
-    if (isStale(gen)) { discarded("dream"); return; }
     // The model's answer is an outside input: journal it, then apply it through the same path replay uses.
     const result: DreamResult = { text, insight, shift, seed: seed ?? null, key };
-    const seq = recordCommand("external", "dream", result);
-    applyDream(w, result, notify, hooks);
-    finishCommand(seq, "ok", "");
+    await inject(() => {
+      if (isStale(gen)) { discarded("dream"); return; }
+      const seq = recordCommand("external", "dream", result);
+      applyDream(w, result, notify, hooks);
+      finishCommand(seq, "ok", "");
+    });
   } finally { busy = false; }
 }
 

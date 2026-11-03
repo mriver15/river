@@ -82,11 +82,32 @@ Results on this machine:
 
 Bugs this found: partial `needs` in my fixtures produced NaN (the hash rejects non-finite numbers); system construction repeated on a post-construction snapshot drew random numbers twice; brain-loop side effects, dream mood shifts and embedding-driven appraisal were unjournaled inputs.
 
-Not done in MVP 2 (do not read the above as meeting its acceptance criteria):
+### MVP 2 completion work
 
-- The 20-seed, three-simulated-day replay requirement. The runs above are minutes long, on 6 fixtures.
-- Command idempotency keys and duplicate rejection; lifecycle fencing so late model answers cannot cross a reset; crash-between-commit testing.
-- Replay across resets, new lives, tool approvals and forging: those commands are not journaled, so a replay segment ends at one.
-- Mid-run snapshots. In-flight timers are closures that a snapshot cannot hold, so only the boot snapshot is faithful. Persistent activities (MVP 3) remove this.
-- Journal stories, reflections and web search results do not touch the hashed state and are not journaled; replay does not reproduce their prose.
-- Emotions, memories and desires are not in the hash; they affect the physical state only through the journaled paths above.
+Added after the first slice:
+
+- **Idempotency.** Every client message carries a `cid`. A cid the server has seen is acknowledged as `duplicate` with the original outcome and is not run again (unique index on `sim_commands.command_id`). Tool calls are keyed `generation:tool_call_id`.
+- **Lifecycle fencing** (`src/server/lifecycle.ts`). A life generation advances on reset and on death. Model replies, tool calls, reflections, dreams, stories and embedding appraisals remember the generation they started in and are discarded (and logged) if it has changed.
+- **Durability.** One SQLite transaction per host turn: the writes of the ticks, the continuations between them, commands that arrived, the journal rows and the clock itself commit together. Acknowledgements and broadcasts wait for the commit. `PRAGMA synchronous=NORMAL` with WAL: a process crash loses nothing committed; a power cut can lose the last few commits.
+- **Injection queue** (`sim.inject`). Brain actions, model answers and embedding scores enter the world at tick boundaries, one at a time, with the event loop drained after each, the same order replay applies the journal in. Without it, 12 of 20 soak seeds diverged by a tiny amount in `mood` after long stretches of exact matches: independent async chains interleaved by timing.
+- **Snapshot naming.** Boot snapshots are named per database. Before, parallel worlds overwrote each other's `snapshot-0.db`, so a replay could restore another world.
+- **Lifecycle boundaries.** `reset_river` and `new_life` are journaled; replay covers the segment before the first one.
+
+Results:
+
+| Check | Result |
+|---|---|
+| `npm run soak -- 20 3 4` (20 fresh seeded islands, 3 simulated days each at 100x, mock brain, human commands, 4 at a time) | all 20 replayed exactly (150-162 checkpoints each) |
+| `npm run crash-test` (3 SIGKILLs right after acknowledgements, 75 acknowledged commands) | none lost, none duplicated, clock and journal agree, integrity ok, retries after restart recognised as duplicates |
+| `npm run verify:replay -- 45` (6 fixtures) | all exact |
+| `VERIFY_LIVE=1 npm run verify:replay -- 240 new-life` (real model and embeddings) | exact |
+| Unit tests (`npm test`) | 18 pass |
+
+Still not done in MVP 2:
+
+- The soak uses the mock brain. Real-model runs are verified for minutes, not three simulated days per seed.
+- Crash testing covers SIGKILL, not power loss or a disk that lies.
+- Replay does not cross a reset, new life, tool approval or forging; those are boundaries, not replayed.
+- Mid-run snapshots are still not faithful (in-flight timers are closures); only the boot snapshot is. Persistent activities (MVP 3) are the fix.
+- Journal stories, reflections and web results are not journaled and do not touch the hashed state.
+- Emotions, memories and desires are not in the hash. They affect the hashed state only through the journaled paths, so a divergence that stays in them would go unseen until it reaches `needs`.
