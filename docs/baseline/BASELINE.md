@@ -55,3 +55,9 @@ The old `ALTER TABLE ... try/catch` block in `db.ts` is replaced by migration `0
 - Day length is now clock speed (`dayMinutes` sets speed to `24 / N`); the calendar is fixed at 24 minutes per canonical day. An existing world's day and time of day carry over (checked on a copy of the live DB).
 - The world can be frozen separately from River's thinking (`W` key / freeze button).
 - Not yet done: no persisted activities, so a restart still drops in-flight sleeps and timers; one-shot callbacks are closures.
+
+## Post-cutover run (commit `307b96f`)
+
+Same command, fixture and model as the baseline above: 77 calls (2 cycles), 939,153 input / 17,501 output tokens, 97.7% cache hits, about 1.9 million tokens per simulated day, 16 memories.
+
+That is within run-to-run noise of the baseline (84 calls, about 2.0 million). As expected, the cutover changed timing, not token use: the brain is still cycle-driven. The token reduction is MVP 4's job. River ended in a different place in each run, so the two runs diverged behaviorally as usual for a live model.
