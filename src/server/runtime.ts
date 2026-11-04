@@ -16,6 +16,8 @@ import { Story } from "./story.ts";
 import { Catalog } from "./catalog.ts";
 import { bodyApi } from "./body.ts";
 import { Wildlife } from "./wildlife.ts";
+import { Knowledge } from "./knowledge.ts";
+import { Activities } from "./activities.ts";
 import { setupDeath } from "./death.ts";
 import { startDreams } from "./dreams.ts";
 import { startJournal } from "./journal.ts";
@@ -43,7 +45,10 @@ export async function createRuntime() {
   const wildlife = new Wildlife(world, emotions, ambient.say, (msg) => agent.notify(msg, true));
   const fire = new Fire(world, ambient.say, (msg) => agent.notify(msg, true));
   world.fire = fire;
-  return { world, emotions, agent, ambient, creatures, story, catalog, wildlife, fire };
+  const knowledge = new Knowledge(world);
+  const activities = new Activities(world, (msg, wake) => agent.notify(msg, wake), () => wildlife.threat());
+  activities.resume();
+  return { world, emotions, agent, ambient, creatures, story, catalog, wildlife, fire, knowledge, activities };
 }
 export type Runtime = Awaited<ReturnType<typeof createRuntime>>;
 
@@ -52,6 +57,8 @@ export function startSystems(rt: Runtime) {
   const { world, emotions, agent, ambient, creatures, story, wildlife, fire } = rt;
   registerState("emotions", () => emotions.state());
   every(STEP_MS, () => world.tick(STEP_MS / 1000), "world");
+  rt.knowledge.start();
+  rt.activities.start();
   setSimSpeed(speedForDayMinutes(cfg("dayMinutes")));
   onConfig((key, v) => {
     if (key === "dayMinutes") setSimSpeed(speedForDayMinutes(Number(v)));   // day length is the clock speed; the calendar never moves
@@ -69,7 +76,7 @@ export function startSystems(rt: Runtime) {
 }
 
 /** Human commands that change the world. Live and replay both run them through here. */
-export const REPLAYABLE = new Set(["say", "skip_day", "config_set", "config_reset", "sim_pause", "sim_speed", "gift", "catalog_add", "catalog_place", "catalog_retrieve", "catalog_delete", "approve", "deny"]);
+export const REPLAYABLE = new Set(["say", "skip_day", "config_set", "config_reset", "sim_pause", "sim_speed", "gift", "catalog_add", "catalog_place", "catalog_retrieve", "catalog_delete", "approve", "deny", "activity_cancel"]);
 export interface HumanResult { notice?: { level: "ok" | "error"; text: string }; toAll?: boolean; forge?: ToolRequest }
 
 export function humanCommand(rt: Runtime, m: ClientMsg): HumanResult {
@@ -106,6 +113,7 @@ export function humanCommand(rt: Runtime, m: ClientMsg): HumanResult {
         // Building a new tool calls a model and writes a file: not replayed.
         return approve && !granted && !(r.name in GATED) ? { forge: r } : {};
       }
+      case "activity_cancel": rt.activities.cancel("a human told you to stop"); return {};
       case "gift": {
         if (!m.name?.trim()) return {};
         const id = catalog.add({ name: m.name, desc: m.desc || "A gift left by the human." }), at = catalog.place(id);

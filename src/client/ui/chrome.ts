@@ -47,7 +47,9 @@ const NEEDS: { k: keyof AgentView["needs"]; label: string; color: string }[] = [
 ];
 export function renderHud(a: AgentView) {
   $("name").textContent = a.name;
-  $("activity").textContent = a.sleeping ? "sleeping…" : a.thinking && a.activity === "thinking" ? "thinking…" : a.activity;
+  const base = a.sleeping ? "sleeping…" : a.thinking && a.activity === "thinking" ? "thinking…" : a.activity;
+  $("activity").textContent = a.progress && !a.sleeping ? `${a.progress.label} · ${Math.round(a.progress.pct * 100)}%` : base;
+  $("activity").title = a.progress ? "Cancel with the Stop button" : "";
   $("dot").className = "dot " + (a.sleeping ? "sleep" : a.thinking ? "think" : "live");
   const box = $("needs");
   if (!box.children.length) for (const n of NEEDS) {
@@ -87,6 +89,7 @@ function initActions() {
   btn("btn-follow", "follow", "Camera follows River (F)", toggleFollow).classList.add("on");
   btn("btn-sound", "volume", "Ambient sound (M)", toggleSound);
   btn("btn-pause", "pause", "Pause River (P)", () => send({ t: "pause", paused: !S.stats?.paused }));
+  btn("btn-stop", "stop", "Stop what River is doing", () => send({ t: "activity_cancel" }));
   btn("btn-freeze", "freeze", "Freeze the whole world (W)", () => send({ t: "sim_pause", paused: !S.stats?.worldPaused }));
   box.append(el("span", "sep"));
   btn("btn-nextday", "sunrise", "Skip to the next dawn", () => { if (confirm("Skip ahead to the next dawn?")) send({ t: "skip_day" }); });

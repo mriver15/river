@@ -1,0 +1,73 @@
+// Restart-midway test: an activity that is interrupted by a process restart must resume and finish exactly as it would have.
+//   tsx scripts/restart-test.ts
+// A runs a gather errand to the end. Partway through, A copies its database. B boots a fresh process on the copy, resumes the
+// errand, and runs to the same tick. The physical state must match.
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+const [mode, snapFile, endTickArg] = process.argv.slice(2);
+
+async function setup() {
+  const { setConfig } = await import("../src/server/config.ts");
+  for (const [k, v] of Object.entries({ weather: false, ambientRate: 0, prey: false, smallWild: false, predators: false, needsRate: 0, fallRate: 0 })) setConfig(k, v as number | boolean);
+  const sim = await import("../src/server/sim.ts");
+  const { createRuntime, startSystems } = await import("../src/server/runtime.ts");
+  const rt = await createRuntime(); startSystems(rt);
+  const drain = () => new Promise<void>((r) => setImmediate(r));
+  const run = async (n: number, until?: () => boolean) => { for (let i = 0; i < n && !until?.(); i++) { sim.runTicks(1); await drain(); } };
+  return { sim, rt, run };
+}
+const parts = async (rt: any) => {
+  const { stateParts } = await import("../src/server/recorder.ts");
+  const p = stateParts(rt.world);
+  const { db } = await import("../src/server/db.ts");
+  const detail = { trees: [...rt.world.entities.values()].filter((e: any) => e.kind === "tree").map((e: any) => ({ id: e.id, stock: e.props.stock, reserved: e.props.reserved, lastTake: e.props.lastTake })), act: db.prepare("SELECT id,status,step,progress,started_tick,deadline_tick,reservations,outcome,ended_tick FROM sim_activities").all(), inv: [...rt.world.inventory.values()].map((i: any) => `${i.name}x${i.qty}`), ents: [...rt.world.entities.values()].sort((a: any, b: any) => (a.id < b.id ? -1 : 1)), known: db.prepare("SELECT * FROM known_entities ORDER BY id").all() };
+  return { me: p.me, entities: p.entities, inventory: p.inventory, tables: p.tables, _detail: JSON.stringify(detail) };
+};
+
+if (mode === "A") {
+  const { sim, rt, run } = await setup();
+  const { isLand } = await import("../src/shared/noise.ts");
+  const w = rt.world; let g = { x: 0, z: 0 };
+  outer: for (let x = -40; x < 40; x += 2) for (let z = -40; z < 40; z += 2) { let ok = true; for (let d = 0; d <= 30 && ok; d++) if (!isLand(x + d, z, w.seed)) ok = false; if (ok) { g = { x, z }; break outer; } }
+  for (const e of [...w.entities.values()]) w.removeEntity(e.id);
+  w.me.x = g.x; w.me.z = g.z;
+  for (const [i, dx] of [14, 20].entries()) rt.knowledge.learn(w.spawn("tree", `oak ${i}`, g.x + dx, g.z + i * 3, { yields: ["stick"], stock: 2, max: 2 }));
+  w.ensureMaterials();                                         // the idempotent top-up a boot performs, so the copy needs nothing the original lacked
+  const scenario = process.env.RT_SCENARIO ?? "gather", cut = Number(process.env.RT_CUT ?? 100);
+  const act = scenario === "rest" ? rt.activities.begin("rest", { seconds: 20 }, { intent: "rest", source: "brain" })
+    : rt.activities.begin("gather", { what: "stick", quantity: 3, returnToStart: true }, { intent: "gather", source: "brain" });
+  await run(cut);                                              // partway
+  const phase = act.progress.phase ?? act.def, got = act.progress.got ?? 0;
+  sim.save();
+  const { db } = await import("../src/server/db.ts");
+  fs.rmSync(snapFile!, { force: true }); db.prepare("VACUUM INTO ?").run(snapFile!);
+  await run(5000, () => rt.activities.cur === null);
+  await run(20);
+  console.log("RESULT " + JSON.stringify({ midway: { phase, got }, endTick: sim.simTick(), outcome: act.outcome, parts: await parts(rt) }));
+} else if (mode === "B") {
+  const { sim, rt, run } = await setup();
+  const resumed = rt.activities.cur?.id ?? null, phase = rt.activities.cur?.progress?.phase ?? null;
+  await run(Number(endTickArg) - sim.simTick());
+  console.log("RESULT " + JSON.stringify({ resumed, phase, endTick: sim.simTick(), outcome: null, parts: await parts(rt) }));
+} else {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "river-restart-")), snap = path.join(dir, "snap.db");
+  const call = (m: string, db: string, env: Record<string, string>, ...a: string[]) => {
+    const r = spawnSync(process.execPath, ["--import", "tsx", "scripts/restart-test.ts", m, snap, ...a], { env: { ...process.env, RIVER_DB: db, MOCK_LLM: "1", ...env }, encoding: "utf8" });
+    const line = r.stdout.split("\n").find((l) => l.startsWith("RESULT ")); if (!line) { console.error(r.stdout.slice(-800), r.stderr.slice(-800)); process.exit(1); }
+    return JSON.parse(line.slice(7));
+  };
+  let failed = 0;
+  for (const [scenario, cut] of [["gather", 5], ["gather", 40], ["gather", 100], ["gather", 130], ["gather", 185], ["rest", 30], ["rest", 120]] as const) {
+    const A = call("A", path.join(dir, `a-${scenario}-${cut}.db`), { RT_SCENARIO: scenario, RT_CUT: String(cut) });
+    const B = call("B", snap, {}, String(A.endTick));
+    const bad = Object.keys(A.parts).filter((k) => k[0] !== "_" && A.parts[k] !== B.parts[k]);
+    const ok = !!B.resumed && !bad.length;
+    if (!ok) failed++;
+    console.log(`${ok ? "PASS" : "FAIL"} ${scenario.padEnd(6)} restarted at tick ${cut} (${A.midway.phase}${A.midway.got ? `, ${A.midway.got} gathered` : ""}); finished tick ${A.endTick} ${ok ? "identically" : "differing: " + (bad.join(", ") || "not resumed")}`);
+  }
+  process.exit(failed ? 1 : 0);
+}
+process.exit(0);

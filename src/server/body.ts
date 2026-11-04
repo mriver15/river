@@ -157,7 +157,7 @@ function tick(dt: number) {
   const bleeding = st.injuries.some((i) => i.bleed > 0.5);
   if (!bleeding && st.infection < 0.2 && m.needs.hunger > 35 && m.needs.warmth > 30 && st.health < 100) st.health = Math.min(100, st.health + (m.sleeping ? 1.5 : 0.5) * dt / 60);
   if (st.health < 35) w.bump({ energy: -0.02 * dt, mood: -0.02 * dt });
-  if (st.health < 12 && !m.sleeping && now - lastFaint > 90_000) { lastFaint = now; log("need", `${m.name} collapsed, too weak to stand.`, { perceived: true }); void w.restFor(40); }
+  if (st.health < 12 && !m.sleeping && now - lastFaint > 90_000) { lastFaint = now; log("need", `${m.name} collapsed, too weak to stand.`, { perceived: true }); w.beginRest(now + 40_000); }
 
   // stress that goes on and on becomes a body ache
   const stress = Math.max(emo.level.dread, emo.level.frustration * 0.85, emo.level.grief * 0.5);

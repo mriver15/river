@@ -46,6 +46,16 @@ export class Wildlife {
   private lastPersist = 0;
   constructor(private w: World, public emo: Emotions, private say: (text: string, at?: { x: number; z: number }, r?: number) => boolean, private notify: (msg: string) => void) { instance = this; }
   /** River has struck it: it fights back. */
+  /** The nearest predator that is charging or fighting, if any is within `max` metres. Read-only. */
+  threat(max = 12): { name: string; d: number; x: number; z: number } | null {
+    let best: { name: string; d: number; x: number; z: number } | null = null;
+    for (const e of this.w.entities.values()) {
+      const st = this.st.get(e.id); if (!st || (st.mode !== "charge" && st.mode !== "fight")) continue;
+      const d = Math.hypot(e.x - this.w.me.x, e.z - this.w.me.z);
+      if (d <= max && (!best || d < best.d)) best = { name: String(e.props.species ?? e.name), d, x: e.x, z: e.z };
+    }
+    return best;
+  }
   provoke(e: Entity) { const st = this.st.get(e.id); if (st && !(st.mode === "fight" || st.mode === "charge" || st.mode === "retreat")) { st.mode = "charge"; st.until = simNow() + 10_000; } }
   start() { every(15_000, () => this.sync(), "wildlife.sync"); every(500, () => this.tick(0.5), "wildlife"); after(1500, () => this.sync()); }
   reset() { this.st.clear(); }

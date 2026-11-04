@@ -40,6 +40,8 @@ export interface AgentView {
   name: string;
   x: number; z: number; heading: number;
   activity: string;     // "walking to Old Library", "sleeping", "thinking"...
+  /** the activity in progress, if any: what it is called and how far along (0..1) */
+  progress?: { label: string; pct: number } | null;
   speech: string | null;
   sleeping: boolean;
   needs: Needs;
@@ -126,6 +128,7 @@ export type ClientMsg = (
   | { t: "pause"; paused: boolean }
   | { t: "sim_pause"; paused: boolean }
   | { t: "sim_speed"; speed: number }
+  | { t: "activity_cancel" }
   | { t: "dream_seed"; text: string }
   | { t: "reset_budget" }
   | { t: "reset_river"; code: string; world: boolean }

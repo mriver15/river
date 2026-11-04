@@ -23,14 +23,17 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { ToolError, obj, num, str, type ToolDef } from "./toolkit.ts";
 import { simNow, simRng } from "./sim.ts";
+import { available, takeLoose, takeOneUnit } from "./gathering.ts";
+import { activitiesOf, runActivity } from "./activities.ts";
 const sr = simRng("tools");
 export { ToolError, type ToolDef };
 
 function findEntity(w: World, ref: string): Entity | undefined {
   const r = ref.toLowerCase().trim();
+  // Only things River has perceived can be named: an id or a name must not reveal what has not been seen.
   const byId = w.entities.get(ref) ?? w.entities.get(r);
-  if (byId) return byId;
-  return w.nearby(200).find(({ e }) => e.name.toLowerCase().includes(r))?.e;
+  if (byId && w.isKnown(byId)) return byId;
+  return w.nearby(200).find(({ e }) => w.isKnown(e) && e.name.toLowerCase().includes(r))?.e;
 }
 
 function describeNearby(w: World, radius: number, max: number) {
@@ -39,6 +42,7 @@ function describeNearby(w: World, radius: number, max: number) {
   const rest = list.filter((o) => !important.includes(o));
   const picked = [...important, ...rest].slice(0, max).sort((a, b) => a.d - b.d);
   if (!picked.length) return "nothing notable nearby";
+  for (const { e } of picked) w.learnNearby?.(e);             // what you are told about, you have seen
   return picked.map(({ e, d }) => `- ${e.id}: ${e.name} (${d.toFixed(0)}m ${w.compass(e)})${w.inReach(e) ? " [in reach]" : ""}`).join("\n");
 }
 
@@ -97,8 +101,8 @@ export const BASE_TOOLS: ToolDef[] = [
         if (!w.isLandAt(x, z)) { x = e.x; z = e.z; }
       } else if (typeof a.x === "number" && typeof a.z === "number") { x = a.x; z = a.z; label = `(${a.x.toFixed(0)}, ${a.z.toFixed(0)})`; }
       else throw new ToolError("Give a target or both x and z.");
-      const r = await w.walkTo(x, z, label);
-      if (!r.arrived) throw new ToolError(`Could not reach ${label}: ${r.reason}. You are at (${w.me.x.toFixed(0)}, ${w.me.z.toFixed(0)}).`);
+      const r = await runActivity(w, "travel", { x, z, label }, `walk to ${label}`);
+      if (!r.ok) throw new ToolError(`Could not reach ${label}: ${r.text}. You are at (${w.me.x.toFixed(0)}, ${w.me.z.toFixed(0)}).`);
       return `Arrived at ${label}. Nearby:\n${describeNearby(w, 12, 8)}`;
     },
   },
@@ -132,23 +136,12 @@ export const BASE_TOOLS: ToolDef[] = [
       if (!w.inReach(e)) throw new ToolError(`${e.name} is ${w.dist(e).toFixed(0)}m away. move_to it first.`);
       if (e.props.yields) {
         if (e.props.stock <= 0) throw new ToolError(`${e.name} is picked clean for now. It regrows slowly.`);
-        const kind: string = e.props.yields[Math.floor(sr() * e.props.yields.length)];
-        const names: Record<string, [string, string]> = {
-          berry: ["wild berry", "A small red berry. Edible."], stick: ["stick", "A sturdy stick."],
-          stone: ["stone", "A smooth, heavy stone."], seed: ["seed", "A small seed. It could be planted."],
-          clay: ["lump of clay", "Cool, fine-grained clay that holds a shape when pressed. Red-brown."], chalk: ["lump of chalk", "Soft white chalk that marks whatever it touches."],
-          meat: ["raw meat", "A heavy cut of raw meat, still warm. It would be better cooked."], hide: ["animal hide", "A thick, greasy hide. It would keep out wind and cold, and it can be lashed or sewn."],
-          bark: ["strip of bark", "A long, flexible strip of bark, peeled loose. It bends without breaking."],
-          moss: ["handful of moss", "Soft green moss, damp and springy."], charcoal: ["piece of charcoal", "A black, brittle remnant of burnt wood. It leaves a mark."],
-        };
-        e.props.stock--; e.props.lastTake = simNow(); w.putEntity(e);
-        w.addItem(kind, names[kind][0], names[kind][1]);
-        return `You gathered a ${names[kind][0]} from the ${e.name}.`;
+        if (available(e) <= 0) throw new ToolError(`${e.name} is spoken for: you have set aside what is left of it.`);
+        const got = takeOneUnit(w, e);
+        return `You gathered a ${got.name} from the ${e.name}.`;
       }
       if (e.props.takeable) {
-        const props = e.props.text ? { text: e.props.text, topic: e.props.topic, title: e.props.title, beat: e.props.beat } : undefined;
-        w.removeEntity(e.id);
-        w.addItem(e.props.item ?? e.kind, e.props.title ?? e.props.itemName ?? e.name.replace(/^book: /, ""), e.props.desc ?? "", 1, props);
+        takeLoose(w, e);
         return `You picked up ${e.name}.`;
       }
       throw new ToolError(`You can't pick up ${e.name}.`);
@@ -188,9 +181,26 @@ export const BASE_TOOLS: ToolDef[] = [
     description: "Sit down and sleep/rest for a while to recover energy. Takes real time (3–60 seconds).",
     input_schema: obj({ seconds: num("How long, 3–60") }),
     run: async (a, w) => {
-      await w.restFor(a.seconds ?? 20);
-      return `You rested. Energy: ${w.me.needs.energy.toFixed(0)}/100.`;
+      const r = await runActivity(w, "rest", { seconds: a.seconds ?? 20 }, "rest");
+      if (!r.ok) throw new ToolError(r.text);
+      return r.text;
     },
+  },
+  {
+    name: "gather",
+    description: "Go and collect several of something you know of, then (optionally) come back. One call does the whole errand: walking to a source, taking each one, moving on to another source when one runs out. Takes real time. Returns what you actually got, even if it is less than you asked for.",
+    input_schema: obj({ what: str("What to collect: an item like 'stick' or 'berry', or the id/name of a source you have seen"), quantity: num("How many (1-12)"), return: { type: "boolean", description: "Walk back to where you started afterwards" } }, ["what", "quantity"]),
+    run: async (a, w) => {
+      const r = await runActivity(w, "gather", { what: String(a.what ?? ""), quantity: Math.round(Number(a.quantity ?? 1)), returnToStart: !!a.return }, `gather ${a.what}`);
+      if (!r.ok && !r.partial) throw new ToolError(r.text);
+      return r.text;
+    },
+  },
+  {
+    name: "stop",
+    description: "Stop what you are doing (a walk, a rest, a gathering errand). Whatever you already took stays yours.",
+    input_schema: obj({}),
+    run: (_a, w) => (activitiesOf(w).cancel("you stopped") ? "You stop." : "You weren't doing anything."),
   },
   {
     name: "say",

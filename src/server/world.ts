@@ -8,6 +8,7 @@ import { HEAT_N } from "../shared/types.ts";
 import type { EmotionName } from "../shared/emotions.ts";
 import type { AgentView, Entity, EntityKind, InventoryItem, Needs, Weather } from "../shared/types.ts";
 import { simNow, simRng, after, DAY_MS, legacyWallBoot } from "./sim.ts";
+import { planPath } from "./nav.ts";
 const sr = simRng("world");
 
 /** One canonical day. Day length is now the clock speed (cfg dayMinutes), not a property of the calendar. */
@@ -53,8 +54,16 @@ export class World {
     sleeping: false, sleepUntil: 0, thinking: false,
     needs: { energy: 90, hunger: 70, mood: 60, curiosity: 70, warmth: 75 } as Needs,
   };
-  private walk: { x: number; z: number; label: string; resolve: (r: { arrived: boolean; reason?: string }) => void; stuck: number; lastD: number } | null = null;
-  private lastSave = 0;
+  /** The walk in progress: a route of waypoints (the last is the destination), and who to tell when it ends. Derived state: activities re-begin it after a restart. */
+  walk: { x: number; z: number; label: string; done: (r: { arrived: boolean; reason?: string }) => void; path: { x: number; z: number }[]; stuck: number; lastD: number; replans: number } | null = null;
+  /** Has River perceived this? Set by the knowledge system; until then everything counts as known. */
+  isKnown: (e: Entity) => boolean = () => true;
+  /** set by the server: the Activities engine (loosely typed to avoid an import cycle) */
+  activities: unknown;
+  /** Set by the knowledge system: mark an entity as perceived. */
+  learnNearby: ((e: Entity) => void) | null = null;
+  private lastBody = "";
+  private lastWalk = "null";
   private lastGrow = 0;
 
   init() {
@@ -166,7 +175,7 @@ export class World {
    * `freshWorld` also rolls a new island (new seed, new layout, no burns, no paths, day 1).
    */
   reset(freshWorld: boolean) {
-    this.walk?.resolve({ arrived: false, reason: "a new life began" }); this.walk = null;
+    this.walk?.done({ arrived: false, reason: "a new life began" }); this.walk = null;
     Object.assign(this.me, { x: 4, z: 4, heading: 0, activity: "waking up", speech: null, speechUntil: 0, sleeping: false, sleepUntil: 0, thinking: false, needs: { energy: 90, hunger: 70, mood: 60, curiosity: 70, warmth: 75 } });
     this.inventory.clear(); this.sleepStart = 0;
     for (const e of [...this.entities.values()]) if (e.props.beat) this.removeEntity(e.id);   // the old story's traces
@@ -294,27 +303,36 @@ export class World {
     for (const k of Object.keys(n) as (keyof Needs)[]) this.me.needs[k] = Math.max(0, Math.min(100, this.me.needs[k] + (n[k] ?? 0)));
   }
 
+  /** Start walking. `onDone` is called once, when the walk ends or is replaced. The route avoids obstacles River knows about. */
+  beginWalk(x: number, z: number, label: string, onDone: (r: { arrived: boolean; reason?: string }) => void) {
+    this.walk?.done({ arrived: false, reason: "interrupted by a new destination" }); this.walk = null;
+    if (this.me.sleeping) return onDone({ arrived: false, reason: "you are asleep" });
+    if (!this.walkable(x, z)) return onDone({ arrived: false, reason: "that spot is water or off the island" });
+    const path = planPath(this, { x: this.me.x, z: this.me.z }, { x, z }, this.isKnown);
+    if (!path) return onDone({ arrived: false, reason: "there is no way through that you know of" });
+    this.walk = { x, z, label, done: onDone, path, stuck: 0, lastD: Infinity, replans: 0 };
+    this.me.activity = `walking to ${label}`;
+  }
+  /** After a restart: the walk that was in progress, if any, with a callback to its owner (attached by the activity that owns it). */
+  restoreWalk(onDone: (r: { arrived: boolean; reason?: string }) => void) {
+    const s = kvGet<{ x: number; z: number; label: string; path: { x: number; z: number }[]; stuck: number; lastD: number | null; replans: number } | null>("walk", null);
+    if (s) this.walk = { ...s, lastD: s.lastD ?? Infinity, done: onDone };
+  }
+  /** Drop the walk in progress without telling anyone (its owner is already finished). */
+  cancelWalk() { this.walk = null; }
   walkTo(x: number, z: number, label: string): Promise<{ arrived: boolean; reason?: string }> {
-    this.walk?.resolve({ arrived: false, reason: "interrupted by a new destination" });
-    if (this.me.sleeping) return Promise.resolve({ arrived: false, reason: "you are asleep" });
-    if (!this.walkable(x, z)) return Promise.resolve({ arrived: false, reason: "that spot is water or off the island" });
-    return new Promise((resolve) => {
-      this.walk = { x, z, label, resolve, stuck: 0, lastD: Infinity };
-      this.me.activity = `walking to ${label}`;
-      // safety timeout
-      after(90_000, () => { if (this.walk?.resolve === resolve) this.finishWalk(false, "took too long"); });
-    });
+    return new Promise((resolve) => this.beginWalk(x, z, label, resolve));
   }
   /** Something stops River mid-step (a fall, say). The walk reports why. */
   stopWalk(reason: string) { this.walk && this.finishWalk(false, reason); }
   private finishWalk(arrived: boolean, reason?: string) {
     const w = this.walk; this.walk = null;
-    if (w) { this.me.activity = arrived ? "idle" : this.me.activity; w.resolve({ arrived, reason }); }
+    if (w) { this.me.activity = arrived ? "idle" : this.me.activity; w.done({ arrived, reason }); }
   }
-  restFor(seconds: number): Promise<void> {
-    const s = Math.max(3, Math.min(60, seconds));
-    this.sleepStart = simNow(); this.me.sleeping = true; this.me.sleepUntil = simNow() + s * 1000; this.me.activity = "resting";
-    return new Promise((r) => after(s * 1000, () => { this.wake(); r(); }));
+  /** Lie down until `until` (simulation ms). Idempotent, so an activity can re-establish it after a restart. */
+  beginRest(until: number) {
+    if (!this.me.sleeping) this.sleepStart = simNow();
+    this.me.sleeping = true; this.me.sleepUntil = until; this.me.activity = "resting";
   }
   /** End sleep (idempotent). Long sleeps are announced so the agent can dream. */
   wake() {
@@ -354,15 +372,17 @@ export class World {
   /** Can River stand here: on the island, or on a bridge over the water. */
   walkable(x: number, z: number) { return isLand(x, z, this.seed) || this.bridgeAt(x, z); }
 
-  private blocked(x: number, z: number, fromX = x, fromZ = z) {
+  /** Can River not stand here? With `known`, only obstacles it knows about count (route planning). */
+  isBlocked(x: number, z: number, known?: (e: Entity) => boolean) { return this.blocked(x, z, 1e9, 1e9, known); }
+  private blocked(x: number, z: number, fromX = x, fromZ = z, known?: (e: Entity) => boolean) {
     if (!this.walkable(x, z)) return true;
     for (const e of this.entities.values()) {          // flames can't be walked into, but you can always walk away from them
-      if (!e.props.burning) continue;
+      if (!e.props.burning || (known && !known(e))) continue;
       const d = Math.hypot(e.x - x, e.z - z);
       if (d < 1.4 && d < Math.hypot(e.x - fromX, e.z - fromZ)) return true;
     }
     for (const e of this.entities.values()) {
-      if (!OBSTACLES.includes(e.kind)) continue;
+      if (!OBSTACLES.includes(e.kind) || (known && !known(e))) continue;
       if (e.kind === "structure" && e.props.shape) {                       // things River built have real shapes
         if (e.props.walk) continue;                                        // platforms and bridges are walked on
         const p = e.props.path;
@@ -409,8 +429,8 @@ export class World {
 
     // walking
     if (this.walk && !m.sleeping) {
-      const w = this.walk, dx = w.x - m.x, dz = w.z - m.z, d = Math.hypot(dx, dz);
-      if (d < 0.6) { this.finishWalk(true); }
+      const w = this.walk, wp = w.path[0] ?? { x: w.x, z: w.z }, dx = wp.x - m.x, dz = wp.z - m.z, d = Math.hypot(dx, dz);
+      if (d < (w.path.length > 1 ? 0.5 : 0.6)) { w.path.shift(); w.lastD = Infinity; if (!w.path.length) this.finishWalk(true); }
       else {
         const base = Math.atan2(dz, dx);
         let moved = false;
@@ -420,7 +440,12 @@ export class World {
         }
         if (!moved || d > w.lastD - 0.002) w.stuck += dt; else w.stuck = Math.max(0, w.stuck - dt);
         w.lastD = Math.min(w.lastD, d);
-        if (w.stuck > 3) this.finishWalk(false, "path is blocked");
+        if (w.stuck > 1.2 && w.replans < 3) {                           // something in the way that the plan did not know: look again
+          w.replans++; w.stuck = 0; w.lastD = Infinity;
+          for (const e of this.entities.values()) if (Math.hypot(e.x - m.x, e.z - m.z) < 4) this.learnNearby?.(e);   // you bump into it, so you know it now
+          const np = planPath(this, { x: m.x, z: m.z }, { x: w.x, z: w.z }, this.isKnown);
+          if (!np) this.finishWalk(false, "there is no way through that you know of"); else w.path = np;
+        } else if (w.stuck > 3) this.finishWalk(false, "path is blocked");
       }
     }
     if (!this.walk && !m.sleeping && m.activity.startsWith("walking")) m.activity = "idle";
@@ -448,15 +473,16 @@ export class World {
         bus.emit("heat");
       }
     }
-    if (now - this.lastSave > 5000) {
-      this.lastSave = now;
-      kvSet("agent", { x: m.x, z: m.z, heading: m.heading, needs: m.needs, name: m.name });
-    }
+    // River's body is committed with every tick (the clock's transaction batches it), so a restart resumes where the world was.
+    const body = JSON.stringify({ x: m.x, z: m.z, heading: m.heading, needs: m.needs, name: m.name });
+    if (body !== this.lastBody) { this.lastBody = body; db.prepare("INSERT INTO kv(k, v) VALUES('agent', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v").run(body); }
+    const ws = this.walk ? JSON.stringify({ x: this.walk.x, z: this.walk.z, label: this.walk.label, path: this.walk.path, stuck: this.walk.stuck, lastD: Number.isFinite(this.walk.lastD) ? this.walk.lastD : null, replans: this.walk.replans }) : "null";
+    if (ws !== this.lastWalk) { this.lastWalk = ws; db.prepare("INSERT INTO kv(k, v) VALUES('walk', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v").run(ws); }
   }
 
   view(): AgentView {
     const m = this.me;
     return { name: m.name, x: m.x, z: m.z, heading: m.heading, activity: m.activity, speech: m.speech, sleeping: m.sleeping,
-      needs: m.needs, weather: this.weather, feelings: this.feelings, worldTime: this.worldTime(), day: this.day(), thinking: m.thinking, worn: worn(), body: bodyView() };
+      needs: m.needs, progress: (this.activities as { view(): { label: string; pct: number } | null } | undefined)?.view() ?? null, weather: this.weather, feelings: this.feelings, worldTime: this.worldTime(), day: this.day(), thinking: m.thinking, worn: worn(), body: bodyView() };
   }
 }

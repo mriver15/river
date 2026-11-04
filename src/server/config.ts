@@ -17,6 +17,7 @@ export const DEFS: ConfigDef[] = [
 
   { key: "lethal", group: "Survival", label: "Death", help: "Off means River can be brought to the edge but never dies.", type: "toggle", def: process.env.RIVER_LETHAL !== "0" },
   { key: "needsRate", group: "Survival", label: "Hunger, tiredness and cold", help: "How fast they build. 0 means River never needs to eat or sleep.", type: "number", def: 1, min: 0, max: 3, step: 0.25, unit: "×" },
+  { key: "reflexEscape", group: "Survival", label: "Instinct to flee", help: "On: River runs a short way from a charging animal before it has time to think. Off: it stands its ground until it decides otherwise.", type: "toggle", def: true },
   { key: "fallRate", group: "Survival", label: "Falls and stumbles", help: "0 means River never trips.", type: "number", def: 1, min: 0, max: 3, step: 0.25, unit: "×" },
 
   { key: "thinkSeconds", group: "River's mind", label: "Pause between thoughts", help: "Longer is cheaper.", type: "number", def: env("THINK_INTERVAL_MS", 8000) / 1000, min: 1, max: 120, step: 1, unit: "s" },

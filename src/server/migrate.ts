@@ -39,6 +39,19 @@ export const MIGRATIONS: Migration[] = [
       db.exec("CREATE UNIQUE INDEX IF NOT EXISTS sim_commands_command_id ON sim_commands(command_id) WHERE command_id IS NOT NULL");
     },
   },
+  {
+    id: "0005_activities_and_knowledge", description: "Persisted activities, and the entities River has seen",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS sim_activities (
+          id TEXT PRIMARY KEY, gen INTEGER NOT NULL, def TEXT NOT NULL, def_version TEXT NOT NULL, status TEXT NOT NULL, intent TEXT NOT NULL,
+          source TEXT NOT NULL, params TEXT NOT NULL, step TEXT NOT NULL, progress TEXT NOT NULL, started_tick INTEGER NOT NULL,
+          deadline_tick INTEGER NOT NULL, reservations TEXT NOT NULL, outcome TEXT, ended_tick INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS known_entities (id TEXT PRIMARY KEY, tick INTEGER NOT NULL);
+      `);
+    },
+  },
 ];
 
 export interface MigrationReport { applied: string[]; alreadyApplied: string[] }

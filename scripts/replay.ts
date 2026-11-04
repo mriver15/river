@@ -31,6 +31,7 @@ const { createRuntime, startSystems, humanCommand } = await import("../src/serve
 const { commandsFrom, setRecording, setReplaying } = await import("../src/server/recorder.ts");
 const { applyDream } = await import("../src/server/dreams.ts");
 const { resetApply } = await import("../src/server/reset.ts");
+const { beginGeneration } = await import("../src/server/lifecycle.ts");
 setRecording(false); setReplaying(true);
 
 const cmds = commandsFrom(src as any, snap.tick);
@@ -47,6 +48,7 @@ const apply = (c: (typeof cmds)[number]) => {
   else if (c.source === "external" && c.type === "relevance") rt.emotions.resolveRelevance(c.payload);
   else if (c.source === "external" && c.type === "dream") applyDream(rt.world, c.payload, () => {}, { feelings: () => rt.emotions.describe(), after: () => rt.emotions.afterDream() });
   else if (c.source === "brain") rt.agent.applyBrain(c.payload);
+  else if (c.source === "human" && c.type === "reset_start") beginGeneration();
   else if (c.source === "human" && c.type === "reset_apply") resetApply(c.payload, rt);
   else if (c.source === "human") humanCommand(rt, c.payload);
 };
@@ -69,6 +71,7 @@ for (const [tick, live] of liveCps) {
   if (mineRow && mineRow.hash === live.hash) { matched++; continue; }
   if (!firstBad) { const a = JSON.parse(live.parts), b = mineRow ? JSON.parse(mineRow.parts) : {}; firstBad = { tick, parts: Object.keys(a).filter((k) => k[0] !== "_" && a[k] !== b[k]), liveMe: a._me && JSON.parse(a._me), replayMe: b._me && JSON.parse(b._me) } as any; }
 }
+if (process.env.REPLAY_SQL) for (const [name, d] of [["live", src], ["replay", mine]] as const) console.error(name, JSON.stringify((d as any).prepare(process.env.REPLAY_SQL).all()));
 const dump = process.env.REPLAY_DUMP; if (dump) fs.writeFileSync(dump, JSON.stringify([...replayCps.values()].map((r) => ({ tick: r.tick, hash: r.hash, parts: JSON.parse(r.parts) })), null, 1));
 console.log(JSON.stringify({ snapshotTick: snap.tick, endTick, commandsReplayed: ci, checkpoints: liveCps.size, matched, networkAttempts: netCalls, firstDivergence: firstBad }, null, 1));
 fs.rmSync(dir, { recursive: true, force: true });

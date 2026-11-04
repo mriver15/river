@@ -97,7 +97,7 @@ wss.on("connection", (ws) => {
       if (!c.ok) return void send(ws, { t: "notice", level: "error", text: c.error! });
       if (resetting) return void send(ws, { t: "notice", level: "error", text: "A reset is already in progress." });
       resetting = true;
-      resetRiver({ world: !!m.world }, { agent, world, ambient, emotions, creatures, story, catalog, wildlife })
+      resetRiver({ world: !!m.world }, rt)
         .then((r) => { broadcast(initMsg()); broadcast({ t: "notice", level: "ok", text: `A new River has awakened. Your previous life is saved at ${r.backup}.` }); })
         .catch((e) => send(ws, { t: "notice", level: "error", text: `Reset failed: ${e.message}` }))
         .finally(() => { resetting = false; });
@@ -105,7 +105,7 @@ wss.on("connection", (ws) => {
       if (!bodyApi.isDead()) return void send(ws, { t: "notice", level: "error", text: "River is alive." });
       if (resetting) return;
       resetting = true;
-      resetRiver({ world: false }, { agent, world, ambient, emotions, creatures, story, catalog, wildlife })
+      resetRiver({ world: false }, rt)
         .then(() => { broadcast(initMsg()); broadcast({ t: "notice", level: "ok", text: "A new River has been born on the same island. Its predecessor's grave is where they fell." }); })
         .catch((e) => send(ws, { t: "notice", level: "error", text: `Could not begin a new life: ${e.message}` }))
         .finally(() => { resetting = false; });

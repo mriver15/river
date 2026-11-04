@@ -310,6 +310,7 @@ export class Agent {
     }
     if (this.cycleCount === 2) { await act("set_desire", { text: "find out what the monolith is", priority: 8 }); await act("request_tool", { name: "web_search", reason: "I want to learn what the monolith's hum means." }); }
     if (this.cycleCount === 3) await act("compose", { action: "write", title: "Mock Lullaby", tempo: 150, voices: [{ instrument: "chimes", notes: "A4 C5 E5 A5:2 G5 E5 C5:3 _:2" }, { instrument: "voice", notes: "[A2 E3]:8", loop: true }] });
+    if (this.cycleCount % 4 === 0) await act("gather", { what: "stick", quantity: 2, return: this.cycleCount % 8 === 0 });
     if (this.cycleCount % 5 === 0) await act("say", { text: "It's a lovely day to be alive." });
     addMemory(`Cycle ${this.cycleCount}: wandered near ${pick?.name ?? "nowhere"}.`, 3);
   }

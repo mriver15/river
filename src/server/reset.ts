@@ -40,7 +40,7 @@ function backup(): string {
   return rel.startsWith("..") ? file : rel;
 }
 
-async function resetInner(opts: { world: boolean }, d: { agent: Agent; world: World; ambient: Ambient; emotions: Emotions; creatures: Creatures; story: Story; catalog: Catalog; wildlife?: { reset(): void } }): Promise<{ backup: string }> {
+async function resetInner(opts: { world: boolean }, d: { agent: Agent; world: World; ambient: Ambient; emotions: Emotions; creatures: Creatures; story: Story; catalog: Catalog; wildlife?: { reset(): void }; activities?: { reset(): void }; knowledge?: { reset(): void } }): Promise<{ backup: string }> {
   const file = backup();
   log("system", `A new River is beginning. Database backed up to ${file}.`);
   await d.agent.halt();                                       // let the current cycle finish; nothing new starts
@@ -68,6 +68,7 @@ export function resetApply(opts: { world: boolean }, d: Deps): void {
   const plugins = path.resolve("src/server/plugins");
   for (const f of fs.readdirSync(plugins)) if (f.startsWith("_staged_")) fs.rmSync(path.join(plugins, f), { force: true });
   clearMemoryCaches(); resetDreams();
+  d.activities?.reset(); d.knowledge?.reset();
   d.world.reset(opts.world);
   d.creatures.reset(); d.story.reset(); d.catalog.reset(); d.ambient.reset(); d.emotions.reset(); bodyApi.reset(); d.wildlife?.reset();
   d.agent.resume(true);
@@ -80,7 +81,8 @@ export function resetApply(opts: { world: boolean }, d: Deps): void {
  * The clock's open transaction is committed and held off meanwhile: the backup and the wipe manage their own.
  */
 export async function resetRiver(...args: Parameters<typeof resetInner>) {
-  beginGeneration(); suspendTx();
+  beginGeneration(); recordCommand("human", "reset_start", {});   // fences the old life now; replay repeats it at the same tick
+  suspendTx();
   try { return await resetInner(...args); }
   finally { persistGeneration(); resumeTx(); }
 }

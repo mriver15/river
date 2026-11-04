@@ -126,3 +126,37 @@ What MVP 2 still does not cover:
 - Memories, desires and interests are not in the hash. The brain loop writes them (thoughts, reflections, which replay does not reproduce), so they cannot be compared. They influence the hashed state only through journaled actions.
 - Mid-run snapshots are still not faithful: in-flight timers are closures. Persistent activities (MVP 3) remove this, and are the next step.
 - Journal stories and reflections prose are not reproduced.
+
+## MVP 3: activities, navigation and reflexes
+
+What exists:
+
+- **Persisted activities** (`src/server/activities.ts`, table `sim_activities`). An activity is data: definition id and version, a step, a progress record, reservations, a deadline. No closures or promises are stored, so `resume()` after a restart picks it up. One runs at a time; starting another interrupts the current one. Definitions: `travel`, `rest`, `gather`. Each step is small and deterministic, with explicit durations (a harvest takes 3 simulated seconds per unit).
+- **Reservations.** `gather` sets aside stock on the source (`props.reserved[activityId]`) so nothing else counts it as free; each unit taken consumes one reservation; ending or cancelling the activity releases only what was not consumed.
+- **Navigation** (`src/server/nav.ts`). A* on a 1 m grid, eight neighbours, no corner cutting, stable tie-breaks, then string-pulled. It avoids only obstacles River *knows* about, so an unseen obstruction is discovered by walking into it, which triggers a replan. The same inputs always give the same route.
+- **Known world** (`src/server/knowledge.ts`, table `known_entities`). Everything within sight, each tick, becomes known. Tool lookups by id or name (`findEntity`) and activity targets only see known things, so a guessable id no longer reveals an unseen object. An existing world is seeded with what is within 60 m of River.
+- **Reflexes.** Each tick the body senses fire within 4.5 m, a wound, a charging predator and a collapse. An activity lists which of these stop it; a rest is always stopped (and River woken) by fire, injury or a predator. A predator or an attack also starts an instinctive escape: a short run directly away, without a model call, immune to being stopped by the thing it flees (setting `Instinct to flee`, on by default).
+- **Brain tools.** `move_to` and `rest` now start activities and wait for them; new `gather` (do a whole errand in one call: walk, take each unit, move to another source if one runs dry, optionally come back) and `stop`. If the process restarts mid-errand, the activity continues and River is told when it ends. A human can cancel with the new Stop button (`activity_cancel`). The activity shows with progress in the activity chip.
+- **Commit-per-tick state.** River's body and the walk in progress are committed with every tick (they were saved every 5 s), which is what makes a copy of the database a faithful point to resume from.
+
+Results:
+
+| Check | Result |
+|---|---|
+| `tests/activities.test.ts` (8 tests) | gather three and return with zero model calls; depleted source gives partial completion; fire interrupts rest and wakes River; cancel releases only unconsumed reservations; a new life cancels the work; routes go around known obstacles, fail when the way is shut, and ignore unseen ones; unseen things cannot be targets; a charging predator stops the errand and River runs |
+| `npm run restart-test` | a copy of the database taken mid-activity, resumed in a **fresh process**, finishes identically (River, entities, inventory, activity table) at 7 cut points: walking out, mid-harvest, second source, harvesting, returning, and two points in a rest |
+| `npm run soak -- 20 3 4` (mock brain, now also using `gather`; a reset and an approval in every seed) | all 20 exact |
+| `SOAK_LIVE=1 npm run soak -- 3 3 3` (real model) | all 3 exact |
+| `VERIFY_LIVE=1 npm run verify:replay -- 300 new-life` | exact; River used `move_to`, `rest`, `gather` |
+| `npm run crash-test`, `npm test` | pass; 26 tests |
+
+Bugs found while building it: a harvest began while the outbound walk was still running, so its stale "arrived" result ended the return leg at once; an escape was cancelled on its first tick by the predator it was fleeing; a reset's generation bump was not journaled, so a running activity was fenced at different ticks live and in replay; the brain's context-building wrote to the known-world table, which replay cannot repeat.
+
+Not done in MVP 3:
+
+- **Crafting, building and music as activities.** Those tools still run as before (their waits are in-memory timers, so a restart loses them). The tool-level durations and consumption would need rewriting as steps.
+- **Fully faithful mid-run snapshots.** Activities, River's body and the walk survive a restart exactly. Emotion levels, wounds (saved every 15 s), animals' behaviour modes, ambient-event timers and a few other in-memory pieces do not, so a restart still loses those. The restart test disables wildlife and ambient events to isolate the activity machinery.
+- **Learned routines and a general planner:** deliberately out of scope.
+- **Climbing or vertical access:** the grid is flat; bridges count as walkable, towers are not navigable.
+- **Interruption by sound** (rest) and per-activity capacity limits (gather does not check inventory capacity because there is none).
+- The reflex thresholds (4.5 m fire, 9 m predator, 12 m escape) are placeholder tuning.
