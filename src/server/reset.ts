@@ -6,7 +6,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { DB_PATH, db, kvGet } from "./db.ts";
 import { beginGeneration, persistGeneration } from "./lifecycle.ts";
-import { suspendTx, resumeTx } from "./sim.ts";
+import { suspendTx, resumeTx, resetJobs } from "./sim.ts";
+import { forgetPersisted } from "./persist.ts";
 import { recordCommand } from "./recorder.ts";
 import { log } from "./bus.ts";
 import { clearMemoryCaches } from "./memory.ts";
@@ -68,7 +69,7 @@ export function resetApply(opts: { world: boolean }, d: Deps): void {
   const plugins = path.resolve("src/server/plugins");
   for (const f of fs.readdirSync(plugins)) if (f.startsWith("_staged_")) fs.rmSync(path.join(plugins, f), { force: true });
   clearMemoryCaches(); resetDreams();
-  d.activities?.reset(); d.knowledge?.reset();
+  d.activities?.reset(); d.knowledge?.reset(); resetJobs(); forgetPersisted();   // timers and committed state belong to the old life
   d.world.reset(opts.world);
   d.creatures.reset(); d.story.reset(); d.catalog.reset(); d.ambient.reset(); d.emotions.reset(); bodyApi.reset(); d.wildlife?.reset();
   d.agent.resume(true);

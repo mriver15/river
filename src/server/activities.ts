@@ -11,6 +11,7 @@ import { available, takeLoose, takeOneUnit } from "./gathering.ts";
 import { bodyApi } from "./body.ts";
 import type { World } from "./world.ts";
 import type { Entity } from "../shared/types.ts";
+import { ToolError, type ToolDef } from "./toolkit.ts";
 
 const sr = simRng("activities");
 
@@ -21,7 +22,7 @@ export interface Activity {
   id: string; gen: number; def: string; version: string; status: Status; intent: string; source: string;
   params: any; step: string; progress: any; startedTick: number; deadlineTick: number; reservations: Reservation[]; outcome?: Outcome; endedTick?: number;
 }
-export type DangerKind = "fire" | "injury" | "predator" | "collapse";
+export type DangerKind = "fire" | "injury" | "predator" | "collapse" | "noise";
 export interface Danger { kind: DangerKind; text: string; from?: { x: number; z: number; name: string } }
 export class ActivityError extends Error {}
 
@@ -37,7 +38,7 @@ interface Def {
   interruptedBy: DangerKind[];
   validate(params: any, w: World): string | null;
   init(params: any, w: World): { progress: any; maxTicks: number; step?: string };
-  step(a: Activity, c: Ctx): "continue" | Outcome;
+  step(a: Activity, c: Ctx): "continue" | Outcome | Promise<Outcome>;
   /** re-establish world state that lives outside the database (e.g. lying down) after a restart */
   resume?(a: Activity, w: World): void;
   label(a: Activity): string;
@@ -63,7 +64,7 @@ const travel: Def = {
 };
 
 const rest: Def = {
-  id: "rest", version: "1", interruptedBy: ["fire", "injury", "predator"],
+  id: "rest", version: "1", interruptedBy: ["fire", "injury", "predator", "noise"],
   validate: (p) => (Number.isFinite(p.seconds) ? null : "how long?"),
   init: (p, w) => {
     const s = Math.max(3, Math.min(60, Number(p.seconds))), until = simNow() + s * 1000;
@@ -82,7 +83,7 @@ const rest: Def = {
   pct: (a) => Math.max(0, Math.min(1, (simNow() - a.progress.from) / a.progress.total)),
 };
 
-const HARVEST_TICKS = 30;               // 3 s for each unit taken
+const harvestTicks = () => Math.max(1, Math.round(cfg("harvestSeconds") * 10));   // each unit takes this long
 interface GatherProgress { phase: "choose" | "go" | "harvest" | "return"; got: number; want: number; what: string; entity: string | null; tx: number; tz: number; nextAt: number; start: { x: number; z: number } | null; skipped: string[]; items: Record<string, number> }
 
 function matches(e: Entity, what: string): boolean {
@@ -143,11 +144,11 @@ const gather: Def = {
       case "go": {
         const e = p.entity ? w.entities.get(p.entity) : null;
         if (!e) { release(w, a); p.phase = "choose"; return "continue"; }
-        if (w.inReach(e)) { c.stopWalk(a); p.phase = "harvest"; p.nextAt = tick + HARVEST_TICKS; return "continue"; }
+        if (w.inReach(e)) { c.stopWalk(a); p.phase = "harvest"; p.nextAt = tick + harvestTicks(); return "continue"; }
         const r = c.walk(a, p.tx, p.tz, e.name);
         if (r.state === "moving") return "continue";
         if (r.state === "failed") { release(w, a); return finish(r.reason); }
-        c.stopWalk(a); p.phase = "harvest"; p.nextAt = tick + HARVEST_TICKS; return "continue";
+        c.stopWalk(a); p.phase = "harvest"; p.nextAt = tick + harvestTicks(); return "continue";
       }
       case "harvest": {
         const e = p.entity ? w.entities.get(p.entity) : null;
@@ -159,7 +160,7 @@ const gather: Def = {
           const got = takeOneUnit(w, e, p.what);
           consumeReservation(w, a, e); p.got++; p.items[got.name] = (p.items[got.name] ?? 0) + 1;
         } else { const name = e.name; takeLoose(w, e); release(w, a, e.id); p.got++; p.items[name] = (p.items[name] ?? 0) + 1; p.phase = "choose"; return "continue"; }
-        p.nextAt = tick + HARVEST_TICKS;
+        p.nextAt = tick + harvestTicks();
         if (p.got >= p.want) { release(w, a); c.stopWalk(a); p.phase = "return"; }
         else if (!a.reservations.some((r) => r.entity === e.id)) p.phase = "choose";
         return "continue";
@@ -176,7 +177,49 @@ const gather: Def = {
   pct: (a) => a.progress.got / a.progress.want,
 };
 
-const DEFS: Record<string, Def> = { travel, rest, gather };
+// ---------- timed work: crafting, building, performing, sewing, first aid ----------
+// A tool that takes time validates first, then calls gate(). The first pass throws before anything has changed; the engine runs a
+// "work" activity that holds the wait as data (a deadline), and when it is over runs the same tool again with the gate open,
+// which re-checks everything and applies it. Materials are therefore spent only at the end, and a restart mid-wait loses nothing.
+class Defer extends Error { constructor(readonly ms: number, readonly label: string, readonly extra: unknown) { super("deferred"); } }
+let passing: { extra: unknown } | null = null;
+/** Take `ms` of simulated time here. `extra` is carried to the second pass (see `secondPass`). */
+export function gate(w: World, ms: number, label?: string, extra?: unknown): void { if (passing) return; throw new Defer(ms, label ?? w.me.activity, extra ?? null); }
+/** True (with whatever the first pass carried) while the tool is being run for the second time, after the wait. */
+export const secondPass = (): { extra: any } | null => passing;
+const timedTools = new Map<string, ToolDef>();
+export function timed(tool: ToolDef): ToolDef {
+  timedTools.set(tool.name, tool);
+  return {
+    ...tool,
+    run: async (a, w) => {
+      try { return await tool.run(a, w); }
+      catch (e) {
+        if (!(e instanceof Defer)) throw e;
+        const r = await runActivity(w, "work", { tool: tool.name, args: a, ms: e.ms, label: e.label, extra: e.extra }, `${tool.name}: ${e.label}`);
+        if (!r.ok) throw new ToolError(r.text);
+        return r.text;
+      }
+    },
+  };
+}
+const work: Def = {
+  id: "work", version: "1", interruptedBy: ["fire", "injury", "predator", "collapse"],
+  validate: (p) => (timedTools.has(p.tool) && Number.isFinite(p.ms) ? null : "unknown work"),
+  init: (p, w) => ({ progress: { from: simNow(), until: simNow() + Math.max(100, p.ms), finishing: false }, maxTicks: Math.ceil(p.ms / STEP_MS) + 100 }),
+  step: (a, c) => {
+    if (simNow() < a.progress.until) return "continue";
+    const tool = timedTools.get(a.params.tool)!;
+    passing = { extra: a.params.extra };
+    try { return Promise.resolve(tool.run(a.params.args, c.w)).then((text) => ({ ok: true, text }) as Outcome, (e) => ({ ok: false, text: e instanceof ToolError ? e.message : `Unexpected error: ${e?.message ?? e}` }) as Outcome); }
+    catch (e: any) { return Promise.resolve({ ok: false, text: e instanceof ToolError ? e.message : `Unexpected error: ${e?.message ?? e}` } as Outcome); }
+    finally { passing = null; }                       // the body ran synchronously up to its first await, so the gate has been passed
+  },
+  label: (a) => a.params.label,
+  pct: (a) => Math.max(0, Math.min(1, (simNow() - a.progress.from) / (a.progress.until - a.progress.from))),
+};
+
+const DEFS: Record<string, Def> = { travel, rest, gather, work };
 
 // ---------- the engine ----------
 export class Activities {
@@ -187,10 +230,13 @@ export class Activities {
   private saved = "";
   private lastHealth = 100; private hurt = false; private lastEscape = -1e9;
   private danger: Danger | null = null;
+  private noise: string | null = null;
 
   constructor(private w: World, private notify: (msg: string, wake?: boolean) => void, private threat: () => { name: string; d: number; x: number; z: number } | null = () => null) {
     this.seq = (db.prepare("SELECT COUNT(*) n FROM sim_activities").get() as { n: number }).n;
     bus.on("attacked", () => { this.hurt = true; });
+    bus.on("loud", (e: { text: string }) => { this.noise = e.text; });     // thunder, a strike, a voice: enough to wake someone resting
+    bus.on("strike", () => { this.noise = "lightning struck close by"; });
     w.activities = this; this.ctx = this.makeCtx();
   }
 
@@ -201,6 +247,7 @@ export class Activities {
     const a = this.fromRow(row);
     if (a.gen !== lifeGen()) { this.finish(a, "cancelled", { ok: false, text: "a new life began" }, false); return; }
     this.cur = a; this.saved = this.key(a);
+    if (a.progress?.finishing) { this.finish(a, "failed", { ok: false, text: "it was cut short by a restart" }); return; }
     this.w.restoreWalk((r) => this.walkDone.set(a.id, r));      // the walk it was in the middle of, exactly as it was
     DEFS[a.def]?.resume?.(a, this.w);
   }
@@ -264,9 +311,11 @@ export class Activities {
     const w = this.w, me = w.me, health = bodyApi.health();
     const injured = this.hurt || health < this.lastHealth - 2; this.hurt = false; this.lastHealth = health;
     const t = this.threat();
+    const noise = this.noise; this.noise = null;
     if (injured) return { kind: "injury", text: "you were hurt", from: t ?? undefined };
-    if (t && t.d < 9) return { kind: "predator", text: `a ${t.name} is coming at you`, from: t };
-    for (const e of w.entities.values()) if (e.props.burning && Math.hypot(e.x - me.x, e.z - me.z) < 4.5) return { kind: "fire", text: `fire is close (${e.name})`, from: { x: e.x, z: e.z, name: e.name } };
+    if (t && t.d < cfg("reflexThreat")) return { kind: "predator", text: `a ${t.name} is coming at you`, from: t };
+    for (const e of w.entities.values()) if (e.props.burning && Math.hypot(e.x - me.x, e.z - me.z) < cfg("reflexFire")) return { kind: "fire", text: `fire is close (${e.name})`, from: { x: e.x, z: e.z, name: e.name } };
+    if (noise) return { kind: "noise", text: noise };
     if (me.sleeping) return { kind: "collapse", text: "you collapsed" };
     return null;
   }
@@ -280,7 +329,9 @@ export class Activities {
     const stops = a.source === "reflex" ? danger?.kind === "collapse" : danger && d.interruptedBy.includes(danger.kind) && !(danger.kind === "collapse" && a.def === "rest");
     if (danger && stops) { this.interrupt(a, danger); return; }
     if (simTick() > a.deadlineTick) { this.finish(a, "failed", { ok: false, text: "it took too long" }); return; }
+    if (a.progress?.finishing) return;                    // its result is on the way (a microtask), settled before the next tick
     const r = d.step(a, this.ctx);
+    if (r instanceof Promise) { a.progress.finishing = true; this.persist(a); void r.then((o) => { if (this.cur === a) this.finish(a, o.ok || o.partial ? "completed" : "failed", o); }); return; }
     if (r !== "continue") { this.finish(a, r.ok || r.partial ? "completed" : "failed", r); return; }
     this.w.me.activity = d.label(a);
     if (this.key(a) !== this.saved) this.persist(a);
@@ -296,7 +347,7 @@ export class Activities {
       this.lastEscape = simTick();
       const me = this.w.me, base = Math.atan2(me.z - danger.from.z, me.x - danger.from.x);
       for (const off of [0, 0.6, -0.6, 1.2, -1.2, 1.8, -1.8]) {
-        const x = me.x + Math.cos(base + off) * 12, z = me.z + Math.sin(base + off) * 12;
+        const x = me.x + Math.cos(base + off) * cfg("reflexEscapeDistance"), z = me.z + Math.sin(base + off) * cfg("reflexEscapeDistance");
         if (!this.w.walkable(x, z)) continue;
         try { this.begin("travel", { x, z, label: "somewhere safer" }, { intent: `escape from the ${danger.from.name}`, source: "reflex" }); } catch { /* nowhere to run */ }
         break;

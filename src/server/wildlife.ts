@@ -13,6 +13,7 @@ import { ToolError, obj, str, type ToolDef } from "./toolkit.ts";
 import type { Entity } from "../shared/types.ts";
 import type { Emotions } from "./emotions.ts";
 import type { World } from "./world.ts";
+import { persisted } from "./persist.ts";
 import { simNow, simRng, simSleep, every, after } from "./sim.ts";
 const sr = simRng("wildlife");
 
@@ -44,7 +45,13 @@ let freezeUntil = 0, noiseUntil = 0, instance: Wildlife | null = null;
 export class Wildlife {
   private st = new Map<string, St>();
   private lastPersist = 0;
-  constructor(private w: World, public emo: Emotions, private say: (text: string, at?: { x: number; z: number }, r?: number) => boolean, private notify: (msg: string) => void) { instance = this; }
+  private fresh = true;
+  constructor(private w: World, public emo: Emotions, private say: (text: string, at?: { x: number; z: number }, r?: number) => boolean, private notify: (msg: string) => void) {
+    instance = this;
+    // each animal's behaviour mode, committed with the clock
+    const s = persisted("wildlife", () => ({ st: [...this.st], freezeUntil, noiseUntil, lastPersist: this.lastPersist }));
+    if (s) { this.fresh = false; this.st = new Map(s.st); freezeUntil = s.freezeUntil; noiseUntil = s.noiseUntil; this.lastPersist = s.lastPersist; }
+  }
   /** River has struck it: it fights back. */
   /** The nearest predator that is charging or fighting, if any is within `max` metres. Read-only. */
   threat(max = 12): { name: string; d: number; x: number; z: number } | null {
@@ -57,7 +64,7 @@ export class Wildlife {
     return best;
   }
   provoke(e: Entity) { const st = this.st.get(e.id); if (st && !(st.mode === "fight" || st.mode === "charge" || st.mode === "retreat")) { st.mode = "charge"; st.until = simNow() + 10_000; } }
-  start() { every(15_000, () => this.sync(), "wildlife.sync"); every(500, () => this.tick(0.5), "wildlife"); after(1500, () => this.sync()); }
+  start() { every(15_000, () => this.sync(), "wildlife.sync"); every(500, () => this.tick(0.5), "wildlife"); if (this.fresh) this.sync(); }
   reset() { this.st.clear(); }
 
   // ---------- who is here ----------

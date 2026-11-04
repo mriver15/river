@@ -52,6 +52,10 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: "0006_blobs", description: "Binary state committed with the clock (grids)",
+    up: (db) => { db.exec("CREATE TABLE IF NOT EXISTS sim_blobs (k TEXT PRIMARY KEY, v BLOB NOT NULL)"); },
+  },
 ];
 
 export interface MigrationReport { applied: string[]; alreadyApplied: string[] }

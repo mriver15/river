@@ -7,6 +7,7 @@ import { ToolError, obj, str, type ToolDef } from "./toolkit.ts";
 import type { World } from "./world.ts";
 import type { Worn } from "../shared/types.ts";
 import { simSleep } from "./sim.ts";
+import { gate } from "./activities.ts";
 
 type Slot = Worn["slot"];
 /** what each garment is, where it goes on the body, what it takes, and how much cold it keeps off */
@@ -63,12 +64,14 @@ export const CLOTHE_TOOL: ToolDef = {
       if (total < spec.need) throw new ToolError(`A ${a.garment} needs about ${spec.need} pieces; you offered ${total}.`);
       if (total > Math.ceil(spec.need * 1.5)) throw new ToolError(`That's more than a ${a.garment} could use (${total}). About ${spec.need} will do.`);
       let hex = FIBRE[used.sort((x, y) => y.n - x.n)[0].it.kind].hex, dyed = "";
+      let dye: ReturnType<typeof w.findItem>;
       if (a.colour) {
-        const p = w.findItem(String(a.colour));
-        if (!p || p.kind !== "pigment" || !p.props?.hex) throw new ToolError(`You aren't holding a pigment called "${a.colour}".`);
-        w.takeItem(p.id, 1); hex = p.props.hex; dyed = ` dyed ${p.name.replace(/ pigment \(.*\)$/, "")}`;
+        dye = w.findItem(String(a.colour));
+        if (!dye || dye.kind !== "pigment" || !dye.props?.hex) throw new ToolError(`You aren't holding a pigment called "${a.colour}".`);
+        hex = dye.props.hex; dyed = ` dyed ${dye.name.replace(/ pigment \(.*\)$/, "")}`;
       }
-      w.setActivity(`sewing a ${a.garment}`); await simSleep(3500);
+      gate(w, 3500, `sewing a ${a.garment}`);
+      if (dye) w.takeItem(dye.id, 1);                              // the dye is spent with the rest, once the work is done
       for (const u of used) w.takeItem(u.it.id, u.n);
       const name = String(a.name ?? "").trim().slice(0, 40) || `${describeColour(hex)} ${a.garment}`;
       const mats = used.map((u) => FIBRE[u.it.kind].word);

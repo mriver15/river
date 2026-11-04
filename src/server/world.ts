@@ -9,6 +9,7 @@ import type { EmotionName } from "../shared/emotions.ts";
 import type { AgentView, Entity, EntityKind, InventoryItem, Needs, Weather } from "../shared/types.ts";
 import { simNow, simRng, after, DAY_MS, legacyWallBoot } from "./sim.ts";
 import { planPath } from "./nav.ts";
+import { persisted, persistedBlob, onFlush } from "./persist.ts";
 const sr = simRng("world");
 
 /** One canonical day. Day length is now the clock speed (cfg dayMinutes), not a property of the calendar. */
@@ -63,6 +64,8 @@ export class World {
   /** Set by the knowledge system: mark an entity as perceived. */
   learnNearby: ((e: Entity) => void) | null = null;
   private lastBody = "";
+  /** entities that moved since the last commit: written then, not on every step */
+  private moved = new Set<string>();
   private lastWalk = "null";
   private lastGrow = 0;
 
@@ -82,10 +85,19 @@ export class World {
     this.ensureMaterials();
     for (const r of db.prepare("SELECT * FROM inventory").all() as any[])
       this.inventory.set(r.id, { id: r.id, kind: r.kind, name: r.name, desc: r.desc, qty: r.qty, props: r.props ? JSON.parse(r.props) : undefined });
-    const h = kvGet<number[]>("heat", []); if (h.length === this.heat.length) this.heat.set(h);
-    const sc = kvGet<number[]>("scorch", []); if (sc.length === this.scorch.length) this.scorch.set(sc);
+    // the walked-path and burnt-ground grids, committed with the clock as raw floats
+    const hb = persistedBlob("heat", () => new Uint8Array(this.heat.buffer, this.heat.byteOffset, this.heat.byteLength));
+    if (hb && hb.byteLength === this.heat.byteLength) this.heat.set(new Float32Array(hb.buffer, hb.byteOffset, hb.byteLength / 4));
+    else { const h = kvGet<number[]>("heat", []); if (h.length === this.heat.length) this.heat.set(h); }
+    const sb = persistedBlob("scorch", () => new Uint8Array(this.scorch.buffer, this.scorch.byteOffset, this.scorch.byteLength));
+    if (sb && sb.byteLength === this.scorch.byteLength) this.scorch.set(new Float32Array(sb.buffer, sb.byteOffset, sb.byteLength / 4));
+    else { const sc = kvGet<number[]>("scorch", []); if (sc.length === this.scorch.length) this.scorch.set(sc); }
+    onFlush(() => this.persistBody());
+    onFlush(() => { const up = db.prepare("UPDATE entities SET x = ?, z = ?, props = ? WHERE id = ?"); for (const id of this.moved) { const e = this.entities.get(id); if (e) up.run(e.x, e.z, JSON.stringify(e.props), id); } this.moved.clear(); });
+    const meta = persisted("world", () => ({ lastGrow: this.lastGrow, lastHeatSave: this.lastHeatSave, heatDirty: this.heatDirty, sleepStart: this.sleepStart, lastScorchEmit: this.lastScorchEmit }));
+    if (meta) { this.lastGrow = meta.lastGrow; this.lastHeatSave = meta.lastHeatSave; this.heatDirty = meta.heatDirty; this.sleepStart = meta.sleepStart; this.lastScorchEmit = meta.lastScorchEmit; }
     const saved = kvGet<any>("agent", null);
-    if (saved) Object.assign(this.me, { x: saved.x, z: saved.z, heading: saved.heading, needs: saved.needs, name: saved.name ?? this.me.name });
+    if (saved) Object.assign(this.me, { x: saved.x, z: saved.z, heading: saved.heading, needs: saved.needs, name: saved.name ?? this.me.name }, saved.activity !== undefined ? { activity: saved.activity, speech: saved.speech, speechUntil: saved.speechUntil, sleeping: saved.sleeping, sleepUntil: saved.sleepUntil } : {});
     else { this.me.x = 4; this.me.z = 4; }
     this.me.needs.warmth ??= 75;                          // lives saved before warmth existed
     if (!isLand(this.me.x, this.me.z, this.seed)) { this.me.x = 4; this.me.z = 4; }
@@ -185,7 +197,7 @@ export class World {
       this.entities.clear(); this.nextId = 1; kvSet("nextId", 1);
       this.epoch = simNow() - 0.3 * dayMs(); kvSet("epoch", this.epoch);
       this.weather = "clear"; kvSet("weather", { w: "clear", until: 0 });
-      this.heat.fill(0); this.scorch.fill(0); kvSet("heat", []); kvSet("scorch", []);
+      this.heat.fill(0); this.scorch.fill(0);
       this.generate(); this.ensureMaterials();
       if (!isLand(this.me.x, this.me.z, this.seed)) { const p = this.spotNearMe(1); this.me.x = p.x; this.me.z = p.z; }
       this.quiet = false;
@@ -201,7 +213,7 @@ export class World {
     if (!this.quiet) bus.emit("entity", { t: "entity", op: "upsert", entity: e });
   }
   /** Move an entity without persisting (animals move constantly; the ambient loop persists them occasionally). */
-  moveEntity(e: Entity) { bus.emit("entity", { t: "entity", op: "upsert", entity: e }); }
+  moveEntity(e: Entity) { this.moved.add(e.id); bus.emit("entity", { t: "entity", op: "upsert", entity: e }); }
   removeEntity(id: string) {
     this.entities.delete(id);
     db.prepare("DELETE FROM entities WHERE id = ?").run(id);
@@ -351,7 +363,6 @@ export class World {
       const d = Math.hypot(dx * cell, dz * cell); if (d > radius) continue;
       const i = gz * HEAT_N + gx; this.scorch[i] = Math.min(4, this.scorch[i] + amount * (1 - d / (radius + 0.01) * 0.6));
     }
-    kvSet("scorch", Array.from(this.scorch, (v) => Math.round(v * 100) / 100));
     if (simNow() - this.lastScorchEmit > 1500) { this.lastScorchEmit = simNow(); bus.emit("heat"); }
   }
 
@@ -469,12 +480,15 @@ export class World {
       if (this.heatDirty) {
         this.heatDirty = false;
         for (let i = 0; i < this.heat.length; i++) this.heat[i] *= 0.9993;      // unused paths slowly fade
-        kvSet("heat", Array.from(this.heat, (v) => Math.round(v * 10) / 10));
         bus.emit("heat");
       }
     }
-    // River's body is committed with every tick (the clock's transaction batches it), so a restart resumes where the world was.
-    const body = JSON.stringify({ x: m.x, z: m.z, heading: m.heading, needs: m.needs, name: m.name });
+  }
+
+  /** River's body and the walk in progress, written at the commit, after every system has had its say this tick. */
+  private persistBody() {
+    const m = this.me;
+    const body = JSON.stringify({ x: m.x, z: m.z, heading: m.heading, needs: m.needs, name: m.name, activity: m.activity, speech: m.speech, speechUntil: m.speechUntil, sleeping: m.sleeping, sleepUntil: m.sleepUntil });
     if (body !== this.lastBody) { this.lastBody = body; db.prepare("INSERT INTO kv(k, v) VALUES('agent', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v").run(body); }
     const ws = this.walk ? JSON.stringify({ x: this.walk.x, z: this.walk.z, label: this.walk.label, path: this.walk.path, stuck: this.walk.stuck, lastD: Number.isFinite(this.walk.lastD) ? this.walk.lastD : null, replans: this.walk.replans }) : "null";
     if (ws !== this.lastWalk) { this.lastWalk = ws; db.prepare("INSERT INTO kv(k, v) VALUES('walk', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v").run(ws); }

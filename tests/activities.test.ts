@@ -147,3 +147,62 @@ test("a charging predator stops the errand and River runs, before any thinking",
   rt.wildlife.threat = real;
   assert.equal(netCalls, 0);
 });
+
+const { findTool } = await import("../src/server/tools.ts");
+const tool = (name: string) => {
+  for (const g of ["craft", "compose", "build", "clothe", "colour", "tend"]) db.prepare("INSERT INTO tools(name, approved) VALUES(?, 1) ON CONFLICT(name) DO UPDATE SET approved = 1").run(g);   // abilities a human has granted (a reset takes them away)
+  const t = findTool(name); if (!t) throw new Error(`no tool ${name}`); return t; };
+
+test("crafting takes time and spends its materials only at the end", async () => {
+  reset(); w.addItem("stick", "stick", "A stick.", 3);
+  const done = Promise.resolve(tool("craft").run({ ingredients: ["stick", "stick"], name: "frame", description: "A small frame." }, w));
+  await run(10);
+  assert.equal(count("stick"), 3, "nothing spent while the work is under way");
+  assert.equal(A.cur?.def, "work"); assert.ok((A.view()?.pct ?? 0) > 0);
+  await run(60, () => A.cur === null);
+  assert.match(await done, /You crafted: frame/);
+  assert.equal(count("stick"), 1); assert.equal(count("crafted"), 1);
+});
+
+test("an invalid recipe fails at once and costs nothing", async () => {
+  reset(); w.addItem("stick", "stick", "A stick.", 1);
+  await assert.rejects(async () => tool("craft").run({ ingredients: ["stick", "unicorn horn"], name: "x", description: "y" }, w), /unicorn horn|carrying|have/i);
+  assert.equal(A.cur, null); assert.equal(count("stick"), 1);
+});
+
+test("danger stops the work and the materials are untouched", async () => {
+  const g = reset(); w.addItem("stick", "stick", "A stick.", 2);
+  const done = Promise.resolve(tool("craft").run({ ingredients: ["stick", "stick"], name: "frame", description: "A frame." }, w)).catch((e) => e);
+  await run(10);
+  w.spawn("tree", "burning oak", g.x + 2, g.z, { burning: { since: sim.simNow(), ends: sim.simNow() + 60_000 } });
+  await run(20, () => A.cur === null);
+  assert.match(String(((await done) as Error).message), /fire is close/);
+  assert.equal(count("stick"), 2); assert.equal(count("crafted"), 0);
+});
+
+test("a performance is counted once and its effects land at the end", async () => {
+  reset();
+  const plays = () => (db.prepare("SELECT COALESCE(SUM(plays),0) n FROM compositions").get() as any).n as number;
+  const before = plays();
+  const done = Promise.resolve(tool("compose").run({ action: "write", title: "Test Tune", tempo: 600, voices: [{ instrument: "chimes", notes: "A4 C5 E5 A5" }] }, w));
+  await run(5);
+  assert.equal(plays(), before + 1, "counted when it begins");
+  await run(400, () => A.cur === null);
+  assert.match(await done, /You wrote and performed "Test Tune"/);
+  assert.equal(plays(), before + 1, "and not again when it ends");
+});
+
+test("a sudden noise or a human voice wakes someone resting, but not someone walking", async () => {
+  reset();
+  const p = A.completion(A.begin("rest", { seconds: 30 }, { intent: "rest", source: "brain" }).id);
+  await run(20); assert.equal(w.me.sleeping, true);
+  humanCommand(rt, { t: "say", text: "hello" });
+  await run(5, () => A.cur === null);
+  const out = await p;
+  assert.equal(out.data?.interrupted, "noise"); assert.equal(w.me.sleeping, false);
+  const g = reset();
+  known(w.spawn("tree", "oak", g.x + 12, g.z, { yields: ["stick"], stock: 5, max: 5 }));
+  A.begin("gather", { what: "stick", quantity: 1 }, { intent: "gather", source: "brain" });
+  await run(5); humanCommand(rt, { t: "say", text: "hello again" }); await run(5);
+  assert.equal(A.cur?.def, "gather", "walking is not interrupted by being spoken to");
+});

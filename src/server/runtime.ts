@@ -56,6 +56,7 @@ export type Runtime = Awaited<ReturnType<typeof createRuntime>>;
 export function startSystems(rt: Runtime) {
   const { world, emotions, agent, ambient, creatures, story, wildlife, fire } = rt;
   registerState("emotions", () => emotions.state());
+  registerState("creatures", () => [...rt.creatures.rows.values()].sort((a, b) => (a.id < b.id ? -1 : 1)));   // the live rows, not the table (which is written at commit)
   every(STEP_MS, () => world.tick(STEP_MS / 1000), "world");
   rt.knowledge.start();
   rt.activities.start();
@@ -87,7 +88,7 @@ export function humanCommand(rt: Runtime, m: ClientMsg): HumanResult {
     switch (m.t) {
       case "say": {
         const text = (m.text ?? "").trim().slice(0, 500); if (!text) return {};
-        log("human", `Human: ${text}`); emotions.contact();
+        log("human", `Human: ${text}`); emotions.contact(); bus.emit("loud", { text: "a voice from outside spoke to you" });
         addMemory(`A voice from outside said to me: "${text}"`, 6, ["human"], "human");
         agent.notify(`## Voice from outside\nA human speaks to you: "${text}"`);
         return {};

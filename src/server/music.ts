@@ -6,7 +6,8 @@ import { touchInterest } from "./mind.ts";
 import { ToolError, obj, num, str, type ToolDef } from "./toolkit.ts";
 import { INSTRUMENTS, MusicError, analyze, compile, noteName, type ComposeSpec, type Score } from "../shared/music.ts";
 import type { World } from "./world.ts";
-import { simNow, simSleep } from "./sim.ts";
+import { simNow } from "./sim.ts";
+import { gate, secondPass } from "./activities.ts";
 
 /** The monolith hums A1 and drops a semitone with each shift; this is the pitch class it is on now. */
 const humPitchClass = (shifts: number) => (((9 - shifts) % 12) + 12) % 12;
@@ -63,14 +64,18 @@ export const COMPOSE_TOOL: ToolDef = {
     try { score = compile(spec); } catch (e: any) { throw new ToolError(e instanceof MusicError ? e.message : `Could not read that piece: ${e.message}`); }
     if (score.voices.some((v) => v.instrument === "flute") && !windInstrument(w)) throw new ToolError("A wind voice needs something to blow through, and you aren't carrying anything like that. Your own voice, strings, chimes and stones are always with you.");
     const an = analyze(score);
-    if (fresh) db.prepare("INSERT INTO compositions(title, spec, ts) VALUES(?,?,?) ON CONFLICT(title) DO UPDATE SET spec = excluded.spec, ts = excluded.ts").run(score.title, JSON.stringify(spec), simNow());
-    const row = byTitle(score.title)!; const plays = row.plays;
-    db.prepare("UPDATE compositions SET plays = plays + 1 WHERE id = ?").run(row.id);
-
-    bus.emit("score", { t: "score", title: score.title, score });
-    w.setActivity(`performing "${score.title}"`);
-    log("action", `River ${fresh ? "composes and performs" : "performs"} "${score.title}" (${Math.round(score.seconds)}s, ${score.voices.map((v) => v.instrument).join(" + ")})`, { analysis: an.text });
-    await simSleep(Math.min(score.seconds, 90) * 1000);
+    // Starting the performance (writing it down, counting the play, the audio) happens once; the end of it, after the wait, applies the rest.
+    const again = secondPass();
+    let plays: number;
+    if (again) plays = again.extra.plays;
+    else {
+      if (fresh) db.prepare("INSERT INTO compositions(title, spec, ts) VALUES(?,?,?) ON CONFLICT(title) DO UPDATE SET spec = excluded.spec, ts = excluded.ts").run(score.title, JSON.stringify(spec), simNow());
+      const row = byTitle(score.title)!; plays = row.plays;
+      db.prepare("UPDATE compositions SET plays = plays + 1 WHERE id = ?").run(row.id);
+      bus.emit("score", { t: "score", title: score.title, score });
+      log("action", `River ${fresh ? "composes and performs" : "performs"} "${score.title}" (${Math.round(score.seconds)}s, ${score.voices.map((v) => v.instrument).join(" + ")})`, { analysis: an.text });
+    }
+    gate(w, Math.min(score.seconds, 90) * 1000, `performing "${score.title}"`, { plays });
 
     // the island listens
     const heard: string[] = [], now = simNow();

@@ -24,7 +24,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { ToolError, obj, num, str, type ToolDef } from "./toolkit.ts";
 import { simNow, simRng } from "./sim.ts";
 import { available, takeLoose, takeOneUnit } from "./gathering.ts";
-import { activitiesOf, runActivity } from "./activities.ts";
+import { activitiesOf, runActivity, gate, timed } from "./activities.ts";
 const sr = simRng("tools");
 export { ToolError, type ToolDef };
 
@@ -265,14 +265,14 @@ const itemRefs = (w: World, refs: unknown, max: number) => {
 };
 
 export const GATED_TOOLS: ToolDef[] = [
-  COMPOSE_TOOL,
+  timed(COMPOSE_TOOL),
   BURN_TOOL,
-  BUILD_TOOL,
-  CLOTHE_TOOL,
+  timed(BUILD_TOOL),
+  timed(CLOTHE_TOOL),
   DEFEND_TOOL,
-  TEND_TOOL,
+  timed(TEND_TOOL),
   FISH_TOOL,
-  COLOUR_TOOL,
+  timed(COLOUR_TOOL),
   NAME_CREATURE_TOOL,
   OFFER_TOOL,
   {
@@ -304,17 +304,18 @@ export const GATED_TOOLS: ToolDef[] = [
       catch (e: any) { throw new ToolError(`Fetch failed: ${e.message}`); }
     },
   },
-  {
+  timed({
     name: "craft", description: GATED.craft,
     input_schema: obj({ ingredients: { type: "array", items: { type: "string" }, description: "1–3 inventory items (one of each is consumed)" }, name: str("Name of the new item"), description: str("What it is and does") }, ["ingredients", "name", "description"]),
     run: (a, w) => {
       const items = itemRefs(w, a.ingredients, 3);
+      gate(w, 3000, `crafting ${String(a.name).slice(0, 40)}`);
       items.forEach((i) => w.takeItem(i.id, 1));
       w.addItem("crafted", String(a.name).slice(0, 60), String(a.description).slice(0, 300));
       w.bump({ mood: 6, curiosity: -4 });
       return `You crafted: ${a.name}.`;
     },
-  },
+  }),
   {
     name: "plant", description: GATED.plant,
     input_schema: obj({ item: str("A seed from your inventory"), grows_into: { type: "string", enum: ["flower", "bush", "tree"] } }, ["item", "grows_into"]),

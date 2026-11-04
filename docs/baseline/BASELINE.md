@@ -152,11 +152,23 @@ Results:
 
 Bugs found while building it: a harvest began while the outbound walk was still running, so its stale "arrived" result ended the return leg at once; an escape was cancelled on its first tick by the predator it was fleeing; a reset's generation bump was not journaled, so a running activity was fenced at different ticks live and in replay; the brain's context-building wrote to the known-world table, which replay cannot repeat.
 
-Not done in MVP 3:
+### MVP 3 leftovers, completed afterwards
 
-- **Crafting, building and music as activities.** Those tools still run as before (their waits are in-memory timers, so a restart loses them). The tool-level durations and consumption would need rewriting as steps.
-- **Fully faithful mid-run snapshots.** Activities, River's body and the walk survive a restart exactly. Emotion levels, wounds (saved every 15 s), animals' behaviour modes, ambient-event timers and a few other in-memory pieces do not, so a restart still loses those. The restart test disables wildlife and ambient events to isolate the activity machinery.
-- **Learned routines and a general planner:** deliberately out of scope.
-- **Climbing or vertical access:** the grid is flat; bridges count as walkable, towers are not navigable.
-- **Interruption by sound** (rest) and per-activity capacity limits (gather does not check inventory capacity because there is none).
-- The reflex thresholds (4.5 m fire, 9 m predator, 12 m escape) are placeholder tuning.
+- **Faithful mid-run snapshots, with the whole world alive.** A registry (`src/server/persist.ts`) commits each system's in-memory state with the clock: emotions (including the queued "moment"), ambient director schedule, wildlife behaviour modes, creature trust, wounds and the body's small memories, fire and story throttles, world timers, the walked-path and burnt-ground grids (as raw floats), animals' positions, and River's whole state (activity label, speech, sleep deadline). It is written at the commit, after every system has had its say that tick. Two timers that were closures (ambient "relief" and "rustle", the emotion moment) are now persisted jobs (`scheduleJob` / `onJob`), so they fire after a restart exactly when they would have.
+- **`npm run restart-test`** now includes a *living* world (weather, ambient events, wildlife, predators, a death): copied at three different moments, restarted in a fresh process, and run on: the full state hash (rng, entities, River, world, creatures, emotions, body, journaled tables) matches every time.
+- **Crafting, building, music, sewing, pigments and first aid as timed work.** A tool validates and calls `gate(w, ms, label)`; the first pass stops before anything has changed and a persisted "work" activity holds the wait as a deadline. When it ends the tool runs again with the gate open, re-checks everything and applies it. Materials are therefore spent only at the end, an invalid recipe fails at once and costs nothing, danger stops the work with the materials intact, and a restart mid-work finishes it. Crafting now takes 3 s and building up to 45 s of world time (they were instant). Music is counted once, and its effects land at the end.
+- **Rest is interrupted by sudden noise and by a human speaking** (thunder, a lightning strike, a voice); walking and gathering are not.
+- **Reflex distances and harvest time are settings** (Instincts group): fire radius, charging-animal radius, how far River runs, seconds per unit.
+- **Replay appraises a tool call by how it went live** (its recorded success and result), because some results depend on things replay cannot reproduce (memory, web).
+
+Bugs found: River's body was saved mid-tick, before later systems changed it, so a restart could resurrect a stale value; the hash read the creature table, which is now written at commit; the knowledge set was updated from the brain's context-building.
+
+Checks now: 31 unit tests pass; restart suite 12 scenarios exact (gather at 5 cut points, rest at 2, craft at 2, perform at 2, living world); 20-seed mock soak exact; crash test passes; real-model soak 3/3 exact in the latest runs. One earlier real-model run (of 3) diverged once, in the emotions hash at simulated tick 17,400; it did not reproduce in the next two real-model runs (7 seeds) after replay was changed to appraise tool calls by their live outcome, so the cause is not proven.
+
+Still not done:
+
+- **Other timed tools** keep in-memory waits: fire (burn, light, tend), the wildlife defend and fish tools, and the dozen plugins (dig, draw, inscribe, weave, ...). A restart during one of those loses that action (nothing is spent twice; their materials are taken after the wait). Converting them is the same one-line change (`gate` plus `timed`), but each needs its mutation order checked.
+- **Vertical navigation** (towers, ladders): the grid is flat; bridges count as walkable.
+- **Inventory capacity** does not exist in the game, so `gather` has none to check.
+- **Learned routines and a general planner:** out of scope by design.
+- **In-flight appraisals:** an emotion appraisal that is waiting on an embedding at the instant of a restart is dropped (it is derived from a tool result that was already committed).

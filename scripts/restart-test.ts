@@ -8,10 +8,13 @@ import os from "node:os";
 import path from "node:path";
 
 const [mode, snapFile, endTickArg] = process.argv.slice(2);
+/** Print the result and wait for it to flush: it is large, and exiting straight away truncates a pipe. */
+const emit = (o: unknown) => new Promise<void>((res) => process.stdout.write("RESULT " + JSON.stringify(o) + "\n", () => res()));
 
 async function setup() {
   const { setConfig } = await import("../src/server/config.ts");
-  for (const [k, v] of Object.entries({ weather: false, ambientRate: 0, prey: false, smallWild: false, predators: false, needsRate: 0, fallRate: 0 })) setConfig(k, v as number | boolean);
+  // "alive" leaves the whole world running (weather, ambient events, wildlife, predators); the others isolate the activity machinery
+  if (process.env.RT_SCENARIO !== "alive") for (const [k, v] of Object.entries({ weather: false, ambientRate: 0, prey: false, smallWild: false, predators: false, needsRate: 0, fallRate: 0 })) setConfig(k, v as number | boolean);
   const sim = await import("../src/server/sim.ts");
   const { createRuntime, startSystems } = await import("../src/server/runtime.ts");
   const rt = await createRuntime(); startSystems(rt);
@@ -23,11 +26,21 @@ const parts = async (rt: any) => {
   const { stateParts } = await import("../src/server/recorder.ts");
   const p = stateParts(rt.world);
   const { db } = await import("../src/server/db.ts");
-  const detail = { trees: [...rt.world.entities.values()].filter((e: any) => e.kind === "tree").map((e: any) => ({ id: e.id, stock: e.props.stock, reserved: e.props.reserved, lastTake: e.props.lastTake })), act: db.prepare("SELECT id,status,step,progress,started_tick,deadline_tick,reservations,outcome,ended_tick FROM sim_activities").all(), inv: [...rt.world.inventory.values()].map((i: any) => `${i.name}x${i.qty}`), ents: [...rt.world.entities.values()].sort((a: any, b: any) => (a.id < b.id ? -1 : 1)), known: db.prepare("SELECT * FROM known_entities ORDER BY id").all() };
-  return { me: p.me, entities: p.entities, inventory: p.inventory, tables: p.tables, _detail: JSON.stringify(detail) };
+  const detail = { trees: [...rt.world.entities.values()].filter((e: any) => e.kind === "tree").map((e: any) => ({ id: e.id, stock: e.props.stock, reserved: e.props.reserved, lastTake: e.props.lastTake })), act: db.prepare("SELECT id,status,step,progress,started_tick,deadline_tick,reservations,outcome,ended_tick FROM sim_activities").all(), me: rt.world.me, emo: (rt.emotions as any).snapshot(), inv: [...rt.world.inventory.values()].map((i: any) => `${i.name}x${i.qty}`), ents: [...rt.world.entities.values()].sort((a: any, b: any) => (a.id < b.id ? -1 : 1)), known: db.prepare("SELECT * FROM known_entities ORDER BY id").all() };
+  return { ...p, _detail: JSON.stringify(detail) };
 };
 
-if (mode === "A") {
+if (mode === "A" && process.env.RT_SCENARIO === "alive") {
+  const { sim, rt, run } = await setup();
+  await run(Number(process.env.RT_CUT ?? 3000));
+  sim.save();
+  const { db } = await import("../src/server/db.ts");
+  fs.rmSync(snapFile!, { force: true }); db.prepare("VACUUM INTO ?").run(snapFile!);
+  const atCut = await parts(rt), evBefore = (db.prepare("SELECT COUNT(*) n FROM events").get() as any).n;
+  await run(Number(process.env.RT_LEN ?? 3000));
+  const end = await parts(rt), moved = Object.keys(end).filter((k) => k[0] !== "_" && end[k] !== atCut[k]);
+  await emit({ midway: { phase: `alive; ${(db.prepare("SELECT COUNT(*) n FROM events").get() as any).n - evBefore} events and changes in [${moved.join(" ")}] after the copy`, got: 0 }, endTick: sim.simTick(), outcome: null, parts: end });
+} else if (mode === "A") {
   const { sim, rt, run } = await setup();
   const { isLand } = await import("../src/shared/noise.ts");
   const w = rt.world; let g = { x: 0, z: 0 };
@@ -37,34 +50,52 @@ if (mode === "A") {
   for (const [i, dx] of [14, 20].entries()) rt.knowledge.learn(w.spawn("tree", `oak ${i}`, g.x + dx, g.z + i * 3, { yields: ["stick"], stock: 2, max: 2 }));
   w.ensureMaterials();                                         // the idempotent top-up a boot performs, so the copy needs nothing the original lacked
   const scenario = process.env.RT_SCENARIO ?? "gather", cut = Number(process.env.RT_CUT ?? 100);
-  const act = scenario === "rest" ? rt.activities.begin("rest", { seconds: 20 }, { intent: "rest", source: "brain" })
+  let act: any;
+  if (scenario === "craft" || scenario === "perform") {
+    const { db: d } = await import("../src/server/db.ts"), { findTool } = await import("../src/server/tools.ts");
+    for (const g of ["craft", "compose"]) d.prepare("INSERT INTO tools(name, approved) VALUES(?, 1) ON CONFLICT(name) DO UPDATE SET approved = 1").run(g);
+    if (scenario === "craft") { w.addItem("stick", "stick", "A stick.", 3); void findTool("craft")!.run({ ingredients: ["stick", "stick"], name: "frame", description: "A small frame." }, w); }
+    else void findTool("compose")!.run({ action: "write", title: "Restart Tune", tempo: 120, voices: [{ instrument: "chimes", notes: "A4 C5 E5 A5 G5 E5 C5 A4" }] }, w)?.then?.(() => {}, (e: any) => console.error("compose failed:", e.message));
+    await new Promise<void>((r) => setImmediate(r));              // an async tool reaches its gate a microtask later
+    act = rt.activities.cur;
+  } else act = scenario === "rest" ? rt.activities.begin("rest", { seconds: 20 }, { intent: "rest", source: "brain" })
     : rt.activities.begin("gather", { what: "stick", quantity: 3, returnToStart: true }, { intent: "gather", source: "brain" });
   await run(cut);                                              // partway
-  const phase = act.progress.phase ?? act.def, got = act.progress.got ?? 0;
+  const running = rt.activities.cur !== null;
+  const phase = (running ? (act.progress.phase ?? act.def) : "already finished"), got = act.progress.got ?? 0;
   sim.save();
   const { db } = await import("../src/server/db.ts");
   fs.rmSync(snapFile!, { force: true }); db.prepare("VACUUM INTO ?").run(snapFile!);
   await run(5000, () => rt.activities.cur === null);
   await run(20);
-  console.log("RESULT " + JSON.stringify({ midway: { phase, got }, endTick: sim.simTick(), outcome: act.outcome, parts: await parts(rt) }));
+  await emit({ midway: { phase, got, running }, endTick: sim.simTick(), outcome: act.outcome, parts: await parts(rt) });
 } else if (mode === "B") {
   const { sim, rt, run } = await setup();
   const resumed = rt.activities.cur?.id ?? null, phase = rt.activities.cur?.progress?.phase ?? null;
   await run(Number(endTickArg) - sim.simTick());
-  console.log("RESULT " + JSON.stringify({ resumed, phase, endTick: sim.simTick(), outcome: null, parts: await parts(rt) }));
+  await emit({ resumed, phase, endTick: sim.simTick(), outcome: null, parts: await parts(rt), rows: (await import("../src/server/db.ts")).db.prepare("SELECT id,status,progress,outcome FROM sim_activities").all(), ev: (await import("../src/server/db.ts")).db.prepare("SELECT kind,text FROM events ORDER BY id DESC LIMIT 4").all(), cur: rt.activities.cur ? { def: rt.activities.cur.def, progress: rt.activities.cur.progress, deadline: rt.activities.cur.deadlineTick } : null });
 } else {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "river-restart-")), snap = path.join(dir, "snap.db");
   const call = (m: string, db: string, env: Record<string, string>, ...a: string[]) => {
-    const r = spawnSync(process.execPath, ["--import", "tsx", "scripts/restart-test.ts", m, snap, ...a], { env: { ...process.env, RIVER_DB: db, MOCK_LLM: "1", ...env }, encoding: "utf8" });
+    const r = spawnSync(process.execPath, ["--import", "tsx", "scripts/restart-test.ts", m, snap, ...a], { env: { ...process.env, RIVER_DB: db, MOCK_LLM: "1", ...env }, encoding: "utf8", maxBuffer: 1 << 28 });
     const line = r.stdout.split("\n").find((l) => l.startsWith("RESULT ")); if (!line) { console.error(r.stdout.slice(-800), r.stderr.slice(-800)); process.exit(1); }
     return JSON.parse(line.slice(7));
   };
   let failed = 0;
-  for (const [scenario, cut] of [["gather", 5], ["gather", 40], ["gather", 100], ["gather", 130], ["gather", 185], ["rest", 30], ["rest", 120]] as const) {
-    const A = call("A", path.join(dir, `a-${scenario}-${cut}.db`), { RT_SCENARIO: scenario, RT_CUT: String(cut) });
-    const B = call("B", snap, {}, String(A.endTick));
+  const only = process.env.RT_ONLY;
+  for (const [scenario, cut] of (only === "alive" ? [["alive", 1500], ["alive", 4500], ["alive", 9000]] : [["gather", 5], ["gather", 40], ["gather", 100], ["gather", 130], ["gather", 185], ["rest", 30], ["rest", 120], ["craft", 12], ["craft", 25], ["perform", 15], ["perform", 40], ["alive", 3000]]) as [string, number][]) {
+    const A = call("A", path.join(dir, `a-${scenario}-${cut}.db`), { RT_SCENARIO: scenario, RT_CUT: String(cut), RT_LEN: process.env.RT_LEN ?? "4000" });
+    const B = call("B", snap, { RT_SCENARIO: scenario }, String(A.endTick));
     const bad = Object.keys(A.parts).filter((k) => k[0] !== "_" && A.parts[k] !== B.parts[k]);
-    const ok = !!B.resumed && !bad.length;
+    const ok = (scenario === "alive" || !A.midway.running || !!B.resumed) && !bad.length;
+    if (!ok) console.error("B rows:", JSON.stringify(B.rows), "\nB events:", JSON.stringify(B.ev));
+    if (bad.length) {
+      const a = JSON.parse(A.parts._detail), b = JSON.parse(B.parts._detail);
+      if (bad.includes("emotions")) for (const k of Object.keys(a.emo)) if (JSON.stringify(a.emo[k]) !== JSON.stringify(b.emo[k])) console.error("emotions." + k, "\n A", JSON.stringify(a.emo[k]).slice(0, 300), "\n B", JSON.stringify(b.emo[k]).slice(0, 300));
+      if (bad.includes("me")) console.error("me A", JSON.stringify(a.me), "\nme B", JSON.stringify(b.me));
+      const ea = new Map(a.ents.map((e: any) => [e.id, JSON.stringify(e)])), eb = new Map(b.ents.map((e: any) => [e.id, JSON.stringify(e)]));
+      let shown = 0; for (const [id, v] of ea) if (eb.get(id) !== v && shown++ < 3) console.error("entity differs", id, "\n A", v, "\n B", eb.get(id));
+    }
     if (!ok) failed++;
     console.log(`${ok ? "PASS" : "FAIL"} ${scenario.padEnd(6)} restarted at tick ${cut} (${A.midway.phase}${A.midway.got ? `, ${A.midway.got} gathered` : ""}); finished tick ${A.endTick} ${ok ? "identically" : "differing: " + (bad.join(", ") || "not resumed")}`);
   }

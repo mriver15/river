@@ -9,6 +9,7 @@ import { findPlace } from "./places.ts";
 import { addWork } from "./taste.ts";
 import type { Entity } from "../shared/types.ts";
 import type { World } from "./world.ts";
+import { gate } from "./activities.ts";
 
 type Shape = "hut" | "lean-to" | "wall" | "fence" | "bench" | "cairn" | "tower" | "platform" | "bridge";
 const SIZE = { small: 1, medium: 1.6, large: 2.4 } as const;
@@ -166,7 +167,8 @@ export const BUILD_TOOL: ToolDef = {
     const perPigment = new Map<string, number>(); spend.forEach(({ it }) => perPigment.set(it.id, (perPigment.get(it.id) ?? 0) + 1));
     for (const [id, n] of perPigment) if ((w.inventory.get(id)?.qty ?? 0) < n) throw new ToolError(`You don't have enough of that pigment: ${n} portions are needed for those parts.`);
 
-    // all good: spend, build
+    // all good: building takes time, and the materials are spent when it is done
+    gate(w, Math.min(45_000, 3000 + need * 1500), `building a ${size} ${spec.word}`);
     used.forEach(({ it, n }) => w.takeItem(it.id, n)); for (const [id, n] of perPigment) w.takeItem(id, n);
     const mid = spec.line ? { x: (A.x + B!.x) / 2, z: (A.z + B!.z) / 2 } : A;
     const materials: Record<string, number> = {}, kinds: Record<string, string> = {}; used.forEach(({ it, n }) => { materials[it.name] = (materials[it.name] ?? 0) + n; kinds[it.name] = it.kind; });

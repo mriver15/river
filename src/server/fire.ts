@@ -8,6 +8,7 @@ import { bus, log } from "./bus.ts";
 import { ToolError, obj, str, type ToolDef } from "./toolkit.ts";
 import type { Entity, Weather } from "../shared/types.ts";
 import type { World } from "./world.ts";
+import { persisted } from "./persist.ts";
 import { simNow, simRng, simSleep, every } from "./sim.ts";
 const sr = simRng("fire");
 
@@ -30,7 +31,10 @@ export class Fire {
   private lastHurt = 0;
   private tickN = 0;
 
-  constructor(private w: World, private say: (text: string, at?: { x: number; z: number }, r?: number) => boolean, private notify: (m: string) => void) {}
+  constructor(private w: World, private say: (text: string, at?: { x: number; z: number }, r?: number) => boolean, private notify: (m: string) => void) {
+    const s = persisted("fire", () => ({ lastSay: this.lastSay, lastHurt: this.lastHurt, tickN: this.tickN }));   // throttles and the regrowth cadence, committed with the clock
+    if (s) { this.lastSay = s.lastSay; this.lastHurt = s.lastHurt; this.tickN = s.tickN; }
+  }
 
   start() {
     every(1000, () => this.tick(), "fire");

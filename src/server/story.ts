@@ -7,6 +7,7 @@ import { HALF, heightAt, isLand } from "../shared/noise.ts";
 import type { Emotions } from "./emotions.ts";
 import type { Entity, KeeperView } from "../shared/types.ts";
 import type { World } from "./world.ts";
+import { persisted } from "./persist.ts";
 import { simNow, simRng, every } from "./sim.ts";
 const sr = simRng("story");
 
@@ -68,11 +69,14 @@ const fresh = (): State => ({ placed: [], found: [], lastAt: 0, complete: false 
 
 export class Story {
   private s: State = kvGet<State>("story", fresh());
-  private startedAt = simNow();
+  private startedAt = simNow();   // committed with the clock (see the constructor)
   /** Off until the human switches the Keeper's trail on (a world that was already telling it keeps going). */
   enabled = kvGet<boolean>("storyOn", kvGet<State>("story", fresh()).placed.length > 0);
   emotions?: Emotions;
-  constructor(private w: World) {}
+  constructor(private w: World) {
+    const m = persisted("story", () => ({ startedAt: this.startedAt }));
+    if (m) this.startedAt = m.startedAt;
+  }
   start() { every(30_000, () => this.tick(), "story"); }
   reset() { this.s = fresh(); this.enabled = false; this.startedAt = simNow(); kvSet("story", this.s); kvSet("storyOn", false); }
   setEnabled(on: boolean) {

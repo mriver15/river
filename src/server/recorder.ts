@@ -42,10 +42,10 @@ export function finishCommand(seq: number, status: "ok" | "error", result: strin
   if (seq) db.prepare("UPDATE sim_commands SET status=?, result=? WHERE seq=?").run(status, result.slice(0, 2000), seq);
 }
 
-export interface Cmd { seq: number; tick: number; source: string; type: string; payload: any }
+export interface Cmd { seq: number; tick: number; source: string; type: string; payload: any; status: string; result: string | null }
 /** Commands in the order they were admitted, from `tick` on. Read from any database file. */
 export function commandsFrom(d: { prepare: typeof db.prepare }, tick: number): Cmd[] {
-  return (d.prepare("SELECT seq, tick, source, type, payload FROM sim_commands WHERE tick >= ? ORDER BY seq").all(tick) as any[]).map((r) => ({ ...r, payload: JSON.parse(r.payload) }));
+  return (d.prepare("SELECT seq, tick, source, type, payload, status, result FROM sim_commands WHERE tick >= ? ORDER BY seq").all(tick) as any[]).map((r) => ({ ...r, payload: JSON.parse(r.payload) }));
 }
 
 const extraState = new Map<string, () => unknown>();
@@ -70,7 +70,6 @@ export function stateParts(w: World): Record<string, string> {
     world: canonicalHash({ weather: w.weather, epoch: w.epoch, nextId: kvGet("nextId", 0) }),
     heat: canonicalHash(Array.from(w.heat)),
     scorch: canonicalHash(Array.from(w.scorch)),
-    creatures: canonicalHash(db.prepare("SELECT * FROM creatures ORDER BY id").all()),
     body: canonicalHash(body),
     ...Object.fromEntries(TABLES.map((t) => [`t_${t}`, canonicalHash(db.prepare(`SELECT * FROM ${t} ORDER BY 1`).all())])),
     ...Object.fromEntries([...extraState].sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, fn]) => [k, canonicalHash(fn())])),
@@ -80,7 +79,7 @@ export function stateParts(w: World): Record<string, string> {
 export const stateHash = (parts: Record<string, string>) => canonicalHash(Object.fromEntries(Object.entries(parts).filter(([k]) => k[0] !== "_")));
 
 export function checkpoint(w: World) {
-  const parts = { ...stateParts(w), _me: JSON.stringify({ x: w.me.x, z: w.me.z, activity: w.me.activity, sleeping: w.me.sleeping, needs: w.me.needs }) };
+  const parts = { ...stateParts(w), ...Object.fromEntries([...extraState].map(([k, fn]) => [`_raw_${k}`, JSON.stringify(fn())])), _me: JSON.stringify({ x: w.me.x, z: w.me.z, activity: w.me.activity, sleeping: w.me.sleeping, needs: w.me.needs }) };
   db.prepare("INSERT OR REPLACE INTO sim_checkpoints(tick, hash, parts) VALUES(?,?,?)").run(simTick(), stateHash(parts), JSON.stringify(parts));
 }
 

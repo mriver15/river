@@ -230,17 +230,17 @@ export class Agent {
     return inject(() => this.execNow(name, input, gen, commandId));
   }
   /** The tool call itself, run at a tick boundary (live, through `exec`) or straight from the journal (replay). */
-  async execNow(name: string, input: Record<string, any>, gen?: number, commandId?: string): Promise<{ content: string; is_error?: boolean }> {
+  async execNow(name: string, input: Record<string, any>, gen?: number, commandId?: string, recorded?: { status: string; result: string | null }): Promise<{ content: string; is_error?: boolean }> {
     if (this.halted) return { content: "Your life is being reset; nothing more happens.", is_error: true };
     if (gen !== undefined && isStale(gen)) { discarded(`call to ${name}`); return { content: "That belongs to a life that has ended; nothing happens.", is_error: true }; }
     const adm = admit("brain", "tool", { name, input }, commandId);
     if (adm.duplicate) return { content: adm.result, is_error: adm.status === "error" };   // a repeat of a call already made: report the original outcome
     const seq = adm.seq;
-    const out = await this.run1(name, input);
+    const out = await this.run1(name, input, recorded);
     finishCommand(seq, out.is_error ? "error" : "ok", out.content);
     return out;
   }
-  private async run1(name: string, input: Record<string, any>): Promise<{ content: string; is_error?: boolean }> {
+  private async run1(name: string, input: Record<string, any>, recorded?: { status: string; result: string | null }): Promise<{ content: string; is_error?: boolean }> {
     const tool = findTool(name);
     if (name !== "say" && name !== "remember") log("action", `${name} ${clip(JSON.stringify(input), 200)}`, { tool: name, input });
     if (!tool) return { content: `Unknown tool "${name}". You may need to request it with request_tool.`, is_error: true };
@@ -248,12 +248,12 @@ export class Agent {
     try {
       const out = await tool.run(input, this.w);
       if (OBSERVE.has(name)) log("observation", clip(out, 500), { tool: name });
-      this.emo.onTool(name, input, true, out);
+      this.emo.onTool(name, input, recorded ? recorded.status !== "error" : true, recorded?.result ?? out);   // replay: judge it by what happened live
       return { content: out };
     } catch (e: any) {
       const msg = e instanceof ToolError ? e.message : `Unexpected error: ${e?.message ?? e}`;
       log("observation", `✗ ${clip(msg, 300)}`, { tool: name });
-      this.emo.onTool(name, input, false, msg);
+      this.emo.onTool(name, input, recorded ? recorded.status !== "error" : false, recorded?.result ?? msg);
       return { content: msg, is_error: true };
     } finally {
       if (!this.w.me.sleeping && !this.w.me.activity.startsWith("walking")) this.w.setActivity("thinking");

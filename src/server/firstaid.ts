@@ -5,6 +5,7 @@ import { isLand } from "../shared/noise.ts";
 import { ToolError, obj, str, type ToolDef } from "./toolkit.ts";
 import type { World } from "./world.ts";
 import { simSleep } from "./sim.ts";
+import { gate } from "./activities.ts";
 
 export const TEND_TOOL: ToolDef = {
   name: "tend",
@@ -23,7 +24,7 @@ export const TEND_TOOL: ToolDef = {
       const me = w.me, edge = [[2, 0], [-2, 0], [0, 2], [0, -2], [1.4, 1.4], [-1.4, 1.4], [1.4, -1.4], [-1.4, -1.4]].some(([dx, dz]) => !isLand(me.x + dx, me.z + dz, w.seed));
       if (!edge) throw new ToolError("You need water to wash a wound. The sea's edge is the nearest you know.");
       if (!list.some((x) => x.open && !x.cleaned)) throw new ToolError("There's no dirty open wound to wash.");
-      w.setActivity("washing a wound"); await simSleep(4000);
+      gate(w, 4000, "washing a wound");
       const n = bodyApi.cleanWounds(); w.bump({ mood: -2, energy: -2 });
       return `You kneel and flush ${n} wound${n > 1 ? "s" : ""} with cold salt water. It stings fiercely, and then it is clean.`;
     }
@@ -33,7 +34,7 @@ export const TEND_TOOL: ToolDef = {
       const open = list.filter((x) => x.open && !x.dressed);
       if (!open.length) throw new ToolError("There is no open wound left to bind.");
       const n = Math.min(open.length, mat.qty, 3);
-      w.setActivity("binding wounds"); await simSleep(4000); w.takeItem(mat.id, n);
+      gate(w, 4000, "binding wounds"); w.takeItem(mat.id, n);
       const k = bodyApi.dress(n, mat.kind === "moss"); w.bump({ mood: 3 });
       return `You press the ${mat.name} to ${k} wound${k > 1 ? "s" : ""} and bind ${k > 1 ? "them" : "it"} tight. The bleeding slows.`;
     }
@@ -41,7 +42,7 @@ export const TEND_TOOL: ToolDef = {
       if (!list.some((x) => x.kind === "sprain")) throw new ToolError("There is no twisted joint to splint.");
       const sticks = w.findItem("stick"), bind = [...w.inventory.values()].find((i) => i.kind === "bark" || i.kind === "hide");
       if (!sticks || sticks.qty < 2 || !bind) throw new ToolError("A splint takes two sticks and a strip of bark or hide to bind them.");
-      w.setActivity("binding a splint"); await simSleep(4000); w.takeItem(sticks.id, 2); w.takeItem(bind.id, 1);
+      gate(w, 4000, "binding a splint"); w.takeItem(sticks.id, 2); w.takeItem(bind.id, 1);
       bodyApi.splint(); return "You lay a stick either side of the joint and bind them. It aches, but it holds.";
     }
     throw new ToolError("Use examine, clean, bandage or splint.");

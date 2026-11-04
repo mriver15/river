@@ -4,6 +4,7 @@
 import { cfg } from "./config.ts";
 import { bus, log } from "./bus.ts";
 import { db, kvGet, kvSet } from "./db.ts";
+import { persisted } from "./persist.ts";
 import { heightAt } from "../shared/noise.ts";
 import { addMemory } from "./memory.ts";
 import { worn } from "./clothing.ts";
@@ -22,7 +23,7 @@ let w: World, emo: Emotions, notify: (msg: string) => void = () => {};
 const fresh = (): Saved => ({ health: 100, infection: 0, born: simNow(), dead: null, injuries: [], strain: 0, ailment: null, walked: 0, next: 1 });
 let st: Saved = fresh();
 let lastFaint = 0;
-let prev: { x: number; z: number } | null = null, lastBurn = 0, lastSave = 0, sensations: { text: string; p: number }[] = [], shaking = 0;
+let prev: { x: number; z: number } | null = null, lastBurn = 0, sensations: { text: string; p: number }[] = [], shaking = 0;
 
 const clamp = (v: number, a = 0, b = 1) => Math.max(a, Math.min(b, v));
 const rnd = (a: number, b: number) => a + sr() * (b - a);
@@ -170,13 +171,16 @@ function tick(dt: number) {
   }
   if (st.ailment) w.bump({ energy: (st.ailment.venom ? -0.04 : -0.01) * dt, mood: (st.ailment.venom ? -0.03 : -0.01) * dt });
   feel(dt);
-  if (now - lastSave > 15_000) { lastSave = now; kvSet("body", st); }
 }
 
 export const bodyApi = {
   attach(world: World, emotions: Emotions, say: (msg: string) => void) {
     w = world; emo = emotions; notify = say;
-    st = { ...st, ...kvGet<Partial<Saved>>("body", {}) }; if (!st.born) st.born = simNow();
+    // wounds and the body's small memories, committed with the clock
+    const saved = persisted("body", () => ({ st, lastFaint, prev, lastBurn, sensations, shaking }));
+    if (saved) { st = { ...st, ...saved.st }; lastFaint = saved.lastFaint; prev = saved.prev; lastBurn = saved.lastBurn; sensations = saved.sensations; shaking = saved.shaking; }
+    else st = { ...st, ...kvGet<Partial<Saved>>("body", {}) };
+    if (!st.born) st.born = simNow();
     bus.on("scorched", () => burn());
   },
   /** Something living hurt River: a bite, claws, a goring. Returns how the wound reads. Venom brings a sickness on top. */

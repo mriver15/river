@@ -6,6 +6,7 @@ import { db } from "./db.ts";
 import { ToolError, obj, str, type ToolDef } from "./toolkit.ts";
 import type { Entity } from "../shared/types.ts";
 import type { World } from "./world.ts";
+import { onFlush, persisted } from "./persist.ts";
 import { simNow, simRng, every } from "./sim.ts";
 const sr = simRng("creatures");
 
@@ -24,13 +25,17 @@ const label = (c: Creature) => (c.name ? `${c.name} the ${c.species}` : `the ${c
 export class Creatures {
   rows = new Map<string, Creature>();
   private dirty = new Set<string>();
-  private lastSave = 0; private lastSync = 0;
+  private lastSync = 0;
 
   constructor(private w: World, private say: (text: string, at?: { x: number; z: number }, r?: number) => boolean) {
+    this.lastSync = persisted("creatures", () => ({ lastSync: this.lastSync }))?.lastSync ?? 0;
     for (const r of db.prepare("SELECT * FROM creatures").all() as any[])
       this.rows.set(r.id, { id: r.id, species: r.species, trait: r.trait, name: r.name, trust: r.trust, met: r.met, lastSeen: r.last_seen, alive: !!r.alive });
   }
-  start() { every(1000, () => this.tick(1), "creatures"); }
+  start() {
+    every(1000, () => this.tick(1), "creatures");
+    onFlush(() => { for (const id of this.dirty) { const c = this.rows.get(id); if (c) this.save(c); } this.dirty.clear(); });   // trust and sightings are committed with the clock
+  }
   reset() { this.rows.clear(); this.dirty.clear(); }
 
   get(e: Entity): Creature | undefined { return e.props.creature ? this.rows.get(e.props.creature) : undefined; }
@@ -70,7 +75,6 @@ export class Creatures {
       this.dirty.add(c.id);
     }
     if (now - this.lastSync > 5000) { this.lastSync = now; for (const e of this.w.entities.values()) { const c = e.kind === "animal" ? this.get(e) : undefined; if (c) this.syncEntity(e, c); } }
-    if (now - this.lastSave > 15_000) { this.lastSave = now; for (const id of this.dirty) { const c = this.rows.get(id); if (c) this.save(c); } this.dirty.clear(); }
   }
 
   private milestone(e: Entity, c: Creature, s: string) {

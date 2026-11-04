@@ -9,7 +9,8 @@ import type { Entity, FxKind, Weather } from "../shared/types.ts";
 import type { Emotions } from "./emotions.ts";
 import { SHY_MULT, type Creatures } from "./creatures.ts";
 import type { World } from "./world.ts";
-import { simNow, simRng, every, after } from "./sim.ts";
+import { simNow, simRng, every, after, scheduleJob, onJob } from "./sim.ts";
+import { persisted } from "./persist.ts";
 const sr = simRng("ambient");
 
 const rand = (a: number, b: number) => a + sr() * (b - a);
@@ -176,10 +177,7 @@ const EVENTS: WEvent[] = [
     } },
   { name: "rustle", weight: 3, when: (c) => c.night, run: (c) => {
       c.say("Something moves in the dark, just past where you can see.");
-      after(28_000, () => {       // it stays ambiguous for a while, and then it is a fox, or it is nothing
-        const fox = [...c.w.entities.values()].find((e) => e.kind === "animal" && e.props.species === "fox" && c.w.dist(e) < 45);
-        c.say(fox ? "A fox's eyes catch the light for an instant, then it is gone." : "Nothing. Only the wind in the leaves, you tell yourself.");
-      });
+      scheduleJob("ambient.rustle", 28_000);       // it stays ambiguous for a while, and then it is a fox, or it is nothing
     } },
   { name: "dew-web", weight: 2, when: (c) => !c.night && c.w.worldTime() < 0.4 && c.w.weather !== "rain" && c.w.weather !== "storm", run: (c) => c.say("In the early light every spider's web on the island is strung with beads of dew, thousands of small bright constellations hung between the branches.") },
   { name: "tide-pool", weight: 2, when: (c) => !c.night && !!shorePoint(c.w), run: (c) => { const p = shorePoint(c.w)!; c.say(`The tide has drawn back far enough to leave a mirror-flat pool on the shore to the ${c.w.compass(p)}, and in it the sky is perfectly still.`, p, 70); } },
@@ -203,7 +201,7 @@ const WEATHER_START: Record<Weather, string> = {
 
 export class Ambient {
   private weatherUntil = kvGet<{ until: number }>("weather", { until: 0 }).until;
-  private nextEvent = simNow() + rand(40_000, 120_000);
+  private nextEvent = 0;
   private last = new Map<string, number>();
   private noted = new Map<string, number>();
   private animalState = new Map<string, { tx: number; tz: number; wait: number }>();
@@ -217,7 +215,16 @@ export class Ambient {
 
   constructor(private w: World, private notify: (msg: string) => void) {
     // after a scare passes, the world offers something gentle
-    bus.on("relief", () => after(rand(8_000, 20_000), () => this.offerRelief()));
+    bus.on("relief", () => scheduleJob("ambient.relief", rand(8_000, 20_000)));
+    onJob("ambient.relief", () => this.offerRelief());
+    onJob("ambient.rustle", () => {       // it stayed ambiguous for a while, and now it is a fox, or it is nothing
+      const fox = [...this.w.entities.values()].find((e) => e.kind === "animal" && e.props.species === "fox" && this.w.dist(e) < 45);
+      this.say(fox ? "A fox's eyes catch the light for an instant, then it is gone." : "Nothing. Only the wind in the leaves, you tell yourself.");
+    });
+    // the director's schedule and memory, committed with the clock
+    const s = persisted("ambient", () => ({ weatherUntil: this.weatherUntil, nextEvent: this.nextEvent, last: [...this.last], noted: [...this.noted], animalState: [...this.animalState], deferred: this.deferred, current: this.current, recentThemes: this.recentThemes.slice(-12), lastPersist: this.lastPersist }));
+    if (s) { this.weatherUntil = s.weatherUntil; this.nextEvent = s.nextEvent; this.last = new Map(s.last); this.noted = new Map(s.noted); this.animalState = new Map(s.animalState); this.deferred = s.deferred; this.current = s.current; this.recentThemes = s.recentThemes; this.lastPersist = s.lastPersist; }
+    else this.nextEvent = simNow() + rand(40_000, 120_000);
   }
 
   /**
@@ -281,7 +288,7 @@ export class Ambient {
   private slow() {
     const now = simNow(), w = this.w;
     if (now >= this.weatherUntil) this.changeWeather();
-    if (w.weather === "storm" && sr() < 0.03) { this.fx("lightning"); if (sr() < 0.3) bus.emit("strike"); if (sr() < 0.4) this.say("Thunder cracks, close enough to feel in your chest."); }
+    if (w.weather === "storm" && sr() < 0.03) { this.fx("lightning"); if (sr() < 0.3) bus.emit("strike"); if (sr() < 0.4) { this.say("Thunder cracks, close enough to feel in your chest."); bus.emit("loud", { text: "thunder cracked overhead" }); } }
     if (now >= this.nextEvent) {
       if (this.emotions?.absorbed() && this.deferred < 3) { this.deferred++; this.nextEvent = now + 120_000; }       // don't interrupt deep work with trivia
       else {

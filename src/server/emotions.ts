@@ -13,7 +13,8 @@ import { align } from "./taste.ts";
 import type { Moment } from "../shared/types.ts";
 import { BITTERSWEET, EMOTIONS, EMOTION_ORDER, intensityWord, type EmotionName } from "../shared/emotions.ts";
 import type { World } from "./world.ts";
-import { simNow, every, after, inject } from "./sim.ts";
+import { simNow, every, after, inject, scheduleJob, onJob } from "./sim.ts";
+import { persisted } from "./persist.ts";
 import { recordCommand, finishCommand, isReplaying } from "./recorder.ts";
 import { lifeGen, isStale, discarded } from "./lifecycle.ts";
 
@@ -40,13 +41,14 @@ export class Emotions {
   private places = new Map<string, number>();
   private concerns: { text: string; v: Float32Array }[] = [];
   private concernsKey = ""; private concernsAt = 0;
-  private cand: Omit<Moment, "id" | "ts"> | null = null; private candTimer: number | null = null; private lastMomentAt = 0;
-  private lastSave = 0; private lastCalm = simNow(); private prevDread = 0;
+  private cand: Omit<Moment, "id" | "ts"> | null = null; private candPending = false; private lastMomentAt = 0;
+  private lastCalm = simNow(); private prevDread = 0;
 
   constructor(private w: World) {
-    const s = kvGet<{ level?: Partial<Record<EmotionName, number>>; why?: Partial<Record<EmotionName, string>> } | null>("emotions", null);
-    if (s?.level) Object.assign(this.level, s.level); if (s?.why) this.why = s.why;
-    this.habit = kvGet("habit", {});
+    this.habit = {};
+    const s = persisted("emotions", () => this.snapshot());
+    if (s) this.restore(s);
+    onJob("emotions.moment", () => this.flushMoment());
     bus.on("perceived", (e: { text: string }) => void this.perceived(e.text).catch(() => {}));
     bus.on("loss", (e: { name: string; kind: string; x: number; z: number; named?: boolean; trust?: number }) => void this.loss(e).catch(() => {}));
     bus.on("expressed", (e: { mood: string; note: string }) => this.expressed(e));
@@ -57,9 +59,16 @@ export class Emotions {
   }
 
   start() { every(1000, () => this.tick(1), "emotions"); }
+  /** Everything that decides how feelings evolve: committed with the clock, restored after a restart, and hashed. */
+  private snapshot() { return { ...this.state(), cand: this.cand, candPending: this.candPending, lastMomentAt: this.lastMomentAt, lastCalm: this.lastCalm, prevDread: this.prevDread }; }
+  private restore(s: ReturnType<Emotions["snapshot"]>) {
+    this.level = s.level; this.why = s.why; this.edge = s.edge; this.momentAt = s.momentAt; this.habit = s.habit; this.recent = s.recent; this.acts = s.acts;
+    this.fails = new Map(s.fails); this.places = new Map(s.places); this.cand = s.cand; this.candPending = s.candPending;
+    this.lastMomentAt = s.lastMomentAt; this.lastCalm = s.lastCalm; this.prevDread = s.prevDread;
+  }
   /** Everything that decides how feelings evolve, for state hashing. */
   state() { return { level: this.level, why: this.why, edge: this.edge, momentAt: this.momentAt, habit: this.habit, recent: this.recent, acts: this.acts, fails: [...this.fails], places: [...this.places] }; }
-  reset() { for (const n of EMOTION_ORDER) this.level[n] = 0; this.why = {}; this.edge = {}; this.momentAt = {}; this.habit = {}; this.recent = []; this.acts = []; this.fails.clear(); this.places.clear(); this.concerns = []; this.concernsKey = ""; kvSet("emotions", { level: this.level, why: this.why }); kvSet("habit", {}); }
+  reset() { for (const n of EMOTION_ORDER) this.level[n] = 0; this.why = {}; this.edge = {}; this.momentAt = {}; this.habit = {}; this.recent = []; this.acts = []; this.fails.clear(); this.places.clear(); this.concerns = []; this.concernsKey = ""; this.cand = null; this.candPending = false; this.lastMomentAt = 0; this.lastCalm = simNow(); this.prevDread = 0; }
 
   // ---------- core ----------
   bump(n: EmotionName, amt: number, why = "", c: Ctx = {}) {
@@ -79,11 +88,13 @@ export class Emotions {
   /** One event often stirs several feelings at once. Gather them for a moment and keep only the strongest, and space moments out. */
   private queueMoment(m: Omit<Moment, "id" | "ts">) {
     if (!this.cand || m.intensity > this.cand.intensity) this.cand = m;
-    this.candTimer ??= after(1500, () => {
-      const best = this.cand!; this.cand = null; this.candTimer = null;
-      if (simNow() - this.lastMomentAt < 20_000 && best.intensity < 0.85) { log("feeling", best.title, { intensity: best.intensity }); return; }   // too soon after the last: note it quietly
-      this.lastMomentAt = simNow(); recordMoment(best);
-    });
+    if (!this.candPending) { this.candPending = true; scheduleJob("emotions.moment", 1500); }
+  }
+  private flushMoment() {
+    const best = this.cand; this.cand = null; this.candPending = false;
+    if (!best) return;
+    if (simNow() - this.lastMomentAt < 20_000 && best.intensity < 0.85) { log("feeling", best.title, { intensity: best.intensity }); return; }   // too soon after the last: note it quietly
+    this.lastMomentAt = simNow(); recordMoment(best);
   }
   /** Raise to at least `v` (for continuous conditions like standing near a fire). */
   private floor(n: EmotionName, v: number, why: string) { if (this.level[n] < v) this.bump(n, v - this.level[n], why); }
@@ -113,7 +124,6 @@ export class Emotions {
     // feelings pull on the plain needs: a good heart lifts mood, a heavy one drags; restlessness feeds curiosity
     w.bump({ mood: this.valence() * 0.02 * dt, curiosity: this.level.boredom * 0.015 * dt });
     w.feelings = this.view();
-    if (simNow() - this.lastSave > 15_000) { this.lastSave = simNow(); kvSet("emotions", { level: this.level, why: this.why }); kvSet("habit", this.habit); }
   }
 
   valence() {

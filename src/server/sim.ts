@@ -5,6 +5,7 @@
 //   simRng(key)   seeded stream; states persist with the clock
 // Wall time only feeds the accumulator in `start()`. Operational timers (API timeouts, token budgets, socket pushes) stay on setTimeout.
 import { db, kvGet, kvSet } from "./db.ts";
+import { persisted, flushPersisted } from "./persist.ts";
 import { STEP_MS, DAY_MS, newClock, advanceWall, consumeTicks, ticksFor } from "../sim/clock.ts";
 import { Streams, type StreamState } from "../sim/random.ts";
 
@@ -53,6 +54,24 @@ export function after(ms: number, fn: () => void): number {
 export const cancel = (id: number) => { timers = timers.filter((t) => t.id !== id); };
 export const simSleep = (ms: number) => new Promise<void>((r) => { after(ms, r); });
 
+// ---- persisted jobs: a deadline that carries data, not a closure ----
+// `after()` holds a function and is lost on restart. A job names a handler registered at startup and stores its payload, so it
+// is committed with the clock and fires after a restart exactly when it would have.
+interface Job { id: number; due: number; kind: string; payload: unknown }
+let jobs: Job[] = [];
+let jobSeq = 1;
+const jobState = persisted<{ jobs: Job[]; seq: number }>("jobs", (): { jobs: Job[]; seq: number } => ({ jobs, seq: jobSeq }));
+if (jobState) { jobs = jobState.jobs; jobSeq = jobState.seq; }
+const handlers = new Map<string, (payload: any) => void>();
+export function onJob(kind: string, fn: (payload: any) => void) { handlers.set(kind, fn); }
+export function scheduleJob(kind: string, ms: number, payload: unknown = null): number {
+  const j: Job = { id: jobSeq++, due: clock.tick + Math.max(1, ticksFor(ms)), kind, payload };
+  jobs.push(j); jobs.sort((a, b) => a.due - b.due || a.id - b.id);
+  return j.id;
+}
+export const cancelJob = (id: number) => { jobs = jobs.filter((j) => j.id !== id); };
+export const resetJobs = () => { jobs = []; };
+
 let errorHook: (name: string, e: unknown) => void = (n, e) => console.error(`sim: ${n} failed:`, e);
 export const onSimError = (fn: typeof errorHook) => { errorHook = fn; };
 
@@ -60,6 +79,10 @@ function step() {
   clock.tick++;
   const due = timers.findIndex((t) => t.due > clock.tick);
   for (const t of timers.splice(0, due === -1 ? timers.length : due)) { try { t.fn(); } catch (e) { errorHook("timer", e); } }
+  while (jobs.length && jobs[0]!.due <= clock.tick) {
+    const j = jobs.shift()!;
+    try { handlers.get(j.kind)?.(j.payload); } catch (e) { errorHook(`job ${j.kind}`, e); }
+  }
   for (const s of systems) {
     if ((clock.tick + s.offset) % s.every !== 0) continue;
     try { s.fn((s.every * STEP_MS) / 1000); } catch (e) { errorHook(s.name, e); }
@@ -77,6 +100,7 @@ export function pump(wallMs: number, maxTicks = 100): number {
 export function runTicks(n: number) { for (let i = 0; i < n; i++) step(); }
 
 export function save() {
+  flushPersisted();
   kvSet("sim", { wall0: legacyWallBoot, base, tick: clock.tick, speed: clock.speed, paused: clock.paused, seed: streams.seed, rng: streams.save() } satisfies Saved);
 }
 export function setSimPaused(p: boolean) { clock.paused = p; save(); }
