@@ -249,7 +249,7 @@ export class Agent {
       ...(desires.length ? [] : [{ text: "You hold no desires yet. What do you long for?", weight: 7 }]),
       ...closed.map((d) => ({ text: `Recently closed: ${d.text} (${d.status})`, weight: 2 })),
       ...ints.map((i) => ({ text: `Interest: ${i.topic} (${i.weight})${i.why ? ` — ${clip(i.why, 80)}` : ""}`, weight: 3 })),
-      ...inv.map((i) => ({ text: `Carrying ${i.id}: ${i.name} ×${i.qty}`, weight: 6 })),
+      ...inv.map((i) => { const inside = w.items.contents(i.id); return { text: `Carrying ${i.id}: ${i.name} ×${i.qty}${inside.length ? ` (holding ${inside.map((c) => `${c.qty > 1 ? `${c.qty} ` : ""}${c.name}`).join(", ")})` : ""}`, weight: 6 }; }),
       ...(inv.length ? [] : [{ text: "Carrying nothing.", weight: 6 }]),
       ...(placesText(w) ? [{ text: placesText(w), weight: 5 }] : []),
       ...(tasteContext() ? [{ text: `Your tastes and your hand: ${clip(tasteContext(), 300)}`, weight: 2 }] : []),

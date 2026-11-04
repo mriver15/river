@@ -304,7 +304,7 @@ const itemRefs = (w: World, refs: unknown, max: number) => {
 export const GATED_TOOLS: ToolDef[] = [
   timed(COMPOSE_TOOL),
   BURN_TOOL,
-  timed(BUILD_TOOL),
+  BUILD_TOOL,
   timed(CLOTHE_TOOL),
   timed(DEFEND_TOOL),
   timed(TEND_TOOL),

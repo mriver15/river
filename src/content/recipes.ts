@@ -40,6 +40,9 @@ export const RECIPES: Recipe[] = [
   { id: "basket", version: "1", name: "bark basket", summary: "Weave strips of bark into a basket that holds things.", durationMs: 8000, energy: 4, qualityFrom: "none",
     roles: [{ role: "weave", needs: ["binds"], qty: 4, consumed: true }],
     output: { def: "basket", qty: 1, name: "bark basket", desc: "A basket of woven bark. It holds a few kilos of whatever you put in it.", kind: "basket" } },
+  { id: "hide_pouch", version: "1", name: "hide pouch", summary: "Stitch a hide closed around a drawstring of cord to make a small pouch.", durationMs: 6000, energy: 3, qualityFrom: "none",
+    roles: [{ role: "skin", needs: [], def: "hide", qty: 1, consumed: true }, { role: "drawstring", needs: [], def: "cord", qty: 1, consumed: true }],
+    output: { def: "pouch", qty: 1, name: "hide pouch", desc: "A small pouch of hide with a drawstring. It holds a kilo or so of small things.", kind: "pouch" } },
 ];
 
 export const recipeById = (id: string) => RECIPES.find((r) => r.id === id);

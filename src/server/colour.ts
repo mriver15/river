@@ -66,9 +66,9 @@ export const COLOUR_TOOL: ToolDef = {
       const s = sourceOf(w, String(a.item ?? "")); if (!s) throw new ToolError("You aren't carrying that.");
       if (!s.src) throw new ToolError(`Crushing the ${s.it.name} gives nothing that would stain.`);
       gate(w, 2500, "grinding a pigment");
-      w.takeItem(s.it.id, 1);
+      const from = [s.it.id]; w.takeItem(s.it.id, 1);
       const hex = jitter(s.src.hex, s.it.name), words = describeColour(hex);
-      w.addItem("pigment", `${words} pigment (${hex.slice(1)})`, `A little pile of ground colour: ${words} (${hex}). It stains whatever it touches.`, 3, { hex });
+      w.addItem("pigment", `${words} pigment (${hex.slice(1)})`, `A little pile of ground colour: ${words} (${hex}). It stains whatever it touches.`, 3, { hex }, { sources: from, maker: true });
       w.bump({ curiosity: -4 });
       return `You crush the ${s.it.name} on a flat stone until it is a smear. The stain is ${words} (${hex}). You have 3 portions.`;
     }
@@ -80,8 +80,8 @@ export const COLOUR_TOOL: ToolDef = {
       const [ha] = hsl(A.props!.hex), [hb] = hsl(B.props!.hex), clash = Math.min(Math.abs(ha - hb), 360 - Math.abs(ha - hb)) > 70 ? 0.9 : 1;     // opposites make mud: pigments, not light
       const mix = ca.map((v, i) => (v * t + cb[i] * (1 - t)) * clash), hex = rgbToHex(mix[0], mix[1], mix[2]), words = describeColour(hex);
       gate(w, 2000, "mixing colours");
-      w.takeItem(A.id, 1); w.takeItem(B.id, 1);
-      w.addItem("pigment", `${words} pigment (${hex.slice(1)})`, `A mixed colour: ${words} (${hex}).`, 2, { hex });
+      const from = [A.id, B.id]; w.takeItem(A.id, 1); w.takeItem(B.id, 1);
+      w.addItem("pigment", `${words} pigment (${hex.slice(1)})`, `A mixed colour: ${words} (${hex}).`, 2, { hex }, { sources: from, maker: true });
       w.bump({ curiosity: -5 });
       bus.emit("discovered-colour", { hex });
       return `You work the ${A.name} and the ${B.name} together. It comes out ${words} (${hex}). You have 2 portions of it.`;

@@ -9,7 +9,9 @@ import { findPlace } from "./places.ts";
 import { addWork } from "./taste.ts";
 import type { Entity } from "../shared/types.ts";
 import type { World } from "./world.ts";
-import { gate } from "./activities.ts";
+import { registerActivity, runActivity, type Def as ActivityDef } from "./activities.ts";
+import { simNow, STEP_MS } from "./sim.ts";
+import { defForKind } from "../content/items.ts";
 
 type Shape = "hut" | "lean-to" | "wall" | "fence" | "bench" | "cairn" | "tower" | "platform" | "bridge";
 const SIZE = { small: 1, medium: 1.6, large: 2.4 } as const;
@@ -97,12 +99,12 @@ const darker = (hex: string, f = 0.65) => { const c = hexToRgb(hex); return rgbT
 export const BUILD_TOOL: ToolDef = {
   name: "build",
   description:
-    "Make something in the world with your hands. `raise`: build it (hut, lean-to, bench, cairn, tower, platform, wall, fence, or bridge). `plan`: ask what a build would take. `paint`: change the colours of something you built. `take_down`: dismantle something you built and get most of the materials back. " +
+    "Make something in the world with your hands. `raise`: build it (hut, lean-to, bench, cairn, tower, platform, wall, fence, or bridge). `plan`: ask what a build would take. `paint`: change the colours of something you built. `take_down`: dismantle something you built and get most of the materials back (more from something unfinished, less from something finished, and from something burnt only what the fire left). Building happens in three stages and the materials are used up stage by stage: if you are stopped, what you have built stands unfinished, holding what you put in, and `continue` (with its id as `target`) finishes it when you hold the rest. " +
     "YOU choose the shape, the size (small, medium or large), the materials, the colours and the spot. Where: `where` can be coordinates, something to build beside (with a direction and a distance), or a direction and distance from you; leave it out to build just in front of you. Walls, fences and bridges need both ends (`where` and `to`). " +
     "You must be within about ten paces of where you build. Ground must be level and clear; bridges must cross water, from firm ground to firm ground, and people can walk across them. A closed hut or a lean-to keeps off some of the weather. " +
     "Materials are things you carry: sticks, stones, clay, chalk and driftwood planks give structure (a plank is worth two); moss makes a roof. Say how many of each in `materials`. Without colours, a thing shows the colour of what it is made of; with pigment, you choose.",
   input_schema: obj({
-    action: { type: "string", enum: ["raise", "plan", "paint", "take_down"], description: "raise (default), plan, paint, or take_down" },
+    action: { type: "string", enum: ["raise", "plan", "paint", "take_down", "continue"], description: "raise (default), plan, paint, take_down, or continue an unfinished build" },
     shape: { type: "string", enum: Object.keys(SHAPES), description: "What to build" },
     name: str("Your name for this particular thing"), description: str("What it is for, or how it feels. Optional."),
     size: { type: "string", enum: ["small", "medium", "large"], description: "Default small" },
@@ -116,6 +118,7 @@ export const BUILD_TOOL: ToolDef = {
     const act = String(a.action ?? "raise");
     if (act === "paint") return paintIt(a, w);
     if (act === "take_down") return takeDown(a, w);
+    if (act === "continue") return continueBuild(a, w);
     const shapeName = String(a.shape ?? "") as Shape, spec = SHAPES[shapeName];
     if (!spec) throw new ToolError(`Choose a shape: ${Object.keys(SHAPES).join(", ")}.`);
     const size = (a.size && a.size in SIZE ? a.size : "small") as keyof typeof SIZE, s = SIZE[size];
@@ -167,9 +170,7 @@ export const BUILD_TOOL: ToolDef = {
     const perPigment = new Map<string, number>(); spend.forEach(({ it }) => perPigment.set(it.id, (perPigment.get(it.id) ?? 0) + 1));
     for (const [id, n] of perPigment) if ((w.inventory.get(id)?.qty ?? 0) < n) throw new ToolError(`You don't have enough of that pigment: ${n} portions are needed for those parts.`);
 
-    // all good: building takes time, and the materials are spent when it is done
-    gate(w, Math.min(45_000, 3000 + need * 1500), `building a ${size} ${spec.word}`);
-    used.forEach(({ it, n }) => w.takeItem(it.id, n)); for (const [id, n] of perPigment) w.takeItem(id, n);
+    // Everything is valid. The build becomes a plan: what to put where, in how many stages, and what each stage spends.
     const mid = spec.line ? { x: (A.x + B!.x) / 2, z: (A.z + B!.z) / 2 } : A;
     const materials: Record<string, number> = {}, kinds: Record<string, string> = {}; used.forEach(({ it, n }) => { materials[it.name] = (materials[it.name] ?? 0) + n; kinds[it.name] = it.kind; });
     const wood = (byKind.get("stick") ?? 0) + (byKind.get("plank") ?? 0), total = [...byKind.values()].reduce((x, y) => x + y, 0) || 1;
@@ -178,23 +179,102 @@ export const BUILD_TOOL: ToolDef = {
     const palWords = (["walls", "roof", "trim", "deck"] as const).filter((p) => spec.parts.includes(p)).map((p) => `${p} ${colName[p] ?? describeColour(col[p])}`);
     const look = `a ${size} ${spec.word} of ${[...byKind.keys()].filter((k) => MATERIAL[k]).map((k) => MATERIAL[k].word).join(" and ")}${moss >= 2 ? " with a moss roof" : ""}; ${palWords.join(", ")}`;
     const name = String(a.name ?? "").trim().slice(0, 60) || `${size} ${spec.word}`;
-    const e = w.spawn("structure", name, mid.x, mid.z, {
-      shape: shapeName, size, look, desc: `${look}.${a.description ? ` ${String(a.description).slice(0, 240)}` : ""} Built by ${w.me.name}.`, materials, materialKinds: kinds,
-      colors: col, colorNames: colName, builtBy: w.me.name, radius: spec.line ? spec.radius : spec.radius * (shapeName === "bridge" ? 1 : 1.15), heading, shelter: !!spec.shelter, walk: !!spec.walk,
-      flammable: wood / total >= 0.5, ...(spec.line ? { path: { x1: A.x, z1: A.z, x2: B!.x, z2: B!.z, width: shapeName === "bridge" ? 1.8 : 0.5 } } : {}), ...(deckY !== undefined ? { deckY } : {}),
-    });
-    addWork({ name, shape: shapeName, size, materials, colors: col, colorNames: colName, x: mid.x, z: mid.z }, e.id);
-    w.bump({ mood: 8, curiosity: -6 });
     const tags = [shapeName, size, ...Object.keys(kinds), ...Object.keys(materials), ...Object.values(colName), ...Object.values(col).map(describeColour), ...(a.description ? String(a.description).split(/\s+/) : [])];
-    bus.emit("made", { name, tags, kind: "build" });
-    log("world", `River built ${name} (${look}).`, { perceived: true });
-    return `You build "${name}": ${look}. It stands ${spec.line ? `from (${A.x.toFixed(0)}, ${A.z.toFixed(0)}) to (${B!.x.toFixed(0)}, ${B!.z.toFixed(0)})` : `at (${A.x.toFixed(0)}, ${A.z.toFixed(0)}), ${dist(A, w.me).toFixed(0)}m ${compassOf(w.me, A)} of you`}. Used ${Object.entries(materials).map(([k, n]) => `${n} ${k}`).join(", ")}.`;
+    // each unit of each material is spent in the stage that uses it; pigments go on in the last
+    const stages: Spend[][] = Array.from({ length: STAGES }, () => []);
+    for (const { it, n } of used) for (let k = 0; k < STAGES; k++) { const q = Math.floor(((k + 1) * n) / STAGES) - Math.floor((k * n) / STAGES); if (q > 0) stages[k]!.push({ id: it.id, kind: it.kind, name: it.name, n: q }); }
+    for (const [id, n] of perPigment) { const p = w.inventory.get(id)!; stages[STAGES - 1]!.push({ id, kind: p.kind, name: p.name, n }); }
+    const plan: BuildPlan = {
+      shape: shapeName, size, name, look, desc: a.description ? String(a.description).slice(0, 240) : "", mid, A, B, heading, tags, stages, stageMs: Math.max(1000, Math.round(Math.min(45_000, 3000 + need * 1500) / STAGES)),
+      props: { shape: shapeName, size, colors: col, colorNames: colName, builtBy: w.me.name, radius: spec.line ? spec.radius : spec.radius * (shapeName === "bridge" ? 1 : 1.15), heading, shelter: !!spec.shelter, walk: !!spec.walk,
+        flammable: wood / total >= 0.5, ...(spec.line ? { path: { x1: A.x, z1: A.z, x2: B!.x, z2: B!.z, width: shapeName === "bridge" ? 1.8 : 0.5 } } : {}), ...(deckY !== undefined ? { deckY } : {}) },
+    };
+    return runBuild(w, plan, 0, null);
   },
 };
 
-function mine(w: World, ref: string): Entity {
-  const r = ref.toLowerCase(), e = w.entities.get(ref) ?? w.nearby(12).map((o) => o.e).find((x) => x.kind === "structure" && x.name.toLowerCase().includes(r));
-  if (!e || e.kind !== "structure" || !e.props.shape) throw new ToolError("There's nothing you built by that name within reach.");
+// ---------- building in stages ----------
+// A structure is raised in stages. Each stage takes time, and spends its share of the materials when it is done, so nothing is spent
+// for work that was not finished. Stop part way and what stands is an unfinished structure holding exactly what has been put in;
+// it can be finished later (`continue`) or taken apart for most of it back.
+const STAGES = 3;
+interface Spend { id: string; kind: string; name: string; n: number }
+interface BuildPlan { shape: Shape; size: string; name: string; look: string; desc: string; mid: XZ; A: XZ; B?: XZ; heading: number; tags: string[]; stages: Spend[][]; stageMs: number; props: Record<string, any> }
+
+/** Start (or resume) the work and wait for it to end. */
+async function runBuild(w: World, plan: BuildPlan, fromStage: number, entityId: string | null): Promise<string> {
+  const r = await runActivity(w, "construct", { plan, fromStage, entityId }, `build ${plan.name}`);
+  if (r.ok) return r.text;
+  throw new ToolError(r.text);
+}
+/** What of a spend River actually holds (by id first, then by the same kind of thing). */
+function holding(w: World, s: Spend): number {
+  return w.items.carried().filter((i) => i.id === s.id || (i.kind === s.kind && i.name === s.name)).reduce((a, i) => a + i.qty, 0);
+}
+function spendNow(w: World, s: Spend) {
+  let need = s.n;
+  const stacks = w.items.carried().filter((i) => i.id === s.id || (i.kind === s.kind && i.name === s.name)).sort((a, b) => Number(b.id === s.id) - Number(a.id === s.id));
+  for (const st of stacks) { if (need <= 0) break; const q = Math.min(need, st.qty); w.takeItem(st.id, q); need -= q; }
+}
+
+/** One stage is done: pay for it, and let the structure show it. Returns the finished text when this was the last. */
+function completeStage(w: World, plan: BuildPlan, stage: number, entityId: string | null): { entityId: string; done?: string } {
+  const spends = plan.stages[stage]!;
+  const short = spends.find((s) => holding(w, s) < s.n);
+  if (short) throw new ToolError(`You no longer have enough ${short.name} to finish this stage: it needs ${short.n} and you hold ${holding(w, short)}.`);
+  const e0 = entityId ? w.entities.get(entityId) : undefined;
+  const mats: Record<string, number> = { ...(e0?.props.materials ?? {}) }, kinds: Record<string, string> = { ...(e0?.props.materialKinds ?? {}) };
+  for (const s of spends) { spendNow(w, s); if (s.kind !== "pigment") { mats[s.name] = (mats[s.name] ?? 0) + s.n; kinds[s.name] = s.kind; } }
+  const progress = (stage + 1) / STAGES, last = stage === STAGES - 1;
+  const base = { ...plan.props, materials: mats, materialKinds: kinds };
+  const props = last
+    ? { ...base, look: plan.look, desc: `${plan.look}.${plan.desc ? ` ${plan.desc}` : ""} Built by ${w.me.name}.` }
+    : { ...base, unfinished: true, progress, stages: STAGES, look: `an unfinished ${SHAPES[plan.shape].word}`, desc: `An unfinished ${SHAPES[plan.shape].word}: ${stage + 1} of ${STAGES} stages done. It could be finished or taken apart.`, plan, shelter: false, walk: false };
+  let e: Entity;
+  if (e0) { e0.props = props; w.putEntity(e0); e = e0; } else e = w.spawn("structure", plan.name, plan.mid.x, plan.mid.z, props);
+  if (!last) return { entityId: e.id };
+  addWork({ name: plan.name, shape: plan.shape, size: plan.size, materials: mats, colors: plan.props.colors, colorNames: plan.props.colorNames, x: plan.mid.x, z: plan.mid.z }, e.id);
+  w.bump({ mood: 8, curiosity: -6 });
+  bus.emit("made", { name: plan.name, tags: plan.tags, kind: "build" });
+  log("world", `River built ${plan.name} (${plan.look}).`, { perceived: true });
+  const spec = SHAPES[plan.shape];
+  return { entityId: e.id, done: `You build "${plan.name}": ${plan.look}. It stands ${spec.line ? `from (${plan.A.x.toFixed(0)}, ${plan.A.z.toFixed(0)}) to (${plan.B!.x.toFixed(0)}, ${plan.B!.z.toFixed(0)})` : `at (${plan.A.x.toFixed(0)}, ${plan.A.z.toFixed(0)}), ${dist(plan.A, w.me).toFixed(0)}m ${compassOf(w.me, plan.A)} of you`}.` };
+}
+
+const construct: ActivityDef = {
+  id: "construct", version: "1", interruptedBy: ["fire", "injury", "predator", "collapse"],
+  validate: (p) => (p.plan && Array.isArray(p.plan.stages) ? null : "there is nothing planned to build"),
+  init: (p) => ({ progress: { stage: p.fromStage ?? 0, entityId: p.entityId ?? null, endsAt: simNow() + p.plan.stageMs }, maxTicks: Math.ceil((p.plan.stageMs * STAGES) / STEP_MS) + 300 }),
+  step: (a, c) => {
+    const p = a.progress, plan = a.params.plan as BuildPlan;
+    if (simNow() < p.endsAt) return "continue";
+    try {
+      const r = completeStage(c.w, plan, p.stage, p.entityId);
+      p.entityId = r.entityId; p.stage++;
+      if (r.done) return { ok: true, text: r.done };
+      p.endsAt = simNow() + plan.stageMs; return "continue";
+    } catch (e: any) { return { ok: false, text: `${e.message} What you have built so far stands unfinished.`, data: { unfinished: p.entityId } }; }
+  },
+  label: (a) => `building ${a.params.plan.name} (stage ${Math.min(a.progress.stage + 1, STAGES)} of ${STAGES})`,
+  pct: (a) => Math.min(1, (a.progress.stage + Math.max(0, 1 - (a.progress.endsAt - simNow()) / a.params.plan.stageMs)) / STAGES),
+};
+registerActivity(construct);
+
+/** Pick up an unfinished structure's work where it was left. */
+async function continueBuild(a: any, w: World): Promise<string> {
+  const e = mine(w, String(a.target ?? ""));
+  if (!e.props.unfinished || !e.props.plan) throw new ToolError(`${e.name} is already finished.`);
+  const plan = e.props.plan as BuildPlan, stage = Math.round(e.props.progress * STAGES);
+  const need = new Map<string, number>(); for (const sp of plan.stages.slice(stage).flat()) need.set(`${sp.kind}|${sp.name}`, (need.get(`${sp.kind}|${sp.name}`) ?? 0) + sp.n);
+  const lacking = [...need].map(([k, n]) => { const [kind, name] = k.split("|") as [string, string]; const h = holding(w, { id: "", kind, name, n }); return h < n ? `${n - h} more ${name}` : ""; }).filter(Boolean);
+  if (lacking.length) throw new ToolError(`To finish ${e.name} you still need ${lacking.join(", ")}.`);
+  return runBuild(w, plan, stage, e.id);
+}
+
+function mine(w: World, ref: string, remnants = false): Entity {
+  const r = ref.toLowerCase(), isMine = (x: Entity) => (x.kind === "structure" && !!x.props.shape) || (remnants && x.kind === "char" && !!x.props.wasMaterials);
+  const e = w.entities.get(ref) ?? w.nearby(12).map((o) => o.e).find((x) => isMine(x) && x.name.toLowerCase().includes(r));
+  if (!e || !isMine(e)) throw new ToolError("There's nothing you built by that name within reach.");
   if (dist(e, w.me) > (e.props.path ? 14 : 8)) throw new ToolError(`${e.name} is too far away to work on. Walk closer.`);
   return e;
 }
@@ -216,10 +296,27 @@ function paintIt(a: any, w: World): string {
   bus.emit("made", { name: e.name, tags: [e.props.shape, ...changes.map((c) => c[2]), ...changes.map((c) => describeColour(c[1]))], kind: "paint" });
   return `You colour ${e.name}: ${changes.map(([p, , n]) => `${p} ${n}`).join(", ")}. Now it is ${e.props.look}.`;
 }
+/**
+ * Taking something apart returns part of what is actually there: 85% of the work in an unfinished structure (it was never fixed
+ * together), 60% of a finished one, and from one that burnt, the stone and clay that survived at 60% plus a little ash for the wood.
+ * Never more than was put in, and never what the fire destroyed.
+ */
 function takeDown(a: any, w: World): string {
-  const e = mine(w, String(a.target ?? "")); w.setActivity("taking something down");
-  const back: string[] = [];
-  for (const [name, n] of Object.entries(e.props.materials ?? {}) as [string, number][]) { const kind = e.props.materialKinds?.[name]; const k = Math.floor(n * 0.6); if (k >= 1 && kind) { w.addItem(kind, name, `${name}, reclaimed.`, k); back.push(`${k} ${name}`); } }
+  const e = mine(w, String(a.target ?? ""), true); w.setActivity("taking something down");
+  const burnt = e.kind === "char", unfinished = !!e.props.unfinished;
+  const mats = (burnt ? e.props.wasMaterials : e.props.materials ?? {}) as Record<string, number>, kinds = (burnt ? e.props.wasKinds : e.props.materialKinds ?? {}) as Record<string, string>;
+  const share = unfinished ? 0.85 : 0.6, back: string[] = [];
+  let lostFuelKg = 0;
+  for (const [name, n] of Object.entries(mats)) {
+    const kind = kinds[name]; if (!kind || !(n >= 1)) continue;
+    if (burnt && ["stick", "plank"].includes(kind)) { lostFuelKg += n * defForKind(kind).massKg; continue; }          // the wood is gone; only ash is left
+    const k = Math.floor(n * share); if (k >= 1) { w.addItem(kind, name, `${name}, reclaimed.`, k, undefined, { note: `taken from ${e.name}` }); back.push(`${k} ${name}`); }
+  }
+  if (burnt && lostFuelKg > 0) {
+    const ash = defForKind("charcoal"), pieces = Math.floor((lostFuelKg * 0.2) / ash.massKg);
+    if (pieces >= 1) { w.addItem("charcoal", ash.name, "What a fire leaves of wood.", pieces, undefined, { note: `ash of ${e.name}` }); back.push(`${pieces} ${ash.name}`); }
+  }
   w.removeEntity(e.id); w.bump({ energy: -3 }); bus.emit("made", { name: e.name, tags: [], kind: "take_down" });
-  return `You take ${e.name} apart. ${back.length ? `You keep ${back.join(", ")}; the rest is broken or lost.` : "Nothing worth keeping comes back."}`;
+  const what = burnt ? `the burnt remains of ${e.props.was}` : unfinished ? `${e.name}, unfinished,` : e.name;
+  return `You take ${what} apart. ${back.length ? `You keep ${back.join(", ")}; the rest is broken or lost.` : "Nothing worth keeping comes back."}`;
 }

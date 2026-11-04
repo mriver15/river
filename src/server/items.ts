@@ -124,8 +124,9 @@ export class ItemRegistry {
   /** A loose item that appeared on the ground by some other route (the story, a gift, a plugin) becomes an instance. */
   adoptEntity(e: Entity): ItemInstance {
     const have = this.items.get(e.id); if (have) return have;
+    const fromHuman = !!e.props.catalog;                                              // a gift or something the human placed: its origin is known
     return this.make({ id: e.id, kind: String(e.props.item ?? e.kind), name: String(e.props.title ?? e.props.itemName ?? e.name.replace(/^book: /, "")), desc: String(e.props.desc ?? ""), qty: 1, props: this.carryProps(e), loc: { kind: "world", x: e.x, z: e.z },
-      provenance: { createdAtTick: simTick(), sourceIds: [], unknown: true, note: "found in the world" } }, "adopted");
+      provenance: fromHuman ? { createdAtTick: simTick(), sourceIds: [], note: "placed in the world by a human" } : { createdAtTick: simTick(), sourceIds: [], unknown: true, note: "found in the world" } }, "adopted");
   }
   /** The parts of an entity's props that belong to the item itself (what it says, its colour, what it can do). */
   private carryProps(e: Entity): Record<string, any> {
@@ -275,7 +276,11 @@ export class ItemRegistry {
       if (n > 32) throw new ItemError("containers are nested too deeply");
       cur = cur.loc.kind === "container" ? this.items.get(cur.loc.id) : undefined;
     }
-    const cap = defById(c.defId).container!.capacityKg, add = this.unitMass(i) * qty + (qty === i.qty ? this.contents(i.id).reduce((s, x) => s + this.massOf(x), 0) : 0);
+    const cdef = defById(c.defId).container!, idef = defById(i.defId), cmax = Math.max(defById(c.defId).dims.l, defById(c.defId).dims.w, defById(c.defId).dims.h);
+    if (idef.tags.includes("long") && !idef.tags.includes("strip") && idef.dims.l > cmax * 1.5) throw new ItemError(`${i.name} is too long to go in ${c.name}`);          // a rigid rod does not fit a small basket; a strip can be coiled
+    const volume = (x: ItemInstance, n: number) => { const d = defById(x.defId); return d.dims.l * d.dims.w * d.dims.h * 500 * n; };
+    if (this.contents(c.id).reduce((s, x) => s + volume(x, x.qty), 0) + volume(i, qty) > cdef.volumeL + 1e-9) throw new ItemError(`${c.name} has no more room (it holds about ${cdef.volumeL} litres)`);
+    const cap = cdef.capacityKg, add = this.unitMass(i) * qty + (qty === i.qty ? this.contents(i.id).reduce((s, x) => s + this.massOf(x), 0) : 0);
     if (this.contents(c.id).reduce((s, x) => s + this.massOf(x), 0) + add > cap + 1e-9) throw new ItemError(`${c.name} can only carry about ${cap} kg`);
     const part = qty < i.qty ? this.splitOff(i, qty) : i;
     const same = this.contents(c.id).find((x) => this.stackable(x, part));
@@ -354,15 +359,28 @@ export class ItemRegistry {
   }
 
   // ---------- upkeep ----------
-  /** Weather wets what lies out in it (a little less what is carried), warmth dries it. Slow, and only where a mechanic reads it. */
-  tickCondition(dtSec: number, wet: number, ambientC: number) {
+  /**
+   * Weather wets what lies out in it (a little less what is carried), warmth dries it, and a fire warms what is near it: things that
+   * keep heat (stone, clay) stay warm a long while, wood does not. `heatAt` is how strongly a fire warms a spot, 0..1.
+   */
+  tickCondition(dtSec: number, wet: number, ambientC: number, heatAt: (x: number, z: number) => number = () => 0) {
+    const me = { x: this.w.me.x, z: this.w.me.z };
     for (const i of this.items.values()) {
-      if (i.loc.kind !== "world" && i.loc.kind !== "inventory") continue;
+      if (i.loc.kind !== "world" && i.loc.kind !== "inventory" && i.loc.kind !== "equipped") continue;
       const exposure = i.loc.kind === "world" ? 1 : 0.35, c = i.condition;
       const wetness = +Math.max(0, Math.min(1, c.wetness + (wet > 0 ? wet * exposure * 0.01 : -0.004) * dtSec)).toFixed(4);
-      const temperatureC = +(c.temperatureC + (ambientC - c.temperatureC) * Math.min(1, 0.02 * dtSec)).toFixed(3);
+      const heat = heatAt(i.loc.kind === "world" ? i.loc.x : me.x, i.loc.kind === "world" ? i.loc.z : me.z);
+      const target = ambientC + heat * (70 - ambientC), keeps = MATERIALS[i.parts[0]?.material ?? "inert"]?.retention ?? 0.3;
+      const rate = target > c.temperatureC ? 0.04 : 0.004 + 0.06 * (1 - keeps);                       // warms at one pace, cools at another that depends on what it is
+      const temperatureC = +(c.temperatureC + (target - c.temperatureC) * Math.min(1, rate * dtSec)).toFixed(3);
       if (wetness !== c.wetness || temperatureC !== c.temperatureC) { c.wetness = wetness; c.temperatureC = temperatureC; this.save(i); }     // written when it changes, like all state
     }
+  }
+  /** Warmth per second from hot things River is carrying or wearing, for the body to feel. Capped: a stone is not a fire. */
+  carriedHeat(): number {
+    let h = 0;
+    for (const i of this.items.values()) if ((i.loc.kind === "inventory" || i.loc.kind === "equipped") && i.condition.temperatureC > 35) h += ((i.condition.temperatureC - 35) / 35) * Math.min(1, this.unitMass(i) * i.qty) * 0.06;
+    return Math.min(0.12, h);
   }
   wear(id: string, amount: number) {
     const i = this.items.get(id); if (!i) return;
@@ -401,8 +419,9 @@ export class ItemRegistry {
     for (const id of this.w.inventory.keys()) { const i = this.items.get(id); if (!i || i.loc.kind !== "inventory") bad.push(`inventory view shows ${id}, which is not carried`); }
     for (const e of this.w.entities.values()) if (e.kind === "item" && !this.items.has(e.id)) bad.push(`ground item ${e.id} has no instance`);
     for (const c of this.items.values()) {
-      const cap = defById(c.defId).container?.capacityKg;
-      if (cap !== undefined && this.contents(c.id).reduce((s, x) => s + this.massOf(x), 0) > cap + 1e-6) bad.push(`${c.id} holds more than it can carry`);
+      const cd = defById(c.defId).container;
+      if (cd && this.contents(c.id).reduce((s, x) => s + this.massOf(x), 0) > cd.capacityKg + 1e-6) bad.push(`${c.id} holds more than it can carry`);
+      if (cd && this.contents(c.id).reduce((s, x) => { const d = defById(x.defId); return s + d.dims.l * d.dims.w * d.dims.h * 500 * x.qty; }, 0) > cd.volumeL + 1e-6) bad.push(`${c.id} holds more than fits in it`);
     }
     return bad;
   }

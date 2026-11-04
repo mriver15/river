@@ -421,7 +421,7 @@ export class World {
       const sheltered = [...this.entities.values()].some((e) => e.kind === "structure" && (e.props.shelter ?? !e.props.shape) && Math.hypot(e.x - m.x, e.z - m.z) < 3.2 + (e.props.radius ?? 0));
       if (sheltered) loss *= 0.4;
       loss *= (1 - warmthFactor()) * nr;                         // clothes turn some of it away
-      const gain = (!night && (this.weather === "clear" || this.weather === "windy") ? 0.03 : 0) + this.warmSource() * 0.35;
+      const gain = (!night && (this.weather === "clear" || this.weather === "windy") ? 0.03 : 0) + this.warmSource() * 0.35 + this.items.carriedHeat();
       m.needs.warmth = Math.max(0, Math.min(100, m.needs.warmth + (gain - loss) * dt));
       if (m.needs.warmth < 30) { m.needs.energy = Math.max(0, m.needs.energy - 0.02 * dt); m.needs.mood = Math.max(0, m.needs.mood - 0.01 * dt); }   // cold wears you down
     }

@@ -46,3 +46,10 @@ test("an assembly respects its mass budget", () => {
 });
 
 test("recipes can be found by id or name", () => { assert.equal(recipeByName("stone-tipped spear")?.id, "spear"); assert.equal(recipeByName("basket")?.id, "basket"); assert.ok(RECIPES.length >= 4); });
+
+test("a hide pouch needs a hide and a cord, nothing standing in for them", () => {
+  const r = recipeById("hide_pouch")!;
+  assert.equal(matchRecipe(r, [c("h", "hide"), c("k", "cord")]).ok, true);
+  assert.equal(matchRecipe(r, [c("h", "hide"), c("b", "bark")]).ok, false, "bark binds, but the recipe asks for cord");
+  assert.equal(matchRecipe(r, [c("k", "cord")]).ok, false);
+});

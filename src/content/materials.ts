@@ -16,24 +16,26 @@ export interface Material {
   flexible?: boolean;
   /** what remains when it burns */
   ash?: string;
+  /** how well it keeps heat once warmed, 0..1: a stone by the fire stays warm a long while, a stick does not */
+  retention: number;
 }
 
 export const MATERIALS: Record<string, Material> = {
-  wood: { id: "wood", density: 600, traits: ["burns"], fuel: { burnSecondsPerKg: 900, heatC: 600 }, flammability: 0.7, ash: "charcoal" },
-  stone: { id: "stone", density: 2600, traits: ["hard"], flammability: 0 },
-  bark: { id: "bark", density: 400, traits: ["burns"], fuel: { burnSecondsPerKg: 500, heatC: 500 }, flammability: 0.8, flexible: true, ash: "charcoal" },
-  moss: { id: "moss", density: 150, traits: ["burns", "insulates", "absorbs"], fuel: { burnSecondsPerKg: 200, heatC: 300 }, flammability: 0.3, flexible: true },
-  hide: { id: "hide", density: 900, traits: ["insulates", "waterproof"], flammability: 0.3, flexible: true },
-  clay: { id: "clay", density: 1800, traits: ["moldable"], flammability: 0 },
-  charcoal: { id: "charcoal", density: 400, traits: ["burns", "marks"], fuel: { burnSecondsPerKg: 1500, heatC: 800 }, flammability: 0.6 },
-  pigment: { id: "pigment", density: 1500, traits: ["marks", "dyes"], flammability: 0 },
+  wood: { id: "wood", density: 600, retention: 0.25, traits: ["burns"], fuel: { burnSecondsPerKg: 900, heatC: 600 }, flammability: 0.7, ash: "charcoal" },
+  stone: { id: "stone", density: 2600, retention: 0.9, traits: ["hard"], flammability: 0 },
+  bark: { id: "bark", density: 400, retention: 0.15, traits: ["burns"], fuel: { burnSecondsPerKg: 500, heatC: 500 }, flammability: 0.8, flexible: true, ash: "charcoal" },
+  moss: { id: "moss", density: 150, retention: 0.1, traits: ["burns", "insulates", "absorbs"], fuel: { burnSecondsPerKg: 200, heatC: 300 }, flammability: 0.3, flexible: true },
+  hide: { id: "hide", density: 900, retention: 0.2, traits: ["insulates", "waterproof"], flammability: 0.3, flexible: true },
+  clay: { id: "clay", density: 1800, retention: 0.85, traits: ["moldable"], flammability: 0 },
+  charcoal: { id: "charcoal", density: 400, retention: 0.5, traits: ["burns", "marks"], fuel: { burnSecondsPerKg: 1500, heatC: 800 }, flammability: 0.6 },
+  pigment: { id: "pigment", density: 1500, retention: 0.4, traits: ["marks", "dyes"], flammability: 0 },
   // not on the original list; inert unless noted, so that nothing River finds is left without a definition
-  food: { id: "food", density: 1000, traits: ["edible"], flammability: 0.1 },
-  shell: { id: "shell", density: 2400, traits: ["hard"], flammability: 0 },
-  glass: { id: "glass", density: 2500, traits: ["hard", "holds-liquid-when-hollow"], flammability: 0 },
-  metal: { id: "metal", density: 7800, traits: ["hard"], flammability: 0 },
-  paper: { id: "paper", density: 700, traits: ["burns"], fuel: { burnSecondsPerKg: 300, heatC: 400 }, flammability: 0.9 },
-  inert: { id: "inert", density: 800, traits: [], flammability: 0 },
+  food: { id: "food", density: 1000, retention: 0.3, traits: ["edible"], flammability: 0.1 },
+  shell: { id: "shell", density: 2400, retention: 0.6, traits: ["hard"], flammability: 0 },
+  glass: { id: "glass", density: 2500, retention: 0.6, traits: ["hard", "holds-liquid-when-hollow"], flammability: 0 },
+  metal: { id: "metal", density: 7800, retention: 0.7, traits: ["hard"], flammability: 0 },
+  paper: { id: "paper", density: 700, retention: 0.1, traits: ["burns"], fuel: { burnSecondsPerKg: 300, heatC: 400 }, flammability: 0.9 },
+  inert: { id: "inert", density: 800, retention: 0.3, traits: [], flammability: 0 },
 };
 
 export interface Part { material: string; fraction: number }

@@ -95,8 +95,8 @@ const fire: ToolDef = {
       if (fuel < n) throw new ToolError(`The fire has ${fuel} fuel and needs ${n} to roast that. Feed it a stick first.`);
       w.setActivity("roasting over the fire");
       await wait(3000 + n * 800);
-      w.takeItem(it.id, n);
-      w.addItem(it.kind, `roasted ${it.name}`, `Hot from the fire: ${it.name}, softened and sweet, the rawness singed out of it.`, n, { cooked: true });
+      const raw = it.id; w.takeItem(it.id, n);
+      w.addItem(it.kind, `roasted ${it.name}`, `Hot from the fire: ${it.name}, softened and sweet, the rawness singed out of it.`, n, { cooked: true }, { sources: [raw], maker: true, condition: { temperatureC: 60 } });
       (fireEnt.props ??= {}).fuel = fuel - n;
       w.putEntity(fireEnt);
       w.bump({ energy: -1, mood: 4 });
@@ -111,7 +111,7 @@ const fire: ToolDef = {
       await wait(2500);
       (fireEnt.props ??= {}).fuel = fuel - 2;
       w.putEntity(fireEnt);
-      w.addItem("crafted", "glowing coal", "An ember from River's fire, nested in a curl of bark. It glows steadily and will light a new fire without a stone.", 1, { coal: true });
+      w.addItem("crafted", "glowing coal", "An ember from River's fire, nested in a curl of bark. It glows steadily and will light a new fire without a stone.", 1, { coal: true }, { maker: true, condition: { temperatureC: 120 }, note: "an ember drawn from a fire" });
       w.bump({ energy: -1, curiosity: 2 });
       return `You coax a coal out onto a curl of bark and cup it. It glows stubborn and orange in your hands — carry it carefully and it will light a hearth wherever you stop. (${fireEnt.id}, fuel ${fuel - 2}/${FUEL_MAX}.)`;
     }

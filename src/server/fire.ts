@@ -115,7 +115,8 @@ export class Fire {
     w.burnMark(e.x, e.z, oldKind === "tree" || oldKind === "structure" ? 2.8 : 1.6, oldKind === "tree" ? 1.4 : 1);
     if (oldKind === "tree" || oldKind === "bush" || oldKind === "structure") {
       e.kind = "char"; e.name = `burnt ${name}`;
-      e.props = { wasKind: oldKind, was: name, desc: `What is left of the ${name}: blackened, brittle, still warm to the touch. Ash lies thick around it.`, regrowAt: simNow() + CHAR_REGROW_MS, yields: ["charcoal"], stock: 2, max: 2, noRegrow: true };
+      const wasMaterials = e.props.materials, wasKinds = e.props.materialKinds;      // what it was made of, so a burnt structure can still be taken apart for what survived
+      e.props = { wasKind: oldKind, was: name, ...(wasMaterials ? { wasMaterials, wasKinds } : {}), desc: `What is left of the ${name}: blackened, brittle, still warm to the touch. Ash lies thick around it.`, regrowAt: simNow() + CHAR_REGROW_MS, yields: ["charcoal"], stock: 2, max: 2, noRegrow: true };
       w.putEntity(e);
     } else { if (oldKind === "item") w.items.burn(e.id); w.removeEntity(e.id); }           // small plants and books: gone; things that were fuel leave a little ash
     this.say(`The ${name} has burnt itself out.`, e, 40);

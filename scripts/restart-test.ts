@@ -68,7 +68,17 @@ if (mode === "A" && process.env.RT_SCENARIO === "items") {
   w.ensureMaterials();                                         // the idempotent top-up a boot performs, so the copy needs nothing the original lacked
   const scenario = process.env.RT_SCENARIO ?? "gather", cut = Number(process.env.RT_CUT ?? 100);
   let act: any;
-  if (scenario === "craft" || scenario === "perform") {
+  if (scenario === "build") {
+    const { db: d } = await import("../src/server/db.ts"), { findTool } = await import("../src/server/tools.ts"), { isLand } = await import("../src/shared/noise.ts");
+    d.prepare("INSERT INTO tools(name, approved) VALUES('build', 1) ON CONFLICT(name) DO UPDATE SET approved = 1").run();
+    for (const e of [...w.entities.values()]) w.removeEntity(e.id);
+    let g = { x: 0, z: 0 }; outer2: for (let x = -30; x < 30; x += 3) for (let z = -30; z < 30; z += 3) { let ok = true; for (let dx = -4; dx <= 8 && ok; dx += 2) for (let dz = -4; dz <= 4 && ok; dz += 2) if (!isLand(x + dx, z + dz, w.seed)) ok = false; if (ok) { g = { x, z }; break outer2; } }
+    w.ensureMaterials();                                       // the top-up a boot performs, so the copy needs nothing the original lacked
+    w.me.x = g.x; w.me.z = g.z; w.addItem("stick", "stick", "A stick.", 6);
+    void findTool("build")!.run({ shape: "bench", size: "medium", materials: { stick: 6 }, where: { x: g.x + 3, z: g.z }, name: "restart bench" }, w);
+    await new Promise<void>((r) => setImmediate(r));
+    act = rt.activities.cur;
+  } else if (scenario === "craft" || scenario === "perform") {
     const { db: d } = await import("../src/server/db.ts"), { findTool } = await import("../src/server/tools.ts");
     for (const g of ["craft", "compose"]) d.prepare("INSERT INTO tools(name, approved) VALUES(?, 1) ON CONFLICT(name) DO UPDATE SET approved = 1").run(g);
     if (scenario === "craft") { w.addItem("stick", "stick", "A stick.", 3); void findTool("craft")!.run({ ingredients: ["stick", "stick"], name: "frame", description: "A small frame." }, w); }
@@ -100,7 +110,7 @@ if (mode === "A" && process.env.RT_SCENARIO === "items") {
   };
   let failed = 0;
   const only = process.env.RT_ONLY;
-  for (const [scenario, cut] of (only === "alive" ? [["alive", 1500], ["alive", 4500], ["alive", 9000]] : [["gather", 5], ["gather", 40], ["gather", 100], ["gather", 130], ["gather", 185], ["rest", 30], ["rest", 120], ["craft", 12], ["craft", 25], ["perform", 15], ["perform", 40], ["items", 50], ["alive", 3000]]) as [string, number][]) {
+  for (const [scenario, cut] of (only === "alive" ? [["alive", 1500], ["alive", 4500], ["alive", 9000]] : [["gather", 5], ["gather", 40], ["gather", 100], ["gather", 130], ["gather", 185], ["rest", 30], ["rest", 120], ["craft", 12], ["craft", 25], ["perform", 15], ["perform", 40], ["build", 30], ["build", 90], ["items", 50], ["alive", 3000]]) as [string, number][]) {
     const A = call("A", path.join(dir, `a-${scenario}-${cut}.db`), { RT_SCENARIO: scenario, RT_CUT: String(cut), RT_LEN: process.env.RT_LEN ?? "4000" });
     const B = call("B", snap, { RT_SCENARIO: scenario }, String(A.endTick));
     const bad = Object.keys(A.parts).filter((k) => k[0] !== "_" && A.parts[k] !== B.parts[k]);

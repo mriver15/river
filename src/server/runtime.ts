@@ -72,7 +72,8 @@ export function startSystems(rt: Runtime) {
   // slow upkeep of how things stand: weather wets what lies out in it, warmth dries it, temperatures drift toward the air's
   every(5000, () => {
     const t = world.worldTime(), night = t < 0.23 || t > 0.78, wet = world.weather === "storm" ? 1.5 : world.weather === "rain" ? 1 : world.weather === "fog" ? 0.3 : 0;
-    world.items.tickCondition(5, wet, (night ? 8 : 18) - (wet > 0 ? 3 : 0));
+    const hot = [...world.entities.values()].filter((e) => (e.kind === "campfire" && e.props.lit !== false) || e.props.burning);
+    world.items.tickCondition(5, wet, (night ? 8 : 18) - (wet > 0 ? 3 : 0), (x, z) => hot.reduce((h, e) => { const d = Math.hypot(e.x - x, e.z - z); return d < 4 ? Math.max(h, 1 - d / 4) : h; }, 0));
   }, "items");
   ambient.start();
   fire.start();

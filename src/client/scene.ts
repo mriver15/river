@@ -79,7 +79,8 @@ function buildStructure(e: Entity, g: THREE.Group) {
     }
     default: return false;
   }
-  const lb = label(e.name, { size: 24 }); lb.position.y = (p.shape === "tower" ? 4.6 : p.shape === "bridge" ? 1.4 : p.shape === "cairn" ? 2.2 : 2.6); g.add(lb);
+  if (p.unfinished) { const k = 0.3 + 0.7 * (p.progress ?? 0); for (const c of g.children) { c.scale.y *= k; c.position.y *= k; } }       // an unfinished structure stands only as high as the work done
+  const lb = label(p.unfinished ? `${e.name} (unfinished)` : e.name, { size: 24 }); lb.position.y = (p.shape === "tower" ? 4.6 : p.shape === "bridge" ? 1.4 : p.shape === "cairn" ? 2.2 : 2.6); g.add(lb);
   // orientation: line shapes lie along their path; doors face the way they were built to face
   g.userData.rot = path ? -Math.atan2(path.z2 - path.z1, path.x2 - path.x1) : -(p.heading ?? 0);
   return true;

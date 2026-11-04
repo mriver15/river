@@ -26,13 +26,13 @@ export type DangerKind = "fire" | "injury" | "predator" | "collapse" | "noise";
 export interface Danger { kind: DangerKind; text: string; from?: { x: number; z: number; name: string } }
 export class ActivityError extends Error {}
 
-interface Ctx {
+export interface Ctx {
   w: World; eng: Activities;
   walk(a: Activity, x: number, z: number, label: string): { state: "moving" } | { state: "arrived" } | { state: "failed"; reason: string };
   /** Drop any walk in progress and its pending result. Called whenever an activity moves from one leg to the next. */
   stopWalk(a: Activity): void;
 }
-interface Def {
+export interface Def {
   id: string; version: string;
   /** which dangers stop it */
   interruptedBy: DangerKind[];
@@ -220,6 +220,8 @@ const work: Def = {
 };
 
 const DEFS: Record<string, Def> = { travel, rest, gather, work };
+/** Other modules add their own kinds of activity (building registers `construct`). Must happen before the engine resumes. */
+export const registerActivity = (d: Def) => { DEFS[d.id] = d; };
 
 // ---------- the engine ----------
 export class Activities {

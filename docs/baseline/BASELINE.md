@@ -235,10 +235,19 @@ Bugs found while building it: the record of a merge was kept in memory but never
 
 Tests: `content`, `recipes` (pure), `items` (migration from a pre-items world, identity through pickup/drop/equip, split and merge lineage, naming, invalid recipes touching nothing, exact consumption and mass conservation, descriptions granting nothing, keepsakes not standing in for parts, fire and ash, taking a structure down, container limits and loops, reset); 70 tests pass. The restart suite gained an `items` scenario (13 scenarios, all identical). The 20-seed mock soak (the mock brain now also drops and picks things up) and the 4-seed real-model soak replay exactly with a clean item audit.
 
-Not done in MVP 5:
+### MVP 5 leftovers, completed afterwards
 
-- **Partially completed construction.** `build` is still all-or-nothing: materials are spent when the work ends, and an interruption leaves everything intact (so there is no half-built thing to cancel or recover). Taking a structure down returns a fixed 60% of what it was built from, not an amount tied to its damage.
-- Only four recipes; pigment grinding and mixing, cooking (a plugin), sewing and building keep their own rules, and they record no per-ingredient provenance yet. Items made by plugins and gifts from the catalog are adopted with an unknown origin.
-- Condition: wetness and temperature drift with the weather and are read only by fire (soaked things resist) and clothing (wet garments warm less); durability is worn by tools and weapons. Temperature has no consumer yet.
-- Container capacity is by mass only (no volume), and items inside are not part of the inventory the model is shown, only reachable through `inspect`.
-- The visual record (recipe id, seed, colour) is stored and stable but nothing draws from it until MVP 6.
+- **Staged construction.** A build is now a persisted `construct` activity in three stages. Each stage takes time and spends its share of the materials when it finishes, so nothing is spent for unfinished work. Stopped part way (by hand, by danger, by running short), what stands is an *unfinished structure* that holds exactly what was put in, is drawn only as high as the work done, gives no shelter and cannot be walked on; `build continue` finishes it for exactly the rest (and says what is still missing). The plan travels with the activity and the structure, so a restart mid-build resumes it.
+- **Dismantling follows declared rules tied to what is really there.** An unfinished structure returns 85% of what is in it (it was never fixed together), a finished one 60%, and one that burnt returns the non-fuel it was made of (stone, clay, chalk) at 60% plus ash for the wood: at most a fifth of the wood's mass, and none of the wood itself. Never more than went in.
+- **Another recipe and room as well as strength.** `hide_pouch` (a hide and a cord). Containers now also have a volume (a basket about 10 litres, a pouch 2.5), and a rigid rod longer than a container's biggest side will not go in (a strip can be coiled). A basket cannot go inside another; a pouch can.
+- **Temperature has a use.** Things near a fire warm toward it; stone and clay keep the heat for a long while, wood and bark give it up quickly. A hot stone in River's pack (or a roasted thing, or a glowing coal) adds a little warmth, capped well below a fire's, and fades as it cools. Condition changes are written when they happen.
+- **Better provenance.** Pigments record what they were ground or mixed from; roasted food records what it was cooked from (and starts hot); an ember is recorded as drawn from a fire; things the human places or gifts are recorded as such rather than "unknown". Container contents now appear in the model's picture of what River carries.
+
+Checks, run narrowly rather than as the full regression: 79 unit tests (new: `building`, heat, container limits, provenance, the pouch recipe); the restart suite with two new staged-build scenarios (restart after one stage paid for, and after two) plus items and crafting, all identical; replay of two fixtures and a three-seed one-day soak, exact with a clean item audit. The full 20-seed and real-model soaks were not rerun for these changes.
+
+Still not done:
+
+- The first-pass recipes are few (five). Sewing, building and the pigment tools keep their own rules (they are recorded, but are not recipe-driven), and plugin-made items carry only the information their plugin supplies.
+- A structure does not weather or wear: its recovery depends on its state (unfinished, finished, burnt), not on age or storms.
+- Temperature still only matters for warmth; a hot thing does not ignite what it touches.
+- The visual record (recipe id, seed, colour) is stored and stable, but nothing draws from it until MVP 6.

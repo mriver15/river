@@ -160,12 +160,13 @@ test("taking a structure down returns only part of what is recorded, never more"
 test("containers hold what fits, never themselves, and never in a loop", () => {
   clearPack();
   const stones0 = R.all().filter((i) => i.kind === "stone").reduce((s, i) => s + i.qty, 0);        // (stones left lying about by earlier tests)
-  const a = w.addItem("crafted", "basket A", "", 1, undefined, { defId: "basket" }), b = w.addItem("crafted", "basket B", "", 1, undefined, { defId: "basket" });
+  const a = w.addItem("crafted", "basket A", "", 1, undefined, { defId: "basket" }), b = w.addItem("pouch", "pouch B", "", 1, undefined, { defId: "pouch" });
   w.addItem("stone", "stone", "A stone.", 7);
   const stones = R.carried().find((i) => i.kind === "stone")!;
   assert.throws(() => R.stow(a.id, 1, a.id), /itself/);
   R.stow(b.id, 1, a.id);
   assert.throws(() => R.stow(a.id, 1, b.id), /itself/, "B is inside A, so A cannot go into B");
+  assert.throws(() => R.stow(w.addItem("crafted", "basket C", "", 1, undefined, { defId: "basket" }).id, 1, a.id), /no more room/, "a basket is too big to go inside another");
   assert.throws(() => R.stow(stones.id, 7, a.id), /can only carry/, "7 stones are more than a basket carries");
   R.stow(stones.id, 6, a.id);
   assert.equal(R.contents(a.id).length, 2); assert.ok(R.massOf(R.get(a.id)!) > 3.6);
@@ -184,4 +185,37 @@ test("a reset ends what River carried but leaves the world's things, and the aud
   assert.ok(R.all().filter((i) => i.loc.kind === "world").length >= ground, "the world's things were not touched");
   assert.deepEqual(R.audit(), []);
   void new DatabaseSync(":memory:");
+});
+
+test("a stone warmed by a fire stays warm and warms the one who carries it; a stick does not", () => {
+  clearPack();
+  const stone = w.addItem("stone", "stone", "A stone.", 1), stick = w.addItem("stick", "stick", "A stick.", 1);
+  for (let n = 0; n < 40; n++) R.tickCondition(5, 0, 10, () => 1);                           // forty ticks of fire (200 s) beside both
+  assert.ok(R.get(stone.id)!.condition.temperatureC > 55, `stone ${R.get(stone.id)!.condition.temperatureC}`);
+  assert.ok(R.carriedHeat() > 0.02, "carried, the hot stone gives warmth");
+  const hot = R.carriedHeat();
+  for (let n = 0; n < 8; n++) R.tickCondition(5, 0, 10);                                      // forty seconds away from the fire
+  const stoneAfter = R.get(stone.id)!.condition.temperatureC, stickAfter = R.get(stick.id)!.condition.temperatureC;
+  assert.ok(stoneAfter > 45, "the stone keeps its heat"); assert.ok(stickAfter < stoneAfter - 10, "the stick has already given its heat up");
+  assert.ok(R.carriedHeat() < hot, "and the warmth fades");
+  for (let n = 0; n < 200; n++) R.tickCondition(5, 0, 10);
+  assert.ok(R.carriedHeat() === 0, "in the end it is cold again");
+});
+
+test("a container has limited room as well as limited strength, and a rigid rod will not go in a small one", () => {
+  clearPack();
+  const pouch = w.addItem("pouch", "hide pouch", "", 1, undefined, { defId: "pouch" }), basket = w.addItem("crafted", "basket", "", 1, undefined, { defId: "basket" });
+  const sticks = w.addItem("stick", "stick", "A stick.", 3), shells = w.addItem("shell", "shell", "A shell.", 40);
+  assert.throws(() => R.stow(sticks.id, 1, pouch.id), /too long/);
+  assert.throws(() => R.stow(sticks.id, 1, basket.id), /too long/, "a 90 cm stick is longer than a 35 cm basket can take");
+  assert.throws(() => R.stow(shells.id, 40, pouch.id), /room|carry/, "40 shells are more than a small pouch holds");
+  R.stow(shells.id, 8, pouch.id); assert.equal(R.contents(pouch.id).reduce((s, c) => s + c.qty, 0), 8);
+  assert.deepEqual(R.audit(), []);
+});
+
+test("things placed by a human are known to be, and pigments know what they were ground from", () => {
+  const gift = w.spawn("item", "polished pebble", w.me.x + 1, w.me.z, { takeable: true, item: "pebble", itemName: "polished pebble", desc: "Smooth.", catalog: "c_polished" });
+  assert.equal(R.get(gift.id)!.provenance.unknown, undefined); assert.match(R.get(gift.id)!.provenance.note ?? "", /human/);
+  const mat = w.addItem("pigment", "red pigment (aa2222)", "Ground colour.", 3, { hex: "#aa2222" }, { sources: ["flower_1"], maker: true });
+  assert.deepEqual(mat.provenance.sourceIds, ["flower_1"]); assert.equal(mat.provenance.makerLifeId !== undefined, true);
 });

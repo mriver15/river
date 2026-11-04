@@ -16,7 +16,7 @@ export interface ItemDef {
   /** durability 1 = new; wears with use */
   worn?: boolean;
   nutrition?: number;
-  container?: { capacityKg: number };
+  container?: { capacityKg: number; volumeL: number };
   wearable?: { slot: string };
   /** which procedural look draws it (see the client's visual registry) */
   visual: string;
@@ -54,7 +54,8 @@ export const ITEM_DEFS: ItemDef[] = [
   def({ id: "garment", aliases: ["garment"], name: "garment", dims: { l: 0.6, w: 0.5, h: 0.02 }, massKg: 0.5, parts: [{ material: "bark", fraction: 0.5 }, { material: "moss", fraction: 0.5 }], tags: ["flat", "strip"], fungible: false, wearable: { slot: "body" }, visual: "garment" }),
   def({ id: "weapon", aliases: ["weapon"], name: "weapon", dims: { l: 1.8, w: 0.05, h: 0.05 }, massKg: 1.1, parts: wood, tags: ["long", "pointed"], fungible: false, worn: true, visual: "spear" }),
   def({ id: "sharpened_stick", aliases: ["sharpened stick"], name: "sharpened stick", dims: { l: 1.0, w: 0.03, h: 0.03 }, massKg: 0.25, parts: wood, tags: ["long", "pointed"], fungible: false, worn: true, visual: "spear" }),
-  def({ id: "basket", aliases: ["basket"], name: "bark basket", dims: { l: 0.35, w: 0.3, h: 0.25 }, massKg: 0.3, parts: [{ material: "bark", fraction: 1 }], tags: ["hollow"], fungible: false, container: { capacityKg: 4 }, worn: true, visual: "basket" }),
+  def({ id: "basket", aliases: ["basket"], name: "bark basket", dims: { l: 0.35, w: 0.3, h: 0.25 }, massKg: 0.3, parts: [{ material: "bark", fraction: 1 }], tags: ["hollow"], fungible: false, container: { capacityKg: 4, volumeL: 10 }, worn: true, visual: "basket" }),
+  def({ id: "pouch", aliases: ["pouch"], name: "hide pouch", dims: { l: 0.18, w: 0.12, h: 0.1 }, massKg: 0.2, parts: [{ material: "hide", fraction: 1 }], tags: ["hollow"], fungible: false, container: { capacityKg: 1.5, volumeL: 2.5 }, worn: true, visual: "pouch" }),
   def({ id: "cord", aliases: ["cord"], name: "length of cord", dims: { l: 1.2, w: 0.01, h: 0.01 }, massKg: 0.03, parts: [{ material: "bark", fraction: 1 }], tags: ["strip", "long"], fungible: true, visual: "strip" }),
   // anything River makes that has no mechanical meaning: a keepsake, a carving, an arrangement. Honest about doing nothing.
   def({ id: "keepsake", aliases: ["crafted", "keepsake"], name: "keepsake", dims: { l: 0.15, w: 0.1, h: 0.1 }, massKg: 0.3, parts: [{ material: "inert", fraction: 1 }], tags: [], fungible: false, visual: "keepsake" }),
