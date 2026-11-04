@@ -1,4 +1,5 @@
 // Mind, Items, Story: the smaller read-only panels.
+import { previewOf } from "../renderers/preview.ts";
 import { $, clamped, el } from "../dom.ts";
 import { S, isTab } from "../state.ts";
 import { renderTurningPoints } from "./moments.ts";
@@ -106,6 +107,7 @@ export function renderItems() {
   const g = el("div", "grid2");
   for (const i of S.inventory) {
     const c = el("div", "card"), top = el("div", "row"); top.append(el("b", "", i.name)); if (i.qty > 1) top.append(el("span", "qty", `×${i.qty}`));
+    if (i.visual) { const img = el("img", "preview") as HTMLImageElement; img.width = img.height = 56; img.alt = ""; try { img.src = previewOf(i.visual, 112); } catch { /* no GL here: the card is still complete */ } top.prepend(img); }
     c.append(top, clamped(i.desc, 2, "sub"));
     const more = el("details"); more.style.marginTop = "6px"; const sum = el("summary", "sub", "What it is"); more.append(sum);
     more.ontoggle = async () => {                                  // the inspector: only what the world knows

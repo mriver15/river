@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Item gallery</title>
+  <style>
+    :root { color-scheme: dark; --bg: #14161a; --fg: #e6e8ec; --mut: #8a93a6; --line: #2a2e36; }
+    body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); font: 13px/1.4 system-ui, sans-serif; }
+    h1 { font-size: 16px; margin: 0 0 4px; } h2 { font-size: 13px; margin: 22px 0 8px; color: var(--mut); text-transform: uppercase; letter-spacing: .06em; }
+    p { color: var(--mut); margin: 0 0 8px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px; }
+    figure { margin: 0; border: 1px solid var(--line); border-radius: 8px; padding: 6px; background: #1b1e24; text-align: center; }
+    figure img { width: 96px; height: 96px; object-fit: contain; }
+    figcaption { font-size: 11px; color: var(--mut); overflow-wrap: anywhere; }
+    .bad { border-color: #a33; }
+  </style>
+</head>
+<body>
+  <h1>Item gallery</h1>
+  <p>Every visual recipe, in every condition, drawn by the same code the world uses. Each tile is checked against its documented size.</p>
+  <div id="root"></div>
+  <script type="module" src="./gallery.ts"></script>
+</body>
+</html>

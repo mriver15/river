@@ -20,7 +20,7 @@ const FIBRE: Record<string, { hex: string; word: string }> = { bark: { hex: "#7a
 /** What River wears is whatever garments are in its body slots: the registry decides, not a separate list. */
 let registry: ItemRegistry | null = null;
 export const attachItems = (r: ItemRegistry) => { registry = r; };
-const asWorn = (i: ItemInstance): Worn => ({ slot: i.props.slot, garment: i.props.garment, name: i.name, hex: i.props.hex, warm: i.props.warm * (0.5 + 0.5 * i.condition.durability) * (1 - 0.3 * i.condition.wetness), desc: `${i.name} (${describeColour(i.props.hex)} ${i.props.garment})` });
+const asWorn = (i: ItemInstance): Worn => ({ slot: i.props.slot, garment: i.props.garment, name: i.name, hex: i.props.hex, warm: i.props.warm * (0.5 + 0.5 * i.condition.durability) * (1 - 0.3 * i.condition.wetness), desc: `${i.name} (${describeColour(i.props.hex)} ${i.props.garment})`, visual: registry!.packet(i) });
 export const worn = (): Worn[] => (registry?.equipped() ?? []).filter((i) => i.kind === "garment").map(asWorn);
 /** fraction of weather and night chill that clothing turns away */
 export const warmthFactor = () => Math.min(0.55, worn().reduce((s, g) => s + g.warm, 0));

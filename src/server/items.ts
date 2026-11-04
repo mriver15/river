@@ -13,6 +13,7 @@ import { simRng, simTick } from "./sim.ts";
 import { lifeGen } from "./lifecycle.ts";
 import { capabilitiesOf, defById, defForKind, type ItemDef } from "../content/items.ts";
 import { MATERIALS } from "../content/materials.ts";
+import { VISUAL_VERSION, lookOf, lookKey, type VisualPacket } from "../content/visuals.ts";
 import type { World } from "./world.ts";
 import type { Entity, InventoryItem } from "../shared/types.ts";
 
@@ -99,6 +100,7 @@ export class ItemRegistry {
     }
     if (legacy.length) db.exec("DELETE FROM inventory");
     for (const e of this.w.entities.values()) if (e.kind === "item" && !this.items.has(e.id)) this.adoptEntity(e);
+    for (const i of this.items.values()) this.syncLook(i);                       // ground items older than their look get one
     // worn clothes from before: they were kept as plain data, so they become garments again, worn
     const worn = db.prepare("SELECT v FROM kv WHERE k = 'worn'").get() as { v: string } | undefined;
     if (worn) {
@@ -117,7 +119,7 @@ export class ItemRegistry {
       id, defId: def.id, defVersion: def.version, kind: o.kind, name: o.name, desc: o.desc, qty: o.qty, props: o.props ?? {},
       condition: { durability: 1, wetness: 0, temperatureC: 15, ...o.condition },
       parts: o.parts ?? def.parts.map((p) => ({ material: p.material, mass: +(def.massKg * p.fraction).toFixed(4) })),
-      provenance: prov, visual: { recipeId: def.visual, version: def.version, seed: hash32(id), parameters: o.props?.hex ? { hex: o.props.hex } : {} },
+      provenance: prov, visual: { recipeId: def.visual, version: VISUAL_VERSION, seed: hash32(id), parameters: { variant: def.id, ...(o.props?.hex ? { hex: o.props.hex } : {}), ...(o.props?.garment ? { garment: o.props.garment } : {}) } },
       loc: o.loc, lineage: {}, named: o.named,
     };
     this.items.set(id, i); this.save(i); this.log(id, why, { kind: o.kind, qty: o.qty, loc: o.loc.kind });
@@ -128,8 +130,10 @@ export class ItemRegistry {
   adoptEntity(e: Entity): ItemInstance {
     const have = this.items.get(e.id); if (have) return have;
     const fromHuman = !!e.props.catalog;                                              // a gift or something the human placed: its origin is known
-    return this.make({ id: e.id, kind: String(e.props.item ?? e.kind), name: String(e.props.title ?? e.props.itemName ?? e.name.replace(/^book: /, "")), desc: String(e.props.desc ?? ""), qty: 1, props: this.carryProps(e), loc: { kind: "world", x: e.x, z: e.z },
+    const made = this.make({ id: e.id, kind: String(e.props.item ?? e.kind), name: String(e.props.title ?? e.props.itemName ?? e.name.replace(/^book: /, "")), desc: String(e.props.desc ?? ""), qty: 1, props: this.carryProps(e), loc: { kind: "world", x: e.x, z: e.z },
       provenance: fromHuman ? { createdAtTick: simTick(), sourceIds: [], note: "placed in the world by a human" } : { createdAtTick: simTick(), sourceIds: [], unknown: true, note: "found in the world" } }, "adopted");
+    this.syncLook(made, true);
+    return made;
   }
   /** The parts of an entity's props that belong to the item itself (what it says, its colour, what it can do). */
   private carryProps(e: Entity): Record<string, any> {
@@ -233,12 +237,13 @@ export class ItemRegistry {
   private toWorld(i: ItemInstance, x: number, z: number) {
     i.loc = { kind: "world", x, z }; this.save(i); this.log(i.id, "put down", { x, z });
     this.moving.add(i.id);
-    try { this.w.spawnWithId("item", i.id, i.name, x, z, { takeable: true, item: i.kind, itemName: i.name, desc: i.desc, ...i.props, ...(i.qty > 1 ? { qty: i.qty } : {}) }); } finally { this.moving.delete(i.id); }
+    try { this.w.spawnWithId("item", i.id, i.name, x, z, { takeable: true, item: i.kind, itemName: i.name, desc: i.desc, ...i.props, visual: this.packet(i), ...(i.qty > 1 ? { qty: i.qty } : {}) }); } finally { this.moving.delete(i.id); }
   }
   private splitOff(i: ItemInstance, qty: number): ItemInstance {
     i.qty -= qty; this.save(i);
     const child = this.make({ kind: i.kind, name: i.name, desc: i.desc, qty, props: { ...i.props }, loc: i.loc, condition: { ...i.condition }, defId: i.defId, named: i.named,
       provenance: { sourceIds: [i.id, ...i.provenance.sourceIds].slice(0, 8), makerLifeId: i.provenance.makerLifeId, note: i.provenance.note } }, "split");
+    child.visual = { ...i.visual, parameters: { ...i.visual.parameters } };          // a part of a stack looks like the rest of it
     child.lineage.splitFrom = i.id; this.save(child); this.log(i.id, "split", { child: child.id, qty });
     return child;
   }
@@ -248,9 +253,10 @@ export class ItemRegistry {
     const i = this.items.get(id); if (!i) return;
     if (p.props) i.props = { ...i.props, ...p.props };
     if (p.props?.hex) i.visual.parameters = { ...i.visual.parameters, hex: p.props.hex };
+    if (p.props?.garment) i.visual.parameters = { ...i.visual.parameters, garment: p.props.garment };
     if (p.desc !== undefined) i.desc = p.desc;
     for (const s of p.sources ?? []) if (!i.provenance.sourceIds.includes(s) && i.provenance.sourceIds.length < 8) i.provenance.sourceIds.push(s);
-    this.save(i); this.log(id, "changed", { keys: Object.keys(p.props ?? {}) }); this.refreshView();
+    this.save(i); this.log(id, "changed", { keys: Object.keys(p.props ?? {}) }); this.syncLook(i, true); this.refreshView();
   }
 
   /** Wear or hold something in a body slot; what was there goes back to River's hands. */
@@ -371,9 +377,21 @@ export class ItemRegistry {
     const i = this.items.get(id); return !!i && i.condition.durability > 0 && capabilitiesOf(defById(i.defId)).includes(capability);
   }
   /** Rebuild what River's code sees as its inventory. */
+  /** Everything a client needs to draw this item the same way wherever it is. */
+  packet(i: ItemInstance): VisualPacket {
+    return { recipeId: i.visual.recipeId, version: i.visual.version, seed: i.visual.seed, parameters: i.visual.parameters, defId: i.defId, mats: [...i.parts].sort((a, b) => b.mass - a.mass).map((p) => p.material), look: lookOf(i.condition, i.props) };
+  }
+  /** An item on the ground shows its condition through its entity; tell the world only when the look has visibly changed. */
+  syncLook(i: ItemInstance, force = false) {
+    if (i.loc.kind !== "world") return;
+    const e = this.w.entities.get(i.id); if (!e) return;
+    const cur = e.props.visual as VisualPacket | undefined, next = this.packet(i);
+    if (!force && cur && lookKey(cur.look) === lookKey(next.look)) return;
+    e.props = { ...e.props, visual: next }; this.w.putEntity(e);
+  }
   project(i: ItemInstance, qty = i.qty): InventoryItem {
     const props = { ...i.props, ...(i.condition.durability < 0.95 ? { durability: +i.condition.durability.toFixed(2) } : {}), ...(i.condition.wetness > 0.2 ? { wet: +i.condition.wetness.toFixed(2) } : {}) };
-    return { id: i.id, kind: i.kind, name: i.name, desc: i.desc, qty, props: Object.keys(props).length ? props : undefined };
+    return { id: i.id, kind: i.kind, name: i.name, desc: i.desc, qty, props: Object.keys(props).length ? props : undefined, visual: this.packet(i) };
   }
   refreshView() {
     const view = this.w.inventory; view.clear();
@@ -396,7 +414,7 @@ export class ItemRegistry {
       const target = Math.max(ambientC + heat * (70 - ambientC), i.props.coal ? 320 : -Infinity), keeps = MATERIALS[i.parts[0]?.material ?? "inert"]?.retention ?? 0.3;
       const rate = target > c.temperatureC ? 0.04 : 0.004 + 0.06 * (1 - keeps);                       // warms at one pace, cools at another that depends on what it is
       const temperatureC = +(c.temperatureC + (target - c.temperatureC) * Math.min(1, rate * dtSec)).toFixed(3);
-      if (wetness !== c.wetness || temperatureC !== c.temperatureC) { c.wetness = wetness; c.temperatureC = temperatureC; this.save(i); }     // written when it changes, like all state
+      if (wetness !== c.wetness || temperatureC !== c.temperatureC) { c.wetness = wetness; c.temperatureC = temperatureC; this.save(i); this.syncLook(i); }     // written when it changes, like all state
     }
   }
   /** Warmth per second from hot things River is carrying or wearing, for the body to feel. Capped: a stone is not a fire. */
@@ -407,7 +425,7 @@ export class ItemRegistry {
   }
   wear(id: string, amount: number) {
     const i = this.items.get(id); if (!i) return;
-    i.condition.durability = Math.max(0, +(i.condition.durability - amount).toFixed(4)); this.save(i);
+    i.condition.durability = Math.max(0, +(i.condition.durability - amount).toFixed(4)); this.save(i); this.syncLook(i);
     if (i.condition.durability <= 0) { this.log(id, "broke", {}); this.consume(i, i.qty, "broke"); this.refreshView(); }
   }
 

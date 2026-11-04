@@ -1,5 +1,6 @@
 import type { Score } from "./music.ts";
 import type { EmotionName } from "./emotions.ts";
+import type { VisualPacket } from "../content/visuals.ts";
 
 export type EntityKind =
   | "tree" | "rock" | "bush" | "flower" | "mushroom" | "shell"
@@ -22,6 +23,8 @@ export interface InventoryItem {
   desc: string;
   qty: number;
   props?: Record<string, any>;
+  /** how to draw it: the same recipe on the ground, in the pack and on the body */
+  visual?: VisualPacket;
 }
 
 export type Weather = "clear" | "cloudy" | "rain" | "fog" | "storm" | "windy";
@@ -31,7 +34,7 @@ export interface Needs { energy: number; hunger: number; mood: number; curiosity
 
 export interface KeeperView { found: { idx: number; kind: string; text: string }[]; placed: number; total: number; complete: boolean }
 
-export interface Worn { slot: "body" | "head" | "feet" | "neck"; garment: string; name: string; hex: string; warm: number; desc: string }
+export interface Worn { slot: "body" | "head" | "feet" | "neck"; garment: string; name: string; hex: string; warm: number; desc: string; visual?: VisualPacket }
 
 export interface Mark { part: string; side: "left" | "right"; kind: string; hex: string; alpha: number; sev: number; desc: string }
 export interface BodyView { marks: Mark[]; shaking: number; limp: boolean; sensations: string[]; health: number; bleeding: boolean; infection: number; lives: number; dead: { cause: string; days: number } | null }

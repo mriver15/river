@@ -271,3 +271,32 @@ Still not done:
 - **Building and pigment tools are not recipe-driven.** Structure plans keep their own staged rules and pigments only record provenance.
 - **The visual record** (recipe id, seed, colour) is stored and stable, but nothing draws from it until MVP 6.
 - The earlier items about other timed tools, vertical navigation, inventory capacity, learned routines and in-flight appraisals still stand.
+
+## MVP 6: consistent procedural 3D items
+
+Code: `src/content/visuals.ts` (shared, pure), `src/client/renderers/` (Three.js), `src/shared/posture.ts`, `src/client/gallery.html`.
+
+What changed:
+
+- **One visual registry, keyed by `(recipeId, version)`**, shared by server and client. 24 recipes cover every item definition (stick, stone, spear/stake, bowl, bottle, cup, lamp, book, food (berry/mushroom/meat), pigment, garment, flute, basket, pouch, plank, hide, strip/cord, moss, fish, shell, flower, seed, lump, keepsake). No item falls back to the old glowing octahedron.
+- **A recipe is data**: a short list of approved primitives (box, sphere, cylinder, cone, torus) with channels (primary, secondary, accent, metal, glass, glow). Every design is validated before use (at most 32 components, 3000 triangles, bounded sizes, finite numbers, no unknown fields such as URLs) and then **fitted to the definition's documented size**, so the drawn bounds equal the collision bounds by construction (and a test checks it for every definition).
+- **Same look everywhere.** Each instance stores `{recipeId, version, seed, parameters}`; a split stack child inherits its parent's look; dyeing updates the parameters. The server sends one `VisualPacket` per item (ground entity, pack projection, worn garment), and the ground, the pack preview and the body all build from it.
+- **Condition shows.** `lookOf` quantises wetness, char, damage level and heat; wet darkens and shines, char blackens, hot glows, damage hides intact parts and shows splintered or cracked ones, repair shows a fresh part. The ground entity is rewritten only when the look visibly changes.
+- **Equipment sockets.** Garments are drawn on the body from `wornDesign` anchored at body/head/neck/feet sockets; Scene3D no longer carries its own garment geometry.
+- **Fallback.** An unknown recipe or version, or an invalid design, draws a plain block of exactly the right size and logs a diagnostic; it claims nothing about function.
+- **Resource reuse.** Unit geometries are shared; materials are shared and reference-counted and disposed when the last item using them goes; far items (past 32 m) are drawn from their major parts only. Items under 14 cm on screen are enlarged for visibility (`groundScale`, capped at 12x); the documented size never changes.
+- **Preview component** (`renderers/preview.ts`): one shared renderer makes cached pictures of any item, used on the pack cards.
+- **Posture.** `postureOf` turns feelings, needs and body state into four bounded channels (tension, gaze, gait, slump); River's body leans, lifts or lowers its head, braces its arms and changes stride, eased over time. It reads the simulation and never feeds back into it.
+- **Gallery fixture.** `gallery.html` draws every definition in eight conditions, every garment dyed in the pack, worn on a body in three conditions, and the fallback. `npm run gallery:shots` builds the client and writes one screenshot per section with headless Firefox (`.fixtures/shots/`).
+
+Checks: typecheck and build clean; 115 unit tests (the new ones cover recipes, sizes, budgets, hostile designs, determinism, condition looks, transfer/reload parity through the registry, ground sync, posture); short replay, 2-seed soak and the restart scenarios for items/build/alive pass. Screenshots were reviewed by eye; there are no pixel-diff baselines.
+
+Still not done:
+
+- **Screenshots are not compared automatically.** They are produced and inspected; sizes, budgets and condition rules are what the tests assert. Pixel baselines would need a fixed GPU/driver.
+- **Held items.** There is no "in hand" socket yet: River is not shown holding or wielding anything; only garments are placed on the body. The recipes define grip/mouth/tip sockets for when a mechanic needs them.
+- **Damage on worn garments** is not drawn (the worn designs have no damage parts); wetness and dye do show.
+- **Repair of ordinary items** has no mechanic, so the repaired look is reachable only through `props.repaired`.
+- **Structures and creatures** keep their existing hand-written meshes; they are not in the registry.
+- **Custom (River-designed) items** use the same validated component format, but no tool lets River author one yet.
+- Visuals for items made by forged plugins use the definition their kind maps to (the keepsake for unknown kinds).

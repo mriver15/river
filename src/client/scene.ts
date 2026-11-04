@@ -2,6 +2,10 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { HALF, WORLD_SIZE, groveness, heightAt, hash2 } from "../shared/noise.ts";
 import type { AgentView, Entity, FxKind, Weather } from "../shared/types.ts";
+import { buildItem, buildWorn, disposeItem, setLod } from "./renderers/items.ts";
+import { defForKind } from "../content/items.ts";
+import { NEW_LOOK, VISUAL_VERSION, type VisualPacket } from "../content/visuals.ts";
+import { NEUTRAL_POSTURE, postureOf, type Posture } from "../shared/posture.ts";
 
 const col = (h: number) => new THREE.Color(h);
 
@@ -156,6 +160,13 @@ function wildMesh(g: THREE.Group, sp: string, dark: (c: number) => THREE.MeshSta
   g.userData.wild = sp;
 }
 
+/** The server sends every ground item with its look; an item from an older server is drawn from its kind. */
+function itemPacket(e: Entity): VisualPacket {
+  const sent = e.props.visual as VisualPacket | undefined; if (sent) return sent;
+  const d = defForKind(String(e.props.item ?? e.name));
+  return { recipeId: d.visual, version: VISUAL_VERSION, seed: Math.round(e.x * 131 + e.z * 17) >>> 0, parameters: { variant: d.id }, defId: d.id, mats: d.parts.map((p) => p.material), look: NEW_LOOK };
+}
+
 function buildEntity(e: Entity): THREE.Object3D {
   const g = new THREE.Group();
   const r = hash2(Math.round(e.x * 10), Math.round(e.z * 10), 7);
@@ -209,9 +220,7 @@ function buildEntity(e: Entity): THREE.Object3D {
       const l = new THREE.PointLight(0xff8a30, 2.5, 14); l.position.y = 1; l.userData.flicker = true; g.add(l); break;
     }
     case "book": g.add(mesh(new THREE.BoxGeometry(0.4, 0.1, 0.55), mat([0x8a3a3a, 0x3a5a8a, 0x3a7a5a, 0x8a6a2a][Math.floor(r * 4)]), 0, 0.08, 0)); break;
-    case "item":
-      if (e.props.item === "flute") { const f = mesh(new THREE.CylinderGeometry(0.035, 0.03, 0.62, 8), mat(0xe9d6ac, { flatShading: false }), 0, 0.06, 0); f.rotation.z = Math.PI / 2; f.rotation.y = 0.6; g.add(f); break; }
-      g.add(mesh(new THREE.OctahedronGeometry(0.2, 0), mat(0xf5d76e, { emissive: 0xf5d76e, emissiveIntensity: 0.3 }), 0, 0.25, 0)); break;
+    case "item": g.add(buildItem(itemPacket(e), { ground: true })); break;
     case "pit": { const d = mesh(new THREE.CylinderGeometry(0.55, 0.45, 0.06, 10), mat(0x3b2a1c), 0, 0.02, 0); d.castShadow = false; g.add(d); g.add(mesh(new THREE.TorusGeometry(0.55, 0.12, 5, 10), mat(0x6a4a30), 0, 0.06, 0)).children[1].rotation.x = Math.PI / 2; break; }
     case "animal": {
       const sp = e.props.species as string;
@@ -304,6 +313,8 @@ export class Scene3D {
   private agentGroup = new THREE.Group();
   private limbs: THREE.Group[] = [];
   private garb!: THREE.Group;
+  private head!: THREE.Group;
+  private posture: Posture = { ...NEUTRAL_POSTURE };
   private wornKey = "";
   private markKey = "";
   private marksG: THREE.Group[] = [];
@@ -355,11 +366,12 @@ export class Scene3D {
     this.body = new THREE.Group();
     const skin = mat(0xe3b48a, { flatShading: false, roughness: 0.7 }), hair = mat(0x4a3224, { roughness: 0.95 }), dark = new THREE.MeshBasicMaterial({ color: 0x1a1a1a });
     this.body.add(mesh(new THREE.CapsuleGeometry(0.27, 0.5, 4, 10), skin, 0, 1.0, 0));              // torso
-    this.body.add(mesh(new THREE.SphereGeometry(0.3, 14, 12), skin, 0, 1.68, 0));                    // head
-    const cap = mesh(new THREE.SphereGeometry(0.325, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.55), hair, 0, 1.69, -0.02); cap.rotation.x = -0.25; this.body.add(cap);
-    this.body.add(mesh(new THREE.SphereGeometry(0.31, 12, 10, 0, Math.PI * 2, Math.PI * 0.42, Math.PI * 0.2), hair, 0, 1.72, -0.08));   // hair falling behind
-    for (const sx of [-0.1, 0.1]) this.body.add(mesh(new THREE.SphereGeometry(0.04, 6, 6), dark, sx, 1.7, 0.27));
-    this.body.add(mesh(new THREE.SphereGeometry(0.045, 6, 6), skin, 0, 1.64, 0.3));                  // nose
+    this.head = new THREE.Group(); this.head.position.set(0, 1.4, 0); this.body.add(this.head);       // pivots at the neck so it can lift and hang
+    this.head.add(mesh(new THREE.SphereGeometry(0.3, 14, 12), skin, 0, 0.28, 0));                    // head
+    const cap = mesh(new THREE.SphereGeometry(0.325, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.55), hair, 0, 0.29, -0.02); cap.rotation.x = -0.25; this.head.add(cap);
+    this.head.add(mesh(new THREE.SphereGeometry(0.31, 12, 10, 0, Math.PI * 2, Math.PI * 0.42, Math.PI * 0.2), hair, 0, 0.32, -0.08));   // hair falling behind
+    for (const sx of [-0.1, 0.1]) this.head.add(mesh(new THREE.SphereGeometry(0.04, 6, 6), dark, sx, 0.3, 0.27));
+    this.head.add(mesh(new THREE.SphereGeometry(0.045, 6, 6), skin, 0, 0.24, 0.3));                  // nose
     this.body.add(mesh(new THREE.SphereGeometry(0.1, 8, 6), skin, 0, 1.4, 0));                       // neck
     const limb = (x: number, y: number, len: number, r: number) => { const g = new THREE.Group(); g.position.set(x, y, 0); g.add(mesh(new THREE.CapsuleGeometry(r, len, 4, 8), skin, 0, -len / 2 - r, 0)); this.body.add(g); return g; };
     this.limbs = [limb(-0.36, 1.2, 0.5, 0.08), limb(0.36, 1.2, 0.5, 0.08), limb(-0.13, 0.62, 0.4, 0.1), limb(0.13, 0.62, 0.4, 0.1)];
@@ -455,7 +467,7 @@ export class Scene3D {
   }
   remove(id: string) {
     const o = this.entityObjs.get(id);
-    if (o) { this.scene.remove(o); this.entityObjs.delete(id); this.entityData.delete(id); }
+    if (o) { this.scene.remove(o); o.traverse((c) => { if (c.userData.matKeys) disposeItem(c); }); this.entityObjs.delete(id); this.entityData.delete(id); }
   }
 
   setAgent(a: AgentView) {
@@ -512,22 +524,10 @@ export class Scene3D {
   }
 
   /** Clothes River has made and put on, in the colours it chose. */
-  private dress(worn: { slot: string; garment: string; hex: string }[]) {
-    const key = JSON.stringify(worn.map((g) => [g.garment, g.hex])); if (key === this.wornKey) return; this.wornKey = key;
-    for (const c of [...this.garb.children]) { this.garb.remove(c); (c as THREE.Mesh).geometry?.dispose(); }
-    const add = (g: THREE.BufferGeometry, c: string, x: number, y: number, z: number, rx = 0) => { const m = mesh(g, mat(parseInt(c.slice(1), 16), { side: THREE.DoubleSide, flatShading: false, roughness: 1 }), x, y, z); m.rotation.x = rx; this.garb.add(m); return m; };
-    const cyl = THREE.CylinderGeometry;
-    for (const g of worn) {
-      const c = g.hex;
-      if (g.garment === "wrap") { add(new cyl(0.33, 0.35, 0.5, 14, 1, true), c, 0, 0.88, 0); add(new THREE.TorusGeometry(0.3, 0.035, 5, 14), c, 0, 1.12, 0, Math.PI / 2 + 0.5); }
-      else if (g.garment === "tunic") { add(new cyl(0.31, 0.37, 0.8, 14, 1, true), c, 0, 0.9, 0); for (const sx of [-0.36, 0.36]) add(new cyl(0.1, 0.11, 0.22, 8, 1, true), c, sx, 1.1, 0); }
-      else if (g.garment === "cloak") { add(new cyl(0.3, 0.55, 1.0, 16, 1, true, 0.5, Math.PI * 1.6), c, 0, 0.85, -0.04); add(new THREE.TorusGeometry(0.3, 0.06, 6, 14), c, 0, 1.36, 0, Math.PI / 2); }
-      else if (g.garment === "skirt") add(new cyl(0.3, 0.46, 0.45, 14, 1, true), c, 0, 0.62, 0);
-      else if (g.garment === "hat") { add(new THREE.ConeGeometry(0.27, 0.4, 12), c, 0, 2.08, 0); add(new cyl(0.4, 0.4, 0.04, 14), c, 0, 1.9, 0); }
-      else if (g.garment === "band") add(new THREE.TorusGeometry(0.3, 0.035, 5, 16), c, 0, 1.82, 0, Math.PI / 2 - 0.15);
-      else if (g.garment === "scarf") { add(new THREE.TorusGeometry(0.2, 0.07, 6, 14), c, 0, 1.38, 0, Math.PI / 2); add(new THREE.BoxGeometry(0.1, 0.4, 0.04), c, 0.14, 1.15, 0.2); }
-      else if (g.garment === "sandals") for (const sx of [-0.13, 0.13]) add(new THREE.BoxGeometry(0.18, 0.04, 0.34), c, sx, 0.03, 0.05);
-    }
+  private dress(worn: { slot: string; garment: string; hex: string; visual?: VisualPacket }[]) {
+    const key = JSON.stringify(worn.map((g) => [g.garment, g.hex, g.visual?.look])); if (key === this.wornKey) return; this.wornKey = key;
+    for (const c of [...this.garb.children]) { this.garb.remove(c); disposeItem(c); }
+    for (const g of worn) { const o = buildWorn(g.garment, g.visual ?? null, g.hex); if (o) this.garb.add(o); }       // the same recipe the garment has in the pack
   }
 
   /** Bruises, scrapes and burns, drawn on the skin where they are. Limb marks ride along as the limb swings. */
@@ -571,13 +571,18 @@ export class Scene3D {
       const targetRot = -a.heading + Math.PI / 2;
       let d = targetRot - this.agentGroup.rotation.y; d = Math.atan2(Math.sin(d), Math.cos(d));
       this.agentGroup.rotation.y += d * Math.min(1, dt * 8);
-      this.body.position.y = moving ? Math.abs(Math.sin(t * 10)) * 0.12 : Math.sin(t * 2) * 0.02;
+      const tp = postureOf(a.feelings ?? {}, a.needs, a.body ?? { health: 100 }), P = this.posture, ease = Math.min(1, dt * 1.5);
+      for (const k of ["tension", "gaze", "gait", "slump"] as const) P[k] += (tp[k] - P[k]) * ease;                  // feelings move the body slowly, not in jumps
+      this.body.position.y = moving ? Math.abs(Math.sin(t * 10 * P.gait)) * 0.12 * P.gait : Math.sin(t * 2) * 0.02;
       const down = a.sleeping || !!a.body?.dead;
       this.body.rotation.z += ((a.body?.dead ? Math.PI / 2 : down ? Math.PI / 2.4 : 0) - this.body.rotation.z) * Math.min(1, dt * 4);
       this.body.position.y += down ? (a.body?.dead ? -0.45 : -0.1) : 0;
       const sh = a.body?.shaking ?? 0; if (sh > 0.05 && !down) { this.body.position.x = Math.sin(t * 55) * 0.012 * sh * 3; this.body.rotation.y = Math.sin(t * 47) * 0.02 * sh * 3; } else { this.body.position.x = 0; this.body.rotation.y = 0; }
       if (a.body?.limp && moving && !down) this.body.rotation.z = Math.sin(t * 5) * 0.07;
-      const sw = moving ? Math.sin(t * 10) * 0.6 : 0; this.limbs.forEach((l, i) => { l.rotation.x += ((i % 2 ? sw : -sw) * (i < 2 ? 1 : -1) - l.rotation.x) * Math.min(1, dt * 12); });
+      const sw = moving ? Math.sin(t * 10 * P.gait) * 0.6 * (0.6 + 0.4 * P.gait) : 0; this.limbs.forEach((l, i) => { l.rotation.x += ((i % 2 ? sw : -sw) * (i < 2 ? 1 : -1) - l.rotation.x) * Math.min(1, dt * 12); });
+      this.limbs.forEach((l, i) => { if (i < 2) l.rotation.z += ((i ? 1 : -1) * P.tension * 0.2 - l.rotation.z) * Math.min(1, dt * 6); });     // braced shoulders lift the arms a little
+      this.body.rotation.x += ((down ? 0 : P.slump * 0.28) - this.body.rotation.x) * Math.min(1, dt * 4);
+      this.head.rotation.x += ((down ? 0 : P.slump * 0.35 - P.gaze * 0.3) - this.head.rotation.x) * Math.min(1, dt * 4);
       this.zzz.position.y = 2.2 + Math.sin(t * 2) * 0.15;
       if (this.follow) {
         const desired = this.agentGroup.position.clone(); let k = 0;
@@ -597,6 +602,7 @@ export class Scene3D {
       }
       this.updateSky(a.worldTime);
     }
+    for (const [id, o] of this.entityObjs) if (this.entityData.get(id)?.kind === "item") setLod(o.children[0]!, this.camera.position.distanceTo(o.position));
     for (const o of this.entityObjs.values()) {
       if (!o.userData.burning) continue;
       o.traverse((c) => {
