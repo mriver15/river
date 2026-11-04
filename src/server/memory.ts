@@ -12,8 +12,12 @@ export const setLocator = (f: typeof locate) => { locate = f; };
 
 const HALF_LIFE_H = 36;
 
+/** How stirred the heart is, as extra importance (0..2): what is felt strongly is remembered more firmly. Set by the emotions system. */
+let salience: () => number = () => 0;
+export const setSalience = (f: typeof salience) => { salience = f; };
+
 export function addMemory(text: string, importance: number, tags: string[] = [], kind: MemoryKind = "episodic"): number {
-  const imp = Math.max(1, Math.min(10, importance));
+  const imp = Math.max(1, Math.min(10, importance + (kind === "episodic" ? salience() : 0)));
   const at = kind === "dream" ? null : locate();   // dreams happen nowhere
   const r = db.prepare("INSERT INTO memories(ts, kind, text, importance, tags, x, z) VALUES(?,?,?,?,?,?,?)")
     .run(simNow(), kind, text, imp, tags.join(" ").toLowerCase(), at?.x ?? null, at?.z ?? null);

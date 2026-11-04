@@ -121,7 +121,7 @@ export class Fire {
   private burnOut(e: Entity) {
     const w = this.w, name = e.name, oldKind = e.kind;
     delete e.props.burning;
-    bus.emit("loss", { name, kind: oldKind, x: e.x, z: e.z });
+    bus.emit("loss", { id: e.id, name, kind: oldKind, x: e.x, z: e.z });
     w.burnMark(e.x, e.z, oldKind === "tree" || oldKind === "structure" ? 2.8 : 1.6, oldKind === "tree" ? 1.4 : 1);
     if (oldKind === "tree" || oldKind === "bush" || oldKind === "structure") {
       e.kind = "char"; e.name = `burnt ${name}`;

@@ -123,6 +123,7 @@ export class ItemRegistry {
       loc: o.loc, lineage: {}, named: o.named,
     };
     this.items.set(id, i); this.save(i); this.log(id, why, { kind: o.kind, qty: o.qty, loc: o.loc.kind });
+    if (why === "created" && prov.makerLifeId !== undefined && !def.fungible) bus.emit("attach", { id, kind: "item", name: o.name, evidence: "made" });     // something River made is its own, not a unit of stock
     return i;
   }
 
@@ -197,9 +198,17 @@ export class ItemRegistry {
   }
   rename(id: string, name: string) {
     const i = this.items.get(id); if (!i) return;
-    if (i.qty > 1) { const one = this.splitOff(i, 1); one.name = name; one.named = true; this.save(one); }
+    let target = i;
+    if (i.qty > 1) { const one = this.splitOff(i, 1); one.name = name; one.named = true; this.save(one); target = one; }
     else { i.name = name; i.named = true; this.save(i); }
-    this.log(id, "renamed", { name }); this.refreshView();
+    this.log(id, "renamed", { name }); bus.emit("attach", { id: target.id, kind: "item", name, evidence: "named" }); this.refreshView();
+  }
+  /** Mend something River owns: it is sounder, and looks it (a fresh part shows). Its attachment grows, and grief for it eases. */
+  repair(id: string, amount: number) {
+    const i = this.items.get(id); if (!i || i.loc.kind === "consumed") return;
+    i.condition.durability = Math.min(1, +(i.condition.durability + amount).toFixed(4)); i.props = { ...i.props, repaired: true };
+    this.save(i); this.log(id, "repaired", { amount }); this.syncLook(i, true);
+    bus.emit("restored", { id, name: i.name, kind: "item" }); this.refreshView();
   }
 
   // ---------- moving things ----------
@@ -236,6 +245,7 @@ export class ItemRegistry {
   /** Where an item lies, and its entity: the projection of a world location. */
   private toWorld(i: ItemInstance, x: number, z: number) {
     i.loc = { kind: "world", x, z }; this.save(i); this.log(i.id, "put down", { x, z });
+    if (!defById(i.defId).fungible) bus.emit("placed", { id: i.id, name: i.name, x, z });
     this.moving.add(i.id);
     try { this.w.spawnWithId("item", i.id, i.name, x, z, { takeable: true, item: i.kind, itemName: i.name, desc: i.desc, ...i.props, visual: this.packet(i), ...(i.qty > 1 ? { qty: i.qty } : {}) }); } finally { this.moving.delete(i.id); }
   }
@@ -426,7 +436,8 @@ export class ItemRegistry {
   wear(id: string, amount: number) {
     const i = this.items.get(id); if (!i) return;
     i.condition.durability = Math.max(0, +(i.condition.durability - amount).toFixed(4)); this.save(i); this.syncLook(i);
-    if (i.condition.durability <= 0) { this.log(id, "broke", {}); this.consume(i, i.qty, "broke"); this.refreshView(); }
+    if (!defById(i.defId).fungible) bus.emit("attach", { id, kind: "item", name: i.name, evidence: "used" });
+    if (i.condition.durability <= 0) { this.log(id, "broke", {}); const at = i.loc.kind === "world" ? i.loc : this.w.me; this.consume(i, i.qty, "broke"); bus.emit("loss", { id, name: i.name, kind: "item", x: at.x, z: at.z, named: !!i.named }); this.refreshView(); }
   }
 
   /** Remove everything River had when a new life begins. A fresh world forgets the ground too. */

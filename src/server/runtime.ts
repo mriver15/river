@@ -3,7 +3,8 @@
 import { cfg, onConfig, resetConfig, setConfig } from "./config.ts";
 import { kvSet } from "./db.ts";
 import { bus, log } from "./bus.ts";
-import { addMemory, setLocator } from "./memory.ts";
+import { addMemory, setLocator, setSalience } from "./memory.ts";
+import { InnerLife } from "./inner.ts";
 import { Agent } from "./agent.ts";
 import { loadPlugins } from "./tools.ts";
 import { reapInterrupted } from "./smith.ts";
@@ -47,11 +48,12 @@ export async function createRuntime() {
   const fire = new Fire(world, ambient.say, (msg) => agent.notify(msg, true, "danger"));
   world.fire = fire;
   const knowledge = new Knowledge(world);
+  const inner = new InnerLife(world, emotions);
   const activities = new Activities(world, (msg, wake, kind) => agent.notify(msg, wake, kind), () => wildlife.threat());
   // When the token budget runs out the brain may ask for the world to wait; it goes through the journal like any other freeze.
   agent.setWorldPaused = (p, why) => void inject(() => { const m = { t: "sim_pause" as const, paused: p }; const seq = recordCommand("human", "sim_pause", m); humanCommand({ world, agent, emotions, ambient, creatures, story, catalog, wildlife, fire, knowledge, activities } as Runtime, m); finishCommand(seq, "ok", why); });
   activities.resume();
-  return { world, emotions, agent, ambient, creatures, story, catalog, wildlife, fire, knowledge, activities };
+  return { world, emotions, inner, agent, ambient, creatures, story, catalog, wildlife, fire, knowledge, activities };
 }
 export type Runtime = Awaited<ReturnType<typeof createRuntime>>;
 
@@ -59,9 +61,12 @@ export type Runtime = Awaited<ReturnType<typeof createRuntime>>;
 export function startSystems(rt: Runtime) {
   const { world, emotions, agent, ambient, creatures, story, wildlife, fire } = rt;
   registerState("emotions", () => emotions.state());
+  registerState("inner", () => rt.inner.state());
+  setSalience(() => emotions.salience());
   registerState("creatures", () => [...rt.creatures.rows.values()].sort((a, b) => (a.id < b.id ? -1 : 1)));   // the live rows, not the table (which is written at commit)
   every(STEP_MS, () => world.tick(STEP_MS / 1000), "world");
   rt.knowledge.start();
+  rt.inner.start();
   rt.activities.start();
   setSimSpeed(speedForDayMinutes(cfg("dayMinutes")));
   onConfig((key, v) => {

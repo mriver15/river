@@ -90,7 +90,7 @@ export class Creatures {
     const near = [...this.w.entities.values()].some((f) => f.props.burning && Math.hypot(f.x - e.x, f.z - e.z) < 1.8);
     if (!near || sr() > 0.1 * dt) return false;
     const c = this.get(e); this.w.removeEntity(e.id);
-    if (c) { c.alive = false; this.save(c); bus.emit("loss", { name: label(c), kind: "creature", x: e.x, z: e.z, named: !!c.name, trust: c.trust }); }
+    if (c) { c.alive = false; this.save(c); bus.emit("loss", { id: c.id, name: label(c), kind: "creature", x: e.x, z: e.z, named: !!c.name, trust: c.trust }); }
     this.say(`${c ? label(c)[0].toUpperCase() + label(c).slice(1) : "A creature"} was caught in the fire.`, e, 60);
     log("world", `${c ? label(c) : "An animal"} died in the fire.`, { perceived: true });
     return true;
@@ -123,6 +123,7 @@ export const NAME_CREATURE_TOOL: ToolDef = {
     if ([...creatures(w).rows.values()].some((x) => x.alive && x.name?.toLowerCase() === name.toLowerCase())) throw new ToolError(`There is already a ${name}.`);
     c.name = name; c.trust = Math.min(1, c.trust + 0.04); creatures(w)["save"](c); creatures(w)["syncEntity"](e, c); w.putEntity(e);
     log("world", `River named the ${c.species} ${name}.`, { perceived: true });
+    bus.emit("attach", { id: c.id, kind: "creature", name, evidence: "named" });
     return `You call the ${c.species} ${name}. ${c.trait === "skittish" ? "It flicks an ear at the sound, ready to bolt." : "It lifts its head at your voice."} It is yours to know now.`;
   },
 };
@@ -138,6 +139,7 @@ export const OFFER_TOOL: ToolDef = {
     if (!(DIET[c.species] ?? []).includes(it.kind)) throw new ToolError(`The ${c.species} sniffs at the ${it.name} and turns its head away.`);
     if ((e.props.fleeing ?? false) && c.trust < 0.2) throw new ToolError(`The ${c.species} is too frightened to come near your hand.`);
     w.takeItem(it.id, 1);
+    bus.emit("attach", { id: c.id, kind: "creature", name: c.name ?? c.species, evidence: "cared" });
     c.trust = Math.min(1, c.trust + 0.12 * TRUST_RATE[c.trait]); e.props.calmUntil = simNow() + 60_000; creatures(w)["save"](c);
     return `You hold out the ${it.name} and keep very still. After a long moment the ${c.species} steps in and takes it from your hand. ${c.trust >= 0.7 ? "It lingers beside you afterwards." : "It doesn't go far afterwards."}`;
   },

@@ -61,6 +61,7 @@ const server = http.createServer(async (req, res) => {
     return json(i ? { ...world.items.describe(i), history: world.items.history(i.id) } : { error: "no such item" });
   }
   if (url.pathname === "/api/items") return json({ items: world.items.all().map((i) => ({ id: i.id, name: i.name, qty: i.qty, loc: i.loc.kind })), audit: world.items.audit() });
+  if (url.pathname === "/api/mind") return json(rt.inner.view());                       // the inner life: relationships, beliefs with evidence, observations, and why feelings moved
   if (url.pathname === "/api/moments") return json(recentMoments(100));
   if (url.pathname === "/api/log") return json(logBefore(Number(url.searchParams.get("before") ?? 1e12), 200));
   if (fs.existsSync(DIST)) {

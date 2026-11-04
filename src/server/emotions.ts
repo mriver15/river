@@ -5,7 +5,7 @@
 // Large changes become MOMENTS (see moments.ts): the things the viewer is shown and the day's story is built from.
 import { bus, log } from "./bus.ts";
 import { db, kvGet, kvSet } from "./db.ts";
-import { dot, embed, relevance } from "./embed.ts";
+import { EMBED_ENABLED, dot, embed, relevance } from "./embed.ts";
 import { activeDesires, interests } from "./mind.ts";
 import { listPlaces } from "./places.ts";
 import { recordMoment } from "./moments.ts";
@@ -13,7 +13,11 @@ import { align } from "./taste.ts";
 import type { Moment } from "../shared/types.ts";
 import { BITTERSWEET, EMOTIONS, EMOTION_ORDER, intensityWord, type EmotionName } from "../shared/emotions.ts";
 import type { World } from "./world.ts";
-import { simNow, every, after, inject, scheduleJob, onJob } from "./sim.ts";
+import { simNow, simTick, every, after, inject, scheduleJob, onJob } from "./sim.ts";
+import { cfg } from "./config.ts";
+import { NO_FACTORS, appraiseAmount, decay, habitKey, habituate, type EventNature, type Factors } from "../mind/appraisal.ts";
+import type { Link } from "../mind/links.ts";
+import type { Belief } from "../mind/beliefs.ts";
 import { persisted } from "./persist.ts";
 import { recordCommand, finishCommand, isReplaying } from "./recorder.ts";
 import { lifeGen, isStale, discarded } from "./lifecycle.ts";
@@ -27,7 +31,21 @@ const MOOD_SOOTHES: Record<string, EmotionName[]> = {   // what a piece of music
 const HALF_LIFE_HABIT_MS = 2 * 3_600_000;
 const FLOW_TOOLS = new Set(["compose", "build", "craft", "plant", "dig", "inscribe", "strip_bark", "name_place", "pitch_rods", "magnifying_lens"]);
 
-interface Ctx { key?: string; relevance?: number; first?: boolean; at?: { x: number; z: number }; title?: string }
+interface Trace { eventId?: string; factors?: Factors; parts?: { name: string; mult: number }[] }
+interface Ctx { key?: string; relevance?: number; first?: boolean; at?: { x: number; z: number }; title?: string; trace?: Trace }
+/** An event as the appraisal sees it: typed, with a stable subject, and optionally the factors the caller already knows. */
+export interface Appraisal {
+  key: string; emotion: EmotionName; base: number; text: string; why: string;
+  /** stable id of the event; the same id is never appraised twice */
+  eventId?: string; subject?: string; tags?: string[]; nature?: EventNature;
+  ambiguous?: boolean; habit?: boolean; at?: { x: number; z: number }; factors?: Partial<Factors>;
+}
+/** What the appraisal needs to know about River's relationships and beliefs; provided by the inner-life service. */
+export interface Minds { link(id: string): Link | undefined; belief(id: string): Belief | undefined }
+/** An appraisal waiting for an optional embedding annotation, which can add a little relevance later but never changes the past. */
+interface Pending { emotion: EmotionName; base: number; f: number; rExplicit: number; text: string; why: string; eventId: string }
+const SEEN_KEEP = 300, PENDING_KEEP = 30, MINOR_BELOW = 0.02;
+const words = (t: string) => new Set((t.toLowerCase().match(/[a-z]{4,}/g) ?? []));
 
 export class Emotions {
   level = Object.fromEntries(EMOTION_ORDER.map((n) => [n, 0])) as Record<EmotionName, number>;
@@ -43,6 +61,15 @@ export class Emotions {
   private concernsKey = ""; private concernsAt = 0;
   private cand: Omit<Moment, "id" | "ts"> | null = null; private candPending = false; private lastMomentAt = 0;
   private lastCalm = simNow(); private prevDread = 0;
+  /** ids of events already appraised, so a repeat cannot count twice */
+  private seen: string[] = [];
+  private pending = new Map<number, Pending>();
+  private minor: Record<string, { n: number; sum: number; why: string }> = {};
+  private traceCount = 0;
+  private flushedBlock = 0;
+  minds: Minds | null = null;
+  /** extra weight given to what is remembered while the heart is stirred; set by memory */
+  private salienceCap = 2;
 
   constructor(private w: World) {
     this.habit = {};
@@ -50,9 +77,8 @@ export class Emotions {
     if (s) this.restore(s);
     onJob("emotions.moment", () => this.flushMoment());
     bus.on("perceived", (e: { text: string }) => void this.perceived(e.text).catch(() => {}));
-    bus.on("loss", (e: { name: string; kind: string; x: number; z: number; named?: boolean; trust?: number }) => void this.loss(e).catch(() => {}));
     bus.on("expressed", (e: { mood: string; note: string }) => this.expressed(e));
-    bus.on("made", (e: { name: string; tags: string[]; kind: string }) => void this.made(e).catch(() => {}));
+    bus.on("made", (e: { name: string; tags: string[]; kind: string; id?: string }) => void this.made(e).catch(() => {}));
     bus.on("discovered-colour", () => void this.appraise({ key: "colour-mix", emotion: "wonder", base: 0.15, text: "a new colour", why: "a colour that wasn't there before" }).catch(() => {}));
     bus.on("bond", (e: { id: string; stage: string; name: string }) => void this.bond(e).catch(() => {}));
     bus.on("story", (e: { text: string; final: boolean }) => void this.storyBeat(e).catch(() => {}));
@@ -60,20 +86,22 @@ export class Emotions {
 
   start() { every(1000, () => this.tick(1), "emotions"); }
   /** Everything that decides how feelings evolve: committed with the clock, restored after a restart, and hashed. */
-  private snapshot() { return { ...this.state(), cand: this.cand, candPending: this.candPending, lastMomentAt: this.lastMomentAt, lastCalm: this.lastCalm, prevDread: this.prevDread }; }
+  private snapshot() { return { ...this.state(), cand: this.cand, candPending: this.candPending, lastMomentAt: this.lastMomentAt, lastCalm: this.lastCalm, prevDread: this.prevDread, seen: this.seen, pending: [...this.pending], minor: this.minor, relId: this.relId, flushedBlock: this.flushedBlock }; }
   private restore(s: ReturnType<Emotions["snapshot"]>) {
     this.level = s.level; this.why = s.why; this.edge = s.edge; this.momentAt = s.momentAt; this.habit = s.habit; this.recent = s.recent; this.acts = s.acts;
     this.fails = new Map(s.fails); this.places = new Map(s.places); this.cand = s.cand; this.candPending = s.candPending;
     this.lastMomentAt = s.lastMomentAt; this.lastCalm = s.lastCalm; this.prevDread = s.prevDread;
+    this.seen = s.seen ?? []; this.pending = new Map(s.pending ?? []); this.minor = s.minor ?? {}; this.relId = s.relId ?? 0; this.flushedBlock = s.flushedBlock ?? Math.floor(simTick() / 600);
   }
   /** Everything that decides how feelings evolve, for state hashing. */
-  state() { return { level: this.level, why: this.why, edge: this.edge, momentAt: this.momentAt, habit: this.habit, recent: this.recent, acts: this.acts, fails: [...this.fails], places: [...this.places] }; }
-  reset() { for (const n of EMOTION_ORDER) this.level[n] = 0; this.why = {}; this.edge = {}; this.momentAt = {}; this.habit = {}; this.recent = []; this.acts = []; this.fails.clear(); this.places.clear(); this.concerns = []; this.concernsKey = ""; this.cand = null; this.candPending = false; this.lastMomentAt = 0; this.lastCalm = simNow(); this.prevDread = 0; }
+  state() { return { level: this.level, why: this.why, edge: this.edge, momentAt: this.momentAt, habit: this.habit, recent: this.recent, acts: this.acts, fails: [...this.fails], places: [...this.places], seen: this.seen, pending: [...this.pending], minor: this.minor, flushedBlock: this.flushedBlock }; }
+  reset() { for (const n of EMOTION_ORDER) this.level[n] = 0; this.why = {}; this.edge = {}; this.momentAt = {}; this.habit = {}; this.recent = []; this.acts = []; this.fails.clear(); this.places.clear(); this.concerns = []; this.concernsKey = ""; this.seen = []; this.pending.clear(); this.minor = {}; this.flushedBlock = Math.floor(simTick() / 600); this.cand = null; this.candPending = false; this.lastMomentAt = 0; this.lastCalm = simNow(); this.prevDread = 0; }
 
   // ---------- core ----------
   bump(n: EmotionName, amt: number, why = "", c: Ctx = {}) {
-    const prev = this.level[n]; this.level[n] = clamp(prev + amt); const delta = this.level[n] - prev;
+    const prev = this.level[n]; this.level[n] = clamp(Number.isFinite(prev + amt) ? prev + amt : prev); const delta = this.level[n] - prev;
     if (amt > 0 && why) this.why[n] = why;
+    this.record(n, prev, delta, why, c.trace);
     const now = simNow(), crossed = prev < 0.55 && this.level[n] >= 0.55 && now - (this.edge[n] ?? 0) > 8 * 60_000;
     // a big enough change is a moment: it is shown to the viewer and goes into the story
     const intensity = clamp(0.3 + delta * 1.2 + (c.first ? 0.2 : 0) + ((c.relevance ?? 0) > 0.6 ? 0.15 : 0));
@@ -96,14 +124,17 @@ export class Emotions {
     if (simNow() - this.lastMomentAt < 20_000 && best.intensity < 0.85) { log("feeling", best.title, { intensity: best.intensity }); return; }   // too soon after the last: note it quietly
     this.lastMomentAt = simNow(); recordMoment(best);
   }
+  /** Lower a feeling for a reason (something mended, something found), and keep the reason. */
+  ease(n: EmotionName, amt: number, why: string, eventId?: string) {
+    const prev = this.level[n]; this.level[n] = clamp(prev - amt); this.record(n, prev, this.level[n] - prev, why, { eventId });
+  }
   /** Raise to at least `v` (for continuous conditions like standing near a fire). */
   private floor(n: EmotionName, v: number, why: string) { if (this.level[n] < v) this.bump(n, v - this.level[n], why); }
 
   tick(dt: number) {
     const w = this.w, me = w.me;
     for (const n of EMOTION_ORDER) {
-      const half = EMOTIONS[n].half; if (Number.isFinite(half)) this.level[n] *= Math.pow(0.5, dt / half);
-      if (this.level[n] < 0.01) this.level[n] = 0;
+      this.level[n] = decay(this.level[n], dt, EMOTIONS[n].half);          // simulated seconds; never negative, never non-finite
     }
     // loneliness is an integrator: it grows with silence and eases with company
     const near = w.nearby(12).filter(({ e }) => e.kind === "animal"), trusted = Math.max(0, ...near.map(({ e }) => (e.props.trust as number) ?? 0));
@@ -124,7 +155,35 @@ export class Emotions {
     // feelings pull on the plain needs: a good heart lifts mood, a heavy one drags; restlessness feeds curiosity
     w.bump({ mood: this.valence() * 0.02 * dt, curiosity: this.level.boredom * 0.015 * dt });
     w.feelings = this.view();
+    if (Math.floor(simTick() / 600) !== this.flushedBlock) { this.flushedBlock = Math.floor(simTick() / 600); this.flushMinor(); }     // once per simulated minute, whatever the phase
   }
+
+  // ---------- why a feeling moved ----------
+  /** Every change keeps its cause. Tiny ones are summed into one line a minute, unless full tracing is on. */
+  private record(n: EmotionName, prior: number, delta: number, why: string, t?: Trace) {
+    if (delta === 0) return;
+    const big = Math.abs(delta) >= MINOR_BELOW;
+    if (!big && !t?.eventId && !cfg("traceAll")) { const m = (this.minor[n] ??= { n: 0, sum: 0, why }); m.n++; m.sum += delta; m.why = why || m.why; return; }
+    db.prepare("INSERT INTO mind_trace(tick, kind, emotion, subject, event_id, prior, delta, result, why, data) VALUES(?,?,?,?,?,?,?,?,?,?)")
+      .run(simTick(), "appraisal", n, null, t?.eventId ?? null, +prior.toFixed(4), +delta.toFixed(4), +this.level[n].toFixed(4), why, t?.factors || t?.parts ? JSON.stringify({ factors: t.factors, parts: t.parts }) : null);
+    this.traceCount++;
+  }
+  private flushMinor() {
+    for (const [n, m] of Object.entries(this.minor)) {
+      db.prepare("INSERT INTO mind_trace(tick, kind, emotion, prior, delta, result, why, data) VALUES(?,?,?,?,?,?,?,?)")
+        .run(simTick(), "aggregate", n, null, +m.sum.toFixed(4), +this.level[n as EmotionName].toFixed(4), m.why, JSON.stringify({ changes: m.n }));
+    }
+    this.minor = {};
+  }
+  /** The most recent explanations, newest first, for the inspector. */
+  traces(limit = 60, emotion?: string) {
+    const rows = (emotion ? db.prepare("SELECT * FROM mind_trace WHERE emotion = ? ORDER BY seq DESC LIMIT ?").all(emotion, limit) : db.prepare("SELECT * FROM mind_trace ORDER BY seq DESC LIMIT ?").all(limit)) as any[];
+    return rows.map((r) => ({ ...r, data: r.data ? JSON.parse(r.data) : null }));
+  }
+  /** Extra importance (0..2) for a memory made while the heart is stirred: what was felt is remembered more firmly. */
+  salience(): number { return +Math.min(this.salienceCap, this.arousal() * 2).toFixed(2); }
+  /** How much a mind this stirred will let a minor matter interrupt it: 1 is ordinary, bounded either way. Critical triggers ignore it. */
+  tolerance(): number { return clamp(1 + (this.absorbed() ? 0.8 : 0) - 0.5 * this.level.dread + 0.3 * this.level.frustration, 0.5, 2, ); }
 
   valence() {
     const L = this.level, pos = L.wonder * 0.8 + L.playfulness * 0.9 + L.pride * 0.7, neg = L.dread * 0.9 + L.grief * 0.8 + L.frustration * 0.6 + L.loneliness * 0.5 + L.boredom * 0.3 + L.longing * 0.25;
@@ -157,29 +216,49 @@ export class Emotions {
   contact(strength = 1) { this.level.loneliness *= 1 - 0.7 * strength; }
 
   // ---------- appraisal ----------
-  /** What River currently cares about, as vectors. Refreshed at most every 30s, only re-embedded when it changes. */
+  /** What River currently cares about, as vectors, for the optional embedding annotation. Refreshed at most every 30s. */
   private async refreshConcerns() {
     if (simNow() - this.concernsAt < 30_000) return; this.concernsAt = simNow();
     const texts = [...activeDesires().slice(0, 8).map((d) => d.text), ...interests().slice(0, 6).map((i) => i.topic), ...listPlaces().map((p) => `${p.name} ${p.note}`.trim())].map((t) => t.slice(0, 200));
     const key = texts.join("|"); if (key === this.concernsKey) return; this.concernsKey = key;
     const vs = texts.length ? await embed(texts, "document") : []; this.concerns = vs ? texts.map((t, i) => ({ text: t, v: vs[i] })) : [];
   }
-  /** 0..1: how much does this text bear on what River cares about? Unknown (no embeddings, nothing cared about yet) is neutral-ish. */
-  private async relevanceOf(text: string): Promise<{ r: number; top?: string } | null> {
-    // The embedding service is an outside input. Live, its answer is journaled when it arrives; in replay it is waited for and supplied.
-    const id = ++this.relId;
-    if (isReplaying()) return new Promise((res) => this.relWaiting.set(id, res));
+  /** Relevance from explicit links alone: words shared with what River wants, is curious about or has named, and its attachment to the subject. */
+  private explicitRelevance(text: string, tags: string[], subject?: string): { r: number; top?: string } {
+    const mine = words(`${text} ${tags.join(" ")}`);
+    let best = 0, top: string | undefined;
+    for (const c of [...activeDesires().slice(0, 8).map((d) => d.text), ...interests().slice(0, 6).map((i) => i.topic), ...listPlaces().map((p) => `${p.name} ${p.note}`)]) {
+      let n = 0; for (const t of words(c)) if (mine.has(t)) n++;
+      const r = n ? Math.min(1, 0.45 + 0.2 * n) : 0; if (r > best) { best = r; top = c; }
+    }
+    const att = subject ? this.minds?.link(subject)?.attachment ?? 0 : 0;
+    return { r: Math.max(best, att, 0.3), top: best >= att ? top : undefined };
+  }
+  /** How exposed River's body is: hungry, worn out and cold make everything land harder. */
+  private vulnerability(): number { const n = this.w.me.needs; return clamp(1 - Math.min(n.energy, n.hunger, n.warmth) / 70); }
+
+  /**
+   * The optional embedding annotation. It arrives later, is journaled with the tick it was applied, and can only add a little to the
+   * same feeling from then on; earlier ticks are never revisited, so how long the service took cannot change a replay.
+   */
+  private async annotate(id: number, text: string) {
+    if (!EMBED_ENABLED || isReplaying()) return;                  // replay applies what the journal recorded
     const gen = lifeGen(), v = await this.relevanceLive(text);
-    return inject(() => {
-      if (isStale(gen)) { discarded("appraisal"); return null; }        // the life it was about has ended
+    inject(() => {
+      if (isStale(gen)) { discarded("appraisal"); return; }
+      if (!this.pending.has(id)) return;                          // forgotten (or the life ended): nothing to add to
       finishCommand(recordCommand("external", "relevance", { id, ...v }), "ok", "");
-      return v;
+      this.resolveRelevance({ id, ...v });
     });
   }
   private relId = 0;
-  private relWaiting = new Map<number, (v: { r: number; top?: string }) => void>();
-  /** Replay: deliver a recorded relevance result to the appraisal that is waiting for it. */
-  resolveRelevance(p: { id: number; r: number; top?: string }) { this.relWaiting.get(p.id)?.({ r: p.r, top: p.top }); this.relWaiting.delete(p.id); }
+  /** Apply a relevance annotation: live when it arrives, or in replay when the journal says it did. */
+  resolveRelevance(p: { id: number; r: number; top?: string }) {
+    const a = this.pending.get(p.id); if (!a) return;
+    this.pending.delete(p.id);
+    const extra = Math.min(0.15, Math.max(0, a.base * a.f * 0.8 * (p.r - a.rExplicit)));
+    if (extra >= 0.02) this.bump(a.emotion, extra, p.top && p.r > 0.6 ? `${a.why} (it touches on “${clip(p.top, 40)}”)` : a.why, { relevance: p.r, trace: { eventId: `${a.eventId}+annotation`, factors: { ...NO_FACTORS, relevance: p.r } } });
+  }
   private async relevanceLive(text: string): Promise<{ r: number; top?: string }> {
     await this.refreshConcerns(); if (!this.concerns.length) return { r: 0.35 };
     const q = await embed([text.slice(0, 300)], "query"); if (!q) return { r: 0.35 };
@@ -187,26 +266,38 @@ export class Emotions {
     for (const c of this.concerns) { const r = relevance(dot(q[0], c.v)); if (r > best) { best = r; top = c.text; } }
     return { r: best, top };
   }
-  private habituate(key: string): { f: number; first: boolean } {
-    const now = simNow(), h = this.habit[key], eff = h ? h.n * Math.pow(0.5, (now - h.t) / HALF_LIFE_HABIT_MS) : 0;
-    this.habit[key] = { n: eff + 1, t: now };
-    return { f: 1 / (1 + 0.7 * eff), first: !h };
+  private markSeen(id: string): boolean {
+    if (this.seen.includes(id)) return false;
+    this.seen.push(id); if (this.seen.length > SEEN_KEEP) this.seen.shift();
+    return true;
   }
+  /** Has this event already been appraised? (Used by callers that do more than appraise.) */
+  appraised(eventId: string) { return this.seen.includes(eventId); }
 
   /**
-   * Turn an event into a feeling. `base` is how strongly an unremarkable, first-time event of this kind would land.
-   * `ambiguous` events (a sound, a footprint) become fear when River is already afraid or keyed up, wonder otherwise.
+   * Turn an event into a feeling. `base` is how strongly an unremarkable, first-time event of this kind would land; the factors
+   * (novelty, relevance, attachment, expectation error, controllability, responsibility, vulnerability, habituation) scale it, and the
+   * change is recorded with its cause. `ambiguous` events (a sound, a footprint) become fear when River is already afraid or keyed up.
+   * An event with the same id is never appraised twice, and the answer never depends on how long any outside service takes.
    */
-  async appraise(o: { key: string; emotion: EmotionName; base: number; text: string; why: string; ambiguous?: boolean; habit?: boolean; at?: { x: number; z: number } }) {
-    let emotion = o.emotion, base = o.base, why = o.why, title = o.why;
-    if (o.ambiguous && (this.level.dread > 0.25 || this.arousal() > 0.55)) { emotion = "dread"; base = 0.15 + 0.3 * this.arousal(); why = `${o.why}, and in the state you were in it felt like a threat`; title = `${o.why}, and it felt like a threat`; }
-    const hab = o.habit === false ? { f: 1, first: false } : this.habituate(o.key);
-    const rel = await this.relevanceOf(o.text);
-    if (!rel) return;                                   // stale: the life this was about has ended
+  async appraise(o: Appraisal): Promise<void> { this.appraiseNow(o); }
+  appraiseNow(o: Appraisal): void {
+    const eventId = o.eventId ?? `${o.key}@${simTick()}`;
+    if (!this.markSeen(eventId)) return;
+    let emotion = o.emotion, base = o.base, why = o.why, title = o.why, nature: EventNature = o.nature ?? (emotion === "dread" ? "threat" : emotion === "grief" ? "loss" : emotion === "pride" || emotion === "wonder" || emotion === "playfulness" ? "gain" : "neutral");
+    if (o.ambiguous && (this.level.dread > 0.25 || this.arousal() > 0.55)) { emotion = "dread"; nature = "threat"; base = 0.15 + 0.3 * this.arousal(); why = `${o.why}, and in the state you were in it felt like a threat`; title = `${o.why}, and it felt like a threat`; }
+    const hab = o.habit === false ? { f: 1, first: false } : (() => { const h = habituate(this.habit[o.key], simNow(), HALF_LIFE_HABIT_MS); this.habit[o.key] = h.next; return h; })();
+    const rel = this.explicitRelevance(o.text, o.tags ?? [], o.subject);
+    const att = o.subject ? this.minds?.link(o.subject)?.attachment ?? 0 : 0;
+    const f: Factors = { ...NO_FACTORS, novelty: hab.first ? 1 : hab.f, relevance: rel.r, attachment: att, vulnerability: this.vulnerability(), ...o.factors };
     const carry = 1 + 0.5 * this.arousal();
-    let amt = Math.min(base * hab.f * (0.7 + 0.8 * rel.r) * carry * (hab.first ? 1.4 : 1), base * 2.5, 0.9);
-    if (rel.r > 0.6 && rel.top && amt > 0.1) why += ` (it touches on “${clip(rel.top, 40)}”)`;
-    if (amt >= 0.02) this.bump(emotion, amt, why, { key: o.key, relevance: rel.r, first: hab.first && base >= 0.15, at: o.at, title });
+    const { amount, parts } = appraiseAmount(base, f, nature, hab, carry);
+    if (rel.r > 0.6 && rel.top && amount > 0.1) why += ` (it touches on “${clip(rel.top, 40)}”)`;
+    if (amount >= 0.02) this.bump(emotion, amount, why, { key: o.key, relevance: rel.r, first: hab.first && base >= 0.15, at: o.at, title, trace: { eventId, factors: f, parts } });
+    const id = ++this.relId;
+    this.pending.set(id, { emotion, base, f: hab.f, rExplicit: rel.r, text: o.text.slice(0, 300), why: o.why, eventId });
+    if (this.pending.size > PENDING_KEEP) this.pending.delete(this.pending.keys().next().value!);
+    void this.annotate(id, o.text).catch(() => {});
   }
 
   // ---------- event hooks ----------
@@ -225,31 +316,21 @@ export class Emotions {
     if (key === "creature") this.level.loneliness *= 0.85;
     await this.appraise({ key: `world:${key}`, emotion: emo, base, text, why: clip(text), ambiguous: amb });
   }
-  private async loss(e: { name: string; kind: string; x: number; z: number; named?: boolean; trust?: number }) {
-    const d = Math.hypot(e.x - this.w.me.x, e.z - this.w.me.z), near = d < 30 ? 1 : 0.4;
-    if (e.kind === "creature") {      // somebody, not something: grief follows who they were to River
-      const base = 0.25 + (e.named ? 0.3 : 0) + 0.45 * (e.trust ?? 0);
-      this.level.loneliness = clamp(this.level.loneliness + 0.15 * (e.trust ?? 0));
-      return void (await this.appraise({ key: `loss:creature:${e.name}`, emotion: "grief", base: base * near, text: `${e.name} died`, why: `${e.name} is gone`, at: { x: e.x, z: e.z }, habit: false }));
-    }
-    const base = e.kind === "book" ? 0.4 : e.kind === "structure" ? 0.45 : e.kind === "tree" ? 0.2 : 0.1;
-    await this.appraise({ key: `loss:${e.kind}`, emotion: "grief", base: base * near, text: `${e.name} burnt away`, why: `${e.kind === "tree" ? `the ${e.name}` : `the ${e.name}`} burnt away`, at: { x: e.x, z: e.z } });
-  }
   /**
    * River made or changed something. How it lands depends on whether it matches what River actually likes: a piece in a colour it
    * loves is deeply satisfying; one in a colour it has said it hates is a small, real disappointment.
    */
-  private async made(e: { name: string; tags: string[]; kind: string }) {
+  private async made(e: { name: string; tags: string[]; kind: string; id?: string }) {
     if (e.kind === "take_down") return;
     const a = align(e.tags), base = e.kind === "paint" ? 0.2 : 0.4, fit = 1 + 0.35 * a.score;
-    await this.appraise({ key: `made:${e.name}`, emotion: "pride", base: Math.max(0.05, base * fit), text: `${e.name}: ${e.tags.join(" ")}`, why: a.liked.length ? `${e.name} turned out the way it likes (${a.liked.slice(0, 2).join(", ")})` : `made ${e.name}`, habit: false });
+    await this.appraise({ key: `made:${e.name}`, subject: e.id, tags: e.tags, nature: "gain", emotion: "pride", base: Math.max(0.05, base * fit), text: `${e.name}: ${e.tags.join(" ")}`, why: a.liked.length ? `${e.name} turned out the way it likes (${a.liked.slice(0, 2).join(", ")})` : `made ${e.name}`, habit: false });
     if (a.score < -0.5) await this.appraise({ key: `clash:${e.name}`, emotion: "frustration", base: Math.min(0.3, 0.12 * -a.score), text: e.name, why: `${e.name} has ${a.disliked.slice(0, 2).join(" and ")} in it, which it dislikes`, habit: false });
   }
   /** A creature came to trust River a little more. */
   private async bond(e: { id: string; stage: string; name: string }) {
     const big = e.stage === "a friend" ? 0.5 : e.stage === "trusting" ? 0.35 : 0.22;
     this.level.loneliness *= e.stage === "a friend" ? 0.4 : 0.75;
-    await this.appraise({ key: `bond:${e.id}:${e.stage}`, emotion: "pride", base: big, text: `${e.name} came to trust you`, why: `${e.name} came to trust you`, habit: false });
+    await this.appraise({ key: `bond:${e.id}:${e.stage}`, subject: e.id, emotion: "pride", base: big, text: `${e.name} came to trust you`, why: `${e.name} came to trust you`, habit: false });
     await this.appraise({ key: `bond-w:${e.id}`, emotion: "wonder", base: big * 0.5, text: e.name, why: "being trusted", habit: false });
   }
   /** A piece of the Keeper's story was found. */

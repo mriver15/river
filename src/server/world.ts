@@ -261,6 +261,8 @@ export class World {
     return this.lit() ? Math.max(r, 26) : r;
   }
 
+  /** How strongly something draws River's attention (1 = ordinary): what it loves, and what surprised it, comes first. Set by the inner life. */
+  attention: (id: string) => number = () => 1;
   dist(e: { x: number; z: number }) { return Math.hypot(e.x - this.me.x, e.z - this.me.z); }
   inReach(e: Entity) { return this.dist(e) <= REACH; }
   nearby(radius: number): { e: Entity; d: number }[] {

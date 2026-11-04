@@ -300,3 +300,33 @@ Still not done:
 - **Structures and creatures** keep their existing hand-written meshes; they are not in the registry.
 - **Custom (River-designed) items** use the same validated component format, but no tool lets River author one yet.
 - Visuals for items made by forged plugins use the definition their kind maps to (the keepsake for unknown kinds).
+
+## MVP 7: causal emotions, attachment and beliefs
+
+Code: `src/mind/` (pure: `appraisal`, `perception`, `links`, `beliefs`), `src/server/inner.ts` (the service), `src/server/emotions.ts` (appraisal and decay), `src/client/ui/heart.ts` (inspector, in the Brain tab), `GET /api/mind`.
+
+What changed:
+
+- **Perception boundary.** A loss is a typed event with a stable id and a signature (place, loudness). River observes it only if it is in sight range (which the dark, fog and storms shrink), awake, or loud enough to hear; heard-but-unseen leaves a small unease and the subject stays unknown. Anything else is kept as *unseen* and appraised only when River comes upon the place (`discover`) or is told. Each observation records modality, confidence, tick and whether it was found out late. Nothing that burns out of sight causes grief before it is found.
+- **Appraisal factors** (`appraiseAmount`, pure): novelty/habituation, relevance, attachment, expectation error, controllability (for threats), responsibility (for losses), vulnerability (hungry, tired, cold), and arousal carry-over. Relevance now comes from explicit links (words shared with desires, interests and named places, and attachment to the subject). Embedding relevance is an optional journaled *annotation*: it can only add a little to the same feeling when it arrives, at the tick it arrives, so how long the service takes cannot change any earlier tick. Duplicate events (same id) are never appraised twice.
+- **Decay and sanity.** Decay is by half-life in simulated seconds, never negative or non-finite; loneliness has no half-life and is eased only by its causes. Habituation keys carry event class and subject, and force returns over simulated time (about 0.8 of fresh after eight hours).
+- **Explanations.** Every change to a feeling records cause event, prior value, factors and multipliers, delta and result (`mind_trace`). Changes under 0.02 are summed into one line per simulated minute; the `traceAll` setting keeps each.
+- **Relationships.** Per subject (creature, item, place, structure): familiarity, trust, attachment, fear, last encounter and up to eight pieces of evidence. Attachment grows from making (once), naming, using, caring, repairing and time spent together, with diminishing returns and cool-downs so repetition cannot be farmed; a name alone is not love. Stock items (fungible) never attach. A creature's trust of River stays separate from River's attachment to it.
+- **Loss severity** depends on the link: what such a thing is worth to anyone, plus half of River's attachment, scaled again by attachment. Mending something raises attachment, eases grief for it (but leaves some, and some longing: a mended thing is not quite the old one) and adds pride; finding something thought gone eases grief and surprises. Items can now be repaired (`ItemRegistry.repair`), which also shows the "repaired" look from MVP 6.
+- **Beliefs.** Claims with confidence, supporting and contradicting observation ids, and a fact/hypothesis kind. River expects what it built or put down to be where it left it; a loss it observes contradicts that, and the expectation error makes the grief land harder. The same observation never counts twice.
+- **Behaviour.** Memories made while the heart is stirred get up to two points of extra importance. Attention weights (`w.attention`) bring loved or surprising things forward in what River is told about nearby. Interruption tolerance (0.5..2) scales how long minor triggers (completion, emotion, novelty, idle) wait; threats, a human voice and needs are never delayed. None of this grants information or sets goals; low fear cannot disable a reflex.
+- **New life** clears links, beliefs, unseen events, observations, pending annotations, seen ids and the trace table.
+- **Fixtures.** `tests/fixtures/appraisal.json` holds golden amounts for seven scenarios, so a coefficient change is deliberate and visible.
+
+Checks: typecheck and build clean; 141 unit tests (pure appraisal, perception, links and beliefs; runtime tests for each acceptance line: unseen destruction, personal vs stock loss, repair, rediscovery, duplicates, habituation, late annotation, tracing, new life, restore); replays of `new-life`, `fire` and `injury`, a 3-seed 1-day soak and the build/items/alive restart scenarios all match. The full 20-seed regression was not run. One existing test (`activities`) was reordered so a burning tree from the previous test is removed before the body is reset.
+
+Still not done:
+
+- **Occlusion** is not modelled (only range, light, sleep and loudness), and discovery is by coming within sight of the place, not by seeing remains, absence from a known spot, or a human telling River (`discover(id, "told")` exists but nothing calls it).
+- **Only losses, repairs and rediscovery are typed events.** Other appraisals (sounds, discoveries, tool outcomes) keep their existing text rules but now carry factors, ids and traces.
+- **Mixed feelings** are produced for mending and rediscovery only; betrayal and successful care outcomes for creatures are not yet separate events.
+- **Disposition** (slow learned caution and confidence) and a separate valence/arousal/control layer are not implemented; the existing valence and arousal are derived from emotion levels.
+- **Fear association** is stored but nothing raises it yet.
+- **Memory salience** is a bounded boost to importance; it does not yet affect recall ranking.
+- **Item repair** has no tool for River to use; only the registry method and structure repair exist.
+- **The relevance annotation** was exercised in tests with injected results, not against a live embedding service in this phase.

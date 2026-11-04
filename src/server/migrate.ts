@@ -81,6 +81,18 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: "0009_mind_trace", description: "Why a feeling moved: cause, factors, before and after; and what River observed",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS mind_trace (
+          seq INTEGER PRIMARY KEY AUTOINCREMENT, tick INTEGER NOT NULL, kind TEXT NOT NULL, emotion TEXT, subject TEXT, event_id TEXT,
+          prior REAL, delta REAL, result REAL, why TEXT NOT NULL DEFAULT '', data TEXT
+        );
+        CREATE INDEX IF NOT EXISTS mind_trace_event ON mind_trace(event_id);
+      `);
+    },
+  },
 ];
 
 export interface MigrationReport { applied: string[]; alreadyApplied: string[] }

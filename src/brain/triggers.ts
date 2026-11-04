@@ -22,6 +22,8 @@ export class TriggerQueue {
   private pending: Trigger[] = [];
   private lastTaken = new Map<TriggerKind, number>();
   private seq = 1;
+  /** How long a mind this stirred lets minor things wait (1 = ordinary). Only triggers below the need line are affected; threats, a human voice and needs never are. */
+  spacingScale: () => number = () => 1;
 
   /** Raise a trigger. A pending one with the same key absorbs it (texts merge, most urgent priority wins). */
   raise(kind: TriggerKind, text: string, now: number, o: { key?: string; ttl?: number } = {}): Trigger {
@@ -61,13 +63,14 @@ export class TriggerQueue {
   }
   private eligible(t: Trigger, now: number): boolean {
     const last = this.lastTaken.get(t.kind);
-    return last === undefined || now - last >= MIN_SPACING_TICKS[t.kind] || t.priority <= 1;   // threats and a human voice never wait their turn
+    return last === undefined || now - last >= this.spacing(t) || t.priority <= 1;   // threats and a human voice never wait their turn
   }
+  private spacing(t: Trigger): number { return t.priority <= 2 ? MIN_SPACING_TICKS[t.kind] : Math.round(MIN_SPACING_TICKS[t.kind] * Math.max(0.5, Math.min(2, this.spacingScale()))); }
   /** Ticks until the earliest pending trigger becomes eligible (0 if one is eligible now), or null if nothing is pending. */
   waitTicks(now: number): number | null {
     this.expire(now);
     if (!this.pending.length) return null;
-    return Math.min(...this.pending.map((t) => { const last = this.lastTaken.get(t.kind); return this.eligible(t, now) || last === undefined ? 0 : last + MIN_SPACING_TICKS[t.kind] - now; }));
+    return Math.min(...this.pending.map((t) => { const last = this.lastTaken.get(t.kind); return this.eligible(t, now) || last === undefined ? 0 : last + this.spacing(t) - now; }));
   }
   get size() { return this.pending.length; }
   list(): readonly Trigger[] { return this.pending; }

@@ -62,7 +62,7 @@ export class Agent {
   private lastReflect = kvGet<number>("lastReflect", simNow());
   private reflectedAt = kvGet<number>("reflectedAt", 0);
   private inbox: { text: string; kind: TriggerKind }[] = [];
-  readonly queue = new TriggerQueue();
+  readonly queue = new TriggerQueue();      // (its spacing follows how stirred the heart is: see the constructor)
   private idleAt: number | null = 10;
   private abort: AbortController | null = null;
   private lastOutcomes: string[] = [];
@@ -79,6 +79,7 @@ export class Agent {
   private inFlight: Promise<unknown> = Promise.resolve();
 
   constructor(private w: World, private emo: Emotions) {
+    this.queue.spacingScale = () => emo.tolerance();
     onNewGeneration(() => { this.abort?.abort(); this.queue.clear(); this.inbox = []; this.lastOutcomes = []; });     // a new life: nothing in flight matters now
     bus.on("moment", (m: { intensity?: number; title?: string }) => { if ((m.intensity ?? 0) >= 0.6) this.raise("emotion", `a strong feeling: ${m.title ?? ""}`); });
   }
@@ -234,7 +235,7 @@ export class Agent {
   // ---------- the decision packet ----------
   private async buildPacket(triggers: Trigger[], fixed: number) {
     const w = this.w, m = w.me, n = m.needs, desires = activeDesires(), ints = interests().slice(0, 4), inv = [...w.inventory.values()];
-    const sight = w.sightRadius(), near = w.nearby(sight).slice(0, 14), inbox = this.inbox.splice(0);
+    const sight = w.sightRadius(), near = w.nearby(sight).sort((a, b) => a.d / w.attention(a.e.id) - b.d / w.attention(b.e.id)).slice(0, 14).sort((a, b) => a.d - b.d), inbox = this.inbox.splice(0);
     const q = [...triggers.flatMap((t) => t.texts), ...desires.slice(0, 3).map((d) => d.text), ...recentLog(4).map((l) => l.text)].join(" ");
     const mems = await recall(q, 5, { x: m.x, z: m.z });
     const closed = recentClosedDesires(3);

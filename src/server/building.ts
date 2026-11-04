@@ -236,7 +236,7 @@ function completeStage(w: World, plan: BuildPlan, stage: number, entityId: strin
   if (!last) return { entityId: e.id };
   addWork({ name: plan.name, shape: plan.shape, size: plan.size, materials: mats, colors: plan.props.colors, colorNames: plan.props.colorNames, x: plan.mid.x, z: plan.mid.z }, e.id);
   w.bump({ mood: 8, curiosity: -6 });
-  bus.emit("made", { name: plan.name, tags: plan.tags, kind: "build" });
+  bus.emit("made", { id: e.id, name: plan.name, tags: plan.tags, kind: "build" });
   log("world", `River built ${plan.name} (${plan.look}).`, { perceived: true });
   const spec = SHAPES[plan.shape];
   return { entityId: e.id, done: `You build "${plan.name}": ${plan.look}. It stands ${spec.line ? `from (${plan.A.x.toFixed(0)}, ${plan.A.z.toFixed(0)}) to (${plan.B!.x.toFixed(0)}, ${plan.B!.z.toFixed(0)})` : `at (${plan.A.x.toFixed(0)}, ${plan.A.z.toFixed(0)}), ${dist(plan.A, w.me).toFixed(0)}m ${compassOf(w.me, plan.A)} of you`}.` };
@@ -326,7 +326,7 @@ function collapse(w: World, e: Entity) {
     w.items.spawnLoose({ kind, name, desc: `${name}, from ${e.name}.`, qty: q, x: e.x + Math.cos(a) * 1.2, z: e.z + Math.sin(a) * 1.2, note: `fell from ${e.name}` });
   }
   log("world", `${e.name} has fallen down, worn through by the weather.`, { perceived: Math.hypot(e.x - w.me.x, e.z - w.me.z) < 40 });
-  bus.emit("loss", { name: e.name, kind: "structure", x: e.x, z: e.z, named: true });
+  bus.emit("loss", { id: e.id, name: e.name, kind: "structure", x: e.x, z: e.z, named: true });
 }
 /** Mend a weathered structure with sticks or planks: each unit worth 0.12 of its soundness. */
 function repairIt(a: any, w: World): string {
@@ -345,6 +345,7 @@ function repairIt(a: any, w: World): string {
   const wasted = have + gain > 1.12 ? "That is more than it needed. " : "";
   for (const u of used) w.takeItem(u.id, u.n);
   e.props.integrity = Math.min(1, +(have + gain).toFixed(4)); w.putEntity(e); w.bump({ energy: -2, mood: 2 });
+  bus.emit("restored", { id: e.id, name: e.name, kind: "structure" });
   return `${wasted}You work ${used.map((u) => `${u.n} ${u.name}`).join(" and ")} into ${e.name}. It is ${e.props.integrity >= 0.95 ? "sound again" : `firmer now (${Math.round(e.props.integrity * 100)}%)`}.`;
 }
 

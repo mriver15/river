@@ -1,0 +1,91 @@
+[
+ {
+  "name": "first meteor, unremarkable",
+  "nature": "gain",
+  "base": 0.25,
+  "factors": {},
+  "hab": {
+   "f": 1,
+   "first": true
+  },
+  "amount": 0.343
+ },
+ {
+  "name": "tenth meteor",
+  "nature": "gain",
+  "base": 0.25,
+  "factors": {},
+  "hab": {
+   "f": 0.3,
+   "first": false
+  },
+  "amount": 0.073
+ },
+ {
+  "name": "a stock hut burns",
+  "nature": "loss",
+  "base": 0.45,
+  "factors": {},
+  "hab": {
+   "f": 1,
+   "first": false
+  },
+  "amount": 0.441
+ },
+ {
+  "name": "a beloved flute breaks",
+  "nature": "loss",
+  "base": 0.35,
+  "factors": {
+   "attachment": 0.6,
+   "expectationError": 0.5
+  },
+  "hab": {
+   "f": 1,
+   "first": false
+  },
+  "amount": 0.687
+ },
+ {
+  "name": "its maker could have prevented it",
+  "nature": "loss",
+  "base": 0.35,
+  "factors": {
+   "attachment": 0.6,
+   "responsibility": 1
+  },
+  "hab": {
+   "f": 1,
+   "first": false
+  },
+  "amount": 0.687
+ },
+ {
+  "name": "a storm in the dark, hungry and cold",
+  "nature": "threat",
+  "base": 0.3,
+  "factors": {
+   "vulnerability": 0.8,
+   "controllability": 0.1
+  },
+  "hab": {
+   "f": 1,
+   "first": true
+  },
+  "amount": 0.524
+ },
+ {
+  "name": "a storm, rested and by a fire",
+  "nature": "threat",
+  "base": 0.3,
+  "factors": {
+   "vulnerability": 0,
+   "controllability": 0.9
+  },
+  "hab": {
+   "f": 1,
+   "first": true
+  },
+  "amount": 0.282
+ }
+]

@@ -41,7 +41,7 @@ function backup(): string {
   return rel.startsWith("..") ? file : rel;
 }
 
-async function resetInner(opts: { world: boolean }, d: { agent: Agent; world: World; ambient: Ambient; emotions: Emotions; creatures: Creatures; story: Story; catalog: Catalog; wildlife?: { reset(): void }; activities?: { reset(): void }; knowledge?: { reset(): void } }): Promise<{ backup: string }> {
+async function resetInner(opts: { world: boolean }, d: { agent: Agent; world: World; ambient: Ambient; emotions: Emotions; inner?: { reset(): void }; creatures: Creatures; story: Story; catalog: Catalog; wildlife?: { reset(): void }; activities?: { reset(): void }; knowledge?: { reset(): void } }): Promise<{ backup: string }> {
   const file = backup();
   log("system", `A new River is beginning. Database backed up to ${file}.`);
   await d.agent.halt();                                       // let the current cycle finish; nothing new starts
@@ -54,7 +54,7 @@ type Deps = Parameters<typeof resetInner>[1];
 /** The wipe itself: synchronous, so it happens at one instant of the simulation. Live and replay both run it. */
 export function resetApply(opts: { world: boolean }, d: Deps): void {
   // 1. wipe the database
-  const tables = ["memories", "events", "desires", "interests", "places", "journal", "tunes", "compositions", "moments", "creatures", "catalog", "opinions", "palette", "works", "tools", "tool_requests", "forged", "inventory"];
+  const tables = ["memories", "events", "desires", "interests", "places", "journal", "tunes", "compositions", "moments", "creatures", "catalog", "opinions", "palette", "works", "tools", "tool_requests", "forged", "inventory", "mind_trace"];
   if (opts.world) tables.push("entities");
   db.exec("BEGIN");
   try {
@@ -71,7 +71,7 @@ export function resetApply(opts: { world: boolean }, d: Deps): void {
   clearMemoryCaches(); resetDreams();
   d.activities?.reset(); d.knowledge?.reset(); resetJobs(); forgetPersisted();   // timers and committed state belong to the old life
   d.world.reset(opts.world);
-  d.creatures.reset(); d.story.reset(); d.catalog.reset(); d.ambient.reset(); d.emotions.reset(); bodyApi.reset(); d.wildlife?.reset();
+  d.creatures.reset(); d.story.reset(); d.catalog.reset(); d.ambient.reset(); d.emotions.reset(); d.inner?.reset(); bodyApi.reset(); d.wildlife?.reset();
   d.agent.resume(true);
   log("system", `A new River awakens${opts.world ? " on a new island" : ""}.`);
   void kvGet;                                                 // (kv helpers re-seed themselves lazily)

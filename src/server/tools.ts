@@ -1,7 +1,7 @@
 import { TEND_TOOL } from "./firstaid.ts";
 import { DEFEND_TOOL, FISH_TOOL } from "./wildlife.ts";
 import { CLOTHE_TOOL } from "./clothing.ts";
-import { log } from "./bus.ts";
+import { bus, log } from "./bus.ts";
 import { addMemory, recall } from "./memory.ts";
 import { GATED, addDesire, closeDesire, grandfather, isApproved, requestTool, syncApprovals, touchInterest } from "./mind.ts";
 import { webFetch, webSearch } from "./web.ts";
@@ -54,7 +54,8 @@ function describeNearby(w: World, radius: number, max: number) {
   const list = w.nearby(radius);
   const important = list.filter(({ e }) => ["library", "shrine", "monolith", "campfire", "structure", "book", "item", "sprout"].includes(e.kind));
   const rest = list.filter((o) => !important.includes(o));
-  const picked = [...important, ...rest].slice(0, max).sort((a, b) => a.d - b.d);
+  const weight = (o: { e: Entity; d: number }) => o.d / w.attention(o.e.id);          // what River cares about stands out from further off
+  const picked = [...important.sort((a, b) => weight(a) - weight(b)), ...rest].slice(0, max).sort((a, b) => a.d - b.d);
   if (!picked.length) return "nothing notable nearby";
   for (const { e } of picked) w.learnNearby?.(e);             // what you are told about, you have seen
   return picked.map(({ e, d }) => `- ${e.id}: ${e.name} (${d.toFixed(0)}m ${w.compass(e)})${w.inReach(e) ? " [in reach]" : ""}`).join("\n");
@@ -317,7 +318,7 @@ export const GATED_TOOLS: ToolDef[] = [
     description: "Give a name to the spot where you are standing, so you can find your way back and remember what happened here. Places must be at least 8m apart.",
     input_schema: obj({ name: str("A name, e.g. 'the Mossy Hollow'"), note: str("Optional: what makes it matter") }, ["name"]),
     run: (a, w) => {
-      try { const p = addPlace(String(a.name), w.me.x, w.me.z, String(a.note ?? "")); w.bump({ curiosity: -3 }); return `This spot is now "${p.name}".`; }
+      try { const p = addPlace(String(a.name), w.me.x, w.me.z, String(a.note ?? "")); w.bump({ curiosity: -3 }); bus.emit("attach", { id: `place:${p.id}`, kind: "place", name: p.name, evidence: "named" }); return `This spot is now "${p.name}".`; }
       catch (e: any) { throw new ToolError(e.message); }
     },
   },

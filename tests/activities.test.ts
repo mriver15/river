@@ -34,8 +34,9 @@ function openGround(len = 30) {
   throw new Error("no open ground on this island");
 }
 function reset(ground = openGround()) {
-  A.cancel("test"); bodyApi.reset(); sim.runTicks(2);   // a fresh body: wounds from an earlier test would (rightly) interrupt this one
-  for (const e of [...w.entities.values()]) w.removeEntity(e.id);
+  A.cancel("test");
+  for (const e of [...w.entities.values()]) w.removeEntity(e.id);      // first, so nothing from the last test is still burning while the body settles
+  bodyApi.reset(); sim.runTicks(2);                                   // a fresh body: wounds from an earlier test would (rightly) interrupt this one
   for (const i of [...w.inventory.values()]) w.takeItem(i.id, i.qty);
   w.me.x = ground.x; w.me.z = ground.z; w.me.sleeping = false; w.me.activity = "idle"; w.walk = null;
   return ground;

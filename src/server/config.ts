@@ -29,6 +29,7 @@ export const DEFS: ConfigDef[] = [
   { key: "maxSteps", group: "River's mind", label: "Calls per decision", help: "How many times the model may be asked within one decision (it can give several actions per reply). Information gathering allows a follow-up; any action ends the decision. 0 means no limit.", type: "number", def: env("MAX_STEPS_PER_CYCLE", 3), min: 0, max: 40, step: 1 },
   { key: "packetTokens", group: "River's mind", label: "Size of what River is shown", help: "Input tokens for one decision, including its abilities. State, observations and memories share what the fixed parts leave; danger and a human's words are never cut.", type: "number", def: env("PACKET_TOKENS", 7000), min: 2000, max: 24000, step: 500 },
   { key: "reflectMinutes", group: "River's mind", label: "Longest time between reflections", help: "River reflects when enough has happened to it, or after this many world minutes, whichever comes first.", type: "number", def: 45, min: 5, max: 600, step: 5, unit: "min" },
+  { key: "traceAll", group: "River's mind", label: "Full feeling traces", help: "Record every small change to a feeling instead of summing the tiny ones. For debugging; the log grows faster.", type: "toggle", def: false },
   { key: "temperature", group: "River's mind", label: "Temperature", help: "Higher is more adventurous and less predictable.", type: "number", def: env("RIVER_TEMPERATURE", 1.3), min: 0.5, max: 1.8, step: 0.05 },
   { key: "dreams", group: "River's mind", label: "Dreams per day", help: "0 turns dreaming off.", type: "number", def: env("MAX_DREAMS_PER_DAY", 4), min: 0, max: 10, step: 1 },
 
@@ -42,7 +43,7 @@ const byKey = new Map(DEFS.map((d) => [d.key, d]));
 let over: Record<string, number | boolean> = kvGet<Record<string, number | boolean>>("config", {});
 const listeners: ((key: string, value: number | boolean, old: number | boolean) => void)[] = [];
 
-export function cfg(key: "weather" | "prey" | "smallWild" | "predators" | "lethal"): boolean;
+export function cfg(key: "weather" | "prey" | "smallWild" | "predators" | "lethal" | "traceAll"): boolean;
 export function cfg(key: string): number;
 export function cfg(key: string): any { const d = byKey.get(key); if (!d) throw new Error(`unknown setting ${key}`); const v = over[key]; return v === undefined ? d.def : v; }
 export const onConfig = (fn: (key: string, value: number | boolean, old: number | boolean) => void) => { listeners.push(fn); };

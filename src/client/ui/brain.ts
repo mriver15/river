@@ -1,4 +1,5 @@
 import { $, el, ago } from "../dom.ts";
+import { loadHeart } from "./heart.ts";
 
 const n = (v: number) => (v >= 10_000 ? `${(v / 1000).toFixed(0)}k` : v.toLocaleString());
 
@@ -36,4 +37,5 @@ export async function loadBrain() {
     dc.append(r);
   }
   box.append(dc);
+  await loadHeart(box);
 }
