@@ -10,7 +10,12 @@ export interface ToolDef {
   /** Shown to the agent (and to you in the Tools tab). Say what it does and what it needs. */
   description: string;
   input_schema: { type: "object"; properties: Record<string, any>; required?: string[]; additionalProperties: false };
-  run: (a: Args, w: World) => Promise<string> | string;
+  run: (a: Args, w: World, external?: unknown) => Promise<string> | string;
+  /**
+   * For a tool that has to ask an outside service (the web, the memory search): do that part here. The brain calls it before the
+   * action begins and the answer is journaled with the command, so the action itself is a pure function of it and replays exactly.
+   */
+  external?: (a: Args, w: World) => Promise<unknown>;
 }
 
 export const str = (d: string) => ({ type: "string", description: d });

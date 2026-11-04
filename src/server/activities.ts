@@ -232,7 +232,7 @@ export class Activities {
   private danger: Danger | null = null;
   private noise: string | null = null;
 
-  constructor(private w: World, private notify: (msg: string, wake?: boolean) => void, private threat: () => { name: string; d: number; x: number; z: number } | null = () => null) {
+  constructor(private w: World, private notify: (msg: string, wake?: boolean, kind?: "danger" | "failure" | "completion") => void, private threat: () => { name: string; d: number; x: number; z: number } | null = () => null) {
     this.seq = (db.prepare("SELECT COUNT(*) n FROM sim_activities").get() as { n: number }).n;
     bus.on("attacked", () => { this.hurt = true; });
     bus.on("loud", (e: { text: string }) => { this.noise = e.text; });     // thunder, a strike, a voice: enough to wake someone resting
@@ -367,7 +367,7 @@ export class Activities {
     bus.emit("state");
     const waiter = this.waiters.get(a.id);
     if (waiter) { this.waiters.delete(a.id); waiter(outcome); }
-    else if (announce && a.source !== "reflex") this.notify(`## Something you were doing has ended\n${DEFS[a.def]?.label(a) ?? a.def}: ${outcome.text}`, true);
+    else if (announce && a.source !== "reflex") this.notify(`## Something you were doing has ended\n${DEFS[a.def]?.label(a) ?? a.def}: ${outcome.text}`, true, status === "interrupted" ? "danger" : outcome.ok || outcome.partial ? "completion" : "failure");
   }
 }
 

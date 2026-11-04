@@ -138,7 +138,7 @@ export async function forge(req: ToolRequest, onStaged?: (t: ForgedTool) => void
   const file = stagedFile(name);
   try {
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      const r = await chat({ messages, maxTokens: 12000, model: FORGE_MODEL });
+      const r = await chat({ consumer: "forge", reason: name, messages, maxTokens: 12000, model: FORGE_MODEL });
       messages.push(r.message);
       code = extractCode(r.text);
       let problems: string[] = [];

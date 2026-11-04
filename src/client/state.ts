@@ -17,6 +17,6 @@ export const send = (m: ClientMsg) => socket?.readyState === 1 && socket.send(JS
 
 /** Each tab registers how to (re)draw itself; chrome calls it when the tab is shown or data changes. */
 export const renderers: Record<string, () => void> = {};
-export const TABS = ["log", "mind", "story", "map", "items", "tools", "memory"] as const;
+export const TABS = ["log", "mind", "story", "map", "items", "tools", "memory", "brain"] as const;
 export type TabName = (typeof TABS)[number];
 export const isTab = (n: TabName) => document.getElementById(`tab-${n}`)?.classList.contains("active") ?? false;

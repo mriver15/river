@@ -2,20 +2,22 @@ import { cfg } from "./config.ts";
 import { bodyText } from "./clothing.ts";
 import { feelingsText } from "./body.ts";
 import { chat, MODEL, type ChatMessage } from "./llm.ts";
+import { TriggerQueue, Hysteresis, PRIORITY, type Trigger, type TriggerKind } from "../brain/triggers.ts";
+import { assemble, estimateTokens, type Item } from "../brain/packet.ts";
 import { sensesText } from "./ambient.ts";
 import { tasteContext } from "./taste.ts";
-import { maxCyclesNow, msUntilUnderBudget, overBudget, paceFactor, resetUsage, usageStats } from "./usage.ts";
+import { maxCyclesNow, msUntilUnderBudget, overBudget, paceFactor, resetUsage, usageStats, budgetFill, consumerStats } from "./usage.ts";
 import { bus, log, recentLog } from "./bus.ts";
-import { kvGet, kvSet } from "./db.ts";
+import { db, kvGet, kvSet } from "./db.ts";
 import { addMemory, forgetStale, importanceSince, recall } from "./memory.ts";
 import { GATED, activeDesires, addDesire, closeDesire, decayInterests, interests, isApproved, touchInterest, recentClosedDesires } from "./mind.ts";
 import { ToolError, availableTools, findTool, placesText } from "./tools.ts";
 import { placeNear } from "./places.ts";
 import type { Emotions } from "./emotions.ts";
 import type { World } from "./world.ts";
-import { simNow, simRng, after, cancel, simPaused, simTick, simSpeed, inject } from "./sim.ts";
+import { simNow, simRng, after, cancel, simPaused, simTick, simSpeed, inject, STEP_MS } from "./sim.ts";
 import { recordCommand, finishCommand, admit } from "./recorder.ts";
-import { lifeGen, isStale, discarded } from "./lifecycle.ts";
+import { lifeGen, isStale, discarded, onNewGeneration } from "./lifecycle.ts";
 const sr = simRng("agent");
 
 // Higher than the default 1.0: River converges on obsessions, so it gets a wider spread of choices.
@@ -23,13 +25,19 @@ export const MOCK = process.env.MOCK_LLM === "1";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
+/** Tools whose answer the model needs before it can decide what to do: after these, one more look is allowed in the same decision. */
+const INFO_TOOLS = new Set(["look", "inspect", "recall", "web_search", "web_fetch"]);
+/** Tools that are looking, walking, talking or thinking rather than doing: what they report is not worth a memory of its own. */
+const NOT_DEEDS = new Set(["look", "inspect", "recall", "remember", "move_to", "say", "set_desire", "resolve_desire", "add_interest", "opinion", "request_tool", "stop", "web_search", "web_fetch"]);
+const WOKEN: Record<TriggerKind, string> = { danger: "danger", contact: "a human is speaking to you", need: "a need is pressing", failure: "something did not work", completion: "you finished what you were doing", emotion: "a strong feeling", novelty: "something caught your attention", idle: "a quiet moment" };
+interface DecisionStats { calls: number; inp: number; out: number; hit: number; ms: number; packet: number; tools: string[]; dropped: string; note: string }
 const OBSERVE = new Set(["look", "move_to", "inspect", "pick_up", "eat", "rest", "recall", "craft", "plant", "build", "drop", "request_tool"]);
 
 const systemPrompt = (name: string) => `You are ${name}, a small curious being who lives on a procedurally generated island. This is your life, not a task: nobody assigns you goals. You have your own interests, desires and moods, and you decide how to spend your time.
 
 How your existence works
-- You live in "cycles". Each cycle you are shown your current state, then you act through tools (looking, walking, gathering, resting, speaking, remembering...). Act several times per cycle, then stop.
-- You have NO memory beyond what is shown to you each cycle. Your long-term memory is a database: use \`remember\` for anything future-you should know (discoveries, places, lessons, feelings, plans) and \`recall\` to dig for something. Relevant memories are surfaced automatically, but not all of them.
+- You are woken when something needs a decision: a voice, a danger, an errand finished or interrupted, a quiet moment. You are shown a short summary of where things stand and what you just did, then you act through tools. You may give several actions in one reply when you already know the sequence ("walk to the bush, then pick berries"); \`gather\` does a whole errand in one go. Between decisions your body keeps doing what you chose.
+- You have NO memory beyond what is shown to you each time you are woken. Your long-term memory is a database: use \`remember\` for anything future-you should know (discoveries, places, lessons, feelings, plans) and \`recall\` to dig for something. Relevant memories are surfaced automatically, but not all of them.
 - Memories remember where they happened, and being somewhere brings back what happened there. Your walking slowly wears paths into the ground.
 - You have feelings (wonder, restlessness, longing, loneliness, frustration, playfulness, pride, fear, grief). They are shown to you as they are. They are signals, not orders: they colour what draws you, and you may follow them, resist them, or make something of them.
 - Needs: energy, hunger, warmth, mood, curiosity (0–100). When energy, hunger or warmth run low you feel awful; don't be obsessive about them. High curiosity means you crave novelty.
@@ -42,18 +50,8 @@ Style
 - Before acting, say in one short first-person sentence what you are thinking or feeling (plain text), then call tools. Keep the inner voice specific and personal, not generic.
 - You may follow a thread for days, or drop it the moment it stops feeding you.
 - If you notice yourself repeating the same kind of action or circling the same idea, that's worth noticing.
-- When you are done with this stretch of time, end with a brief first-person summary of what you did and how you feel. It is saved automatically as a memory.`;
+- When you have nothing more to do for now, end with a brief first-person summary of what you did and how you feel. It is saved automatically as a memory.`;
 
-
-/** Old tool results are only needed in full for the step right after them; shrink them so each later step re-sends less. */
-function trimOldToolResults(messages: ChatMessage[]) {
-  let lastAssistant = messages.length - 1;
-  while (lastAssistant > 0 && messages[lastAssistant].role !== "assistant") lastAssistant--;
-  for (let i = 0; i < lastAssistant; i++) {
-    const m = messages[i];
-    if (m.role === "tool" && m.content && m.content.length > 300) m.content = m.content.slice(0, 300) + " …[older result trimmed]";
-  }
-}
 
 export class Agent {
   private wakeResolve: (() => void) | null = null;
@@ -62,35 +60,51 @@ export class Agent {
   private cycleTimes: number[] = kvGet<number[]>("cycleTimes", []);
   private cycleCount = kvGet<number>("cycleCount", 0);
   private lastReflect = kvGet<number>("lastReflect", simNow());
-  private inbox: string[] = [];
+  private reflectedAt = kvGet<number>("reflectedAt", 0);
+  private inbox: { text: string; kind: TriggerKind }[] = [];
+  readonly queue = new TriggerQueue();
+  private idleAt: number | null = 10;
+  private abort: AbortController | null = null;
+  private lastOutcomes: string[] = [];
+  private deeds: string[] = [];
+  /** a pressing need wakes the mind once as it falls, and not again until it has recovered well past that line */
+  private needWatch = { energy: new Hysteresis(15, 30), hunger: new Hysteresis(15, 30), warmth: new Hysteresis(20, 35) };
+  private exhausted = false;
+  private froze = false;
+  /** set by the server: freeze or thaw the whole world (journaled), used when the budget runs out */
+  setWorldPaused: (p: boolean, why: string) => void = () => {};
   selfModel = kvGet<string>("selfModel", "I'm new here. I don't know yet who I am; I'll find out by living.");
   private errBackoff = 0;
   private halted = false;
   private inFlight: Promise<unknown> = Promise.resolve();
-  private budgetNoted = false;
 
-  constructor(private w: World, private emo: Emotions) {}
+  constructor(private w: World, private emo: Emotions) {
+    onNewGeneration(() => { this.abort?.abort(); this.queue.clear(); this.inbox = []; this.lastOutcomes = []; });     // a new life: nothing in flight matters now
+    bus.on("moment", (m: { intensity?: number; title?: string }) => { if ((m.intensity ?? 0) >= 0.6) this.raise("emotion", `a strong feeling: ${m.title ?? ""}`); });
+  }
+  /** Something warrants a decision. Cheap to call; the queue merges, orders and expires. */
+  raise(kind: TriggerKind, text: string, key?: string) { this.queue.raise(kind, text, simTick(), key ? { key } : {}); this.wake(); }
 
   stats() {
     const hourAgo = Date.now() - 3_600_000;
-    return { cyclesLastHour: this.cycleTimes.filter((t) => t > hourAgo).length, maxCyclesPerHour: maxCyclesNow(), paused: this.paused, mock: MOCK, model: MOCK ? "mock" : MODEL, worldPaused: simPaused(), simTick: simTick(), simSpeed: simSpeed(), ...usageStats() };
+    return { cyclesLastHour: this.cycleTimes.filter((t) => t > hourAgo).length, maxCyclesPerHour: maxCyclesNow(), paused: this.paused, mock: MOCK, model: MOCK ? "mock" : MODEL, queued: this.queue.size, exhausted: this.exhausted, worldPaused: simPaused(), simTick: simTick(), simSpeed: simSpeed(), ...usageStats() };
   }
   /** Clear the local token and cycle accounting, drop any error backoff, and start thinking again right away. */
   restartCycles() {
-    resetUsage(); this.cycleTimes = []; kvSet("cycleTimes", []); this.errBackoff = 0; this.budgetNoted = false;
+    resetUsage(); this.cycleTimes = []; kvSet("cycleTimes", []); this.errBackoff = 0; this.exhausted = false;
     log("system", "Budget window and cycle counters reset by human. Restarting River's cycles.");
     bus.emit("state"); this.wake();
   }
 
   /** Stop starting new cycles and wait (briefly) for the one in flight, so a reset isn't raced by late writes. */
   async halt() {
-    this.halted = true; this.wake();
+    this.halted = true; this.abort?.abort(); this.wake();
     await Promise.race([this.inFlight, new Promise((r) => setTimeout(r, 90_000))]);
   }
   /** Begin again. With `fresh`, River also forgets who it was. */
   resume(fresh: boolean) {
     if (fresh) {
-      this.cycleCount = 0; this.cycleTimes = []; this.inbox = []; this.errBackoff = 0; this.budgetNoted = false; this.paused = false;
+      this.cycleCount = 0; this.cycleTimes = []; this.inbox = []; this.errBackoff = 0; this.exhausted = false; this.paused = false; this.queue.clear(); for (const h of Object.values(this.needWatch)) h.reset(); this.lastOutcomes = []; this.idleAt = simTick() + 10;
       this.selfModel = "I'm new here. I don't know yet who I am; I'll find out by living."; this.lastReflect = simNow();
     }
     this.halted = false; bus.emit("state"); this.wake();
@@ -101,8 +115,12 @@ export class Agent {
     if (!quiet) log("system", p ? "Paused by human." : "Resumed by human.");
     bus.emit("state"); if (!p) this.wake();
   }
-  /** Something happened that the agent should hear about on its next cycle. */
-  notify(msg: string, wake = true) { this.inbox.push(msg); if (wake) this.wake(); }
+  /** Something happened that River should hear about. With `wake`, it also warrants a decision of the given kind. */
+  notify(msg: string, wake = true, kind: TriggerKind = "novelty") {
+    this.inbox.push({ text: msg, kind });
+    if (this.inbox.length > 40) this.inbox.splice(0, this.inbox.length - 40);
+    if (wake) this.raise(kind, clip(msg.replace(/^## [^\n]*\n/, "").replace(/\s+/g, " "), 140));
+  }
   wake() { this.wakeResolve?.(); }
 
   /** Wait, but wake early on `wake()`. `inSim` waits in simulation time (the pause between thoughts); otherwise wall time (error backoff, budget). */
@@ -120,99 +138,181 @@ export class Agent {
     for (;;) {
       try {
         if (this.halted || this.paused) { await this.idle(1000); continue; }
-        if (!MOCK && overBudget()) {
-          if (!this.budgetNoted) log("system", `Token budget reached (${usageStats().tokensLastHour.toLocaleString()} / ${usageStats().maxTokensPerHour.toLocaleString()} per hour). Dozing until it frees up.`);
-          this.budgetNoted = true; this.activity("dozing (token budget)");
-          await this.idle(msUntilUnderBudget()); continue;
-        }
-        this.budgetNoted = false;
-        const hourAgo = Date.now() - 3_600_000;
-        this.cycleTimes = this.cycleTimes.filter((t) => t > hourAgo);
-        if (this.cycleTimes.length >= maxCyclesNow()) {
-          log("system", `Cycle budget reached (${maxCyclesNow()}/hour). Resting until the budget frees up.`);
-          this.activity("dozing (budget)");
-          await this.idle(Math.max(30_000, this.cycleTimes[0] + 3_600_000 - Date.now()));
+        const now = simTick();
+        this.watchNeeds();
+        if (this.idleAt !== null && now >= this.idleAt) { this.queue.raise("idle", "", now); this.idleAt = null; }
+        const prio = this.queue.peek(now);
+        if (prio === null) {                                    // nothing warrants a decision: sleep until something might
+          const waits = [this.queue.waitTicks(now), this.idleAt === null ? null : this.idleAt - now].filter((x): x is number => x !== null);
+          await this.idle((waits.length ? Math.max(1, Math.min(...waits)) : 100) * STEP_MS, true);     // simulation time: a frozen world does not wake it
           continue;
         }
-        this.cycleTimes.push(Date.now()); kvSet("cycleTimes", this.cycleTimes);
-        this.cycleCount++; kvSet("cycleCount", this.cycleCount);
-        this.w.me.thinking = true;
-        const gen = lifeGen();
-        const cyc = MOCK ? this.mockCycle() : this.cycle();
-        this.inFlight = cyc.catch(() => {});            // halt() waits on this; real errors still surface through `cyc`
-        await cyc;
-        if (isStale(gen)) { discarded("thought cycle"); this.w.me.thinking = false; continue; }
-        this.cycleEnd();
-        this.errBackoff = 0;
-        this.w.me.thinking = false;
-        bus.emit("state");
-        await this.maybeReflect();
-        await this.idle(cfg("thinkSeconds") * 1000 * paceFactor(), true);
+        if (!(await this.admit(prio))) continue;
+        const triggers = this.queue.take(simTick());
+        if (triggers.length) await this.decideOnce(triggers);
       } catch (err: any) {
         this.w.me.thinking = false;
         this.errBackoff = Math.min(300_000, (this.errBackoff || 5000) * 2);
-        log("system", `Error in cycle: ${clip(String(err?.message ?? err), 300)} — retrying in ${Math.round(this.errBackoff / 1000)}s`);
+        log("system", `Error in decision: ${clip(String(err?.message ?? err), 300)} — retrying in ${Math.round(this.errBackoff / 1000)}s`);
         await this.idle(this.errBackoff);
       }
     }
   }
 
-  // ---------- context ----------
-  private async buildContext(): Promise<string> {
-    const w = this.w, m = w.me, n = m.needs;
-    const desires = activeDesires();
-    const ints = interests().slice(0, 8);
-    const q = [...desires.map((d) => d.text), ...ints.slice(0, 3).map((i) => i.topic), ...recentLog(6).map((l) => l.text)].join(" ");
-    const mems = await recall(q, 7, { x: m.x, z: m.z });
-    const inv = [...w.inventory.values()];
-    const near = w.nearby(w.sightRadius()).slice(0, 14);
-    const recent = recentLog(40).filter((l) => ["thought", "action", "observation", "speech", "human", "need", "reflection"].includes(l.kind)).slice(-14);
-    const parts = [
-      `## Now\n${w.timeLabel()}. You are at (${m.x.toFixed(0)}, ${m.z.toFixed(0)}).\n${bodyText()}\nEnergy ${n.energy.toFixed(0)}, hunger ${n.hunger.toFixed(0)} (100 = full), mood ${n.mood.toFixed(0)}, curiosity ${n.curiosity.toFixed(0)}. Cycle #${this.cycleCount}.\n${placesText(w)}\n${sensesText(w)}`,
-      ...(feelingsText() ? [`## How your body feels\n${feelingsText()}`] : []),
-      ...(this.emo.contextText() ? [`## How you feel\n${this.emo.contextText()}`] : []),
-      `## Who you are (your own words, from your last reflection)\n${this.selfModel}`,
-      ...(tasteContext() ? [`## Your tastes and your hand\n${tasteContext()}`] : []),
-      `## Desires\n${desires.length ? desires.map((d) => `#${d.id} [p${d.priority}] ${d.text}`).join("\n") : "(none yet — what do you long for?)"}${recentClosedDesires(3).length ? "\nRecently closed: " + recentClosedDesires(3).map((d) => `${d.text} (${d.status})`).join("; ") : ""}`,
-      `## Interests\n${ints.length ? ints.map((i) => `${i.topic} (${i.weight})${i.why ? ` — ${i.why}` : ""}`).join("\n") : "(none yet)"}`,
-      `## Inventory\n${inv.length ? inv.map((i) => `${i.id}: ${i.name} ×${i.qty} — ${clip(i.desc, 80)}`).join("\n") : "(empty)"}`,
-      `## Around you${w.sightRadius() < 20 ? ` (you can only make out things within ~${Math.round(w.sightRadius())}m)` : ""}\n${near.length ? near.map(({ e, d }) => `${e.id}: ${e.name} (${d.toFixed(0)}m ${w.compass(e)})${w.inReach(e) ? " [in reach]" : ""}`).join("\n") : "nothing close"}`,
-      `## What just happened\n${recent.map((l) => `- ${l.kind}: ${clip(l.text, 160)}`).join("\n") || "(nothing yet)"}`,
-      `## Memories that surfaced\n${mems.length ? mems.map((x) => { const pl = x.x != null && x.z != null ? placeNear(x.x, x.z, 10) : null; return `- (${new Date(x.ts).toLocaleString()}${pl ? `, at ${pl.name}` : ""}, importance ${x.importance}) ${x.text}`; }).join("\n") : "(none yet)"}`,
-    ];
-    if (this.inbox.length) parts.push(`## News\n${this.inbox.splice(0).join("\n")}`);
-    parts.push("What do you do now?");
-    return parts.join("\n\n");
+  private watchNeeds() {
+    const n = this.w.me.needs;
+    for (const k of ['energy', 'hunger', 'warmth'] as const) if (this.needWatch[k].update(n[k])) this.raise('need', `your ${k === 'energy' ? 'energy' : k === 'hunger' ? 'fullness' : 'warmth'} is very low (${n[k].toFixed(0)}/100)`, `need:${k}`);
   }
 
-  // ---------- LLM cycle ----------
-  private async cycle() {
-    const gen = lifeGen();
-    const messages: ChatMessage[] = [{ role: "system", content: systemPrompt(this.w.me.name) }, { role: "user", content: await this.buildContext() }];
+  /**
+   * May a decision of this priority start? The last share of the hourly allowance (reservePct) is kept for the human and for danger.
+   * When the allowance is spent: either the world waits at this decision (budgetPause) or it carries on without new ones.
+   * Either way, activities and reflexes keep working, and River's body is never put to sleep merely because the bill is empty.
+   */
+  private async admit(prio: number): Promise<boolean> {
+    if (MOCK) return true;
+    const hourAgo = Date.now() - 3_600_000;
+    this.cycleTimes = this.cycleTimes.filter((t) => t > hourAgo);
+    const urgent = prio <= PRIORITY.contact, reserve = cfg("reservePct") / 100, fill = budgetFill();
+    if (fill < (urgent ? 1 : 1 - reserve) && (urgent || this.cycleTimes.length < maxCyclesNow())) {
+      if (this.exhausted) { this.exhausted = false; log("system", "The budget has room again. River's mind is awake."); }
+      if (this.froze) { this.froze = false; this.setWorldPaused(false, "budget"); }
+      return true;
+    }
+    if (!this.exhausted) {
+      this.exhausted = true;
+      const u = usageStats();
+      log("system", `Token budget reached (${u.tokensLastHour.toLocaleString()} of ${u.maxTokensPerHour.toLocaleString()} this hour${urgent ? "" : `; ${Math.round(reserve * 100)}% is kept for urgent matters`}). ${cfg("budgetPause") ? "The world waits at this decision until the budget frees up." : "The world carries on without new decisions."}`);
+    }
+    if (cfg("budgetPause") && !simPaused()) { this.froze = true; this.setWorldPaused(true, "budget"); }
+    await this.idle(Math.min(15_000, Math.max(2000, msUntilUnderBudget())));
+    return false;
+  }
+
+  /** One decision: a fresh packet, a few model calls at most, the actions it chooses, then a log line saying what it cost. */
+  private async decideOnce(triggers: Trigger[]) {
+    this.cycleTimes.push(Date.now()); kvSet("cycleTimes", this.cycleTimes);
+    this.cycleCount++; kvSet("cycleCount", this.cycleCount);
+    this.w.me.thinking = true;
+    const gen = lifeGen(), t0 = Date.now(), tick0 = simTick();
+    const u: DecisionStats = { calls: 0, inp: 0, out: 0, hit: 0, ms: 0, packet: 0, tools: [], dropped: "", note: "" };
+    const run = MOCK ? this.mockCycle() : this.decide(triggers, gen, u);
+    this.inFlight = run.catch(() => {});                      // halt() waits on this; real errors still surface through `run`
+    try { await run; }
+    catch (e) {
+      if (this.abort?.signal.aborted || isStale(gen) || this.halted) { u.note = "cancelled"; discarded("decision"); this.w.me.thinking = false; this.logDecision(triggers, tick0, u, t0); return; }
+      u.note = `error: ${clip(String((e as Error)?.message ?? e), 120)}`; this.logDecision(triggers, tick0, u, t0); throw e;
+    } finally { this.abort = null; }
+    if (isStale(gen)) { discarded("decision"); this.w.me.thinking = false; return; }
+    if (this.deeds.length) {                                   // what was actually done, kept as a memory without asking a model to write it
+      const text = clip(this.deeds.join(" ").replace(/\bYou\b/g, "I").replace(/\byour\b/gi, "my").replace(/\byou\b/g, "I").replace(/\s+/g, " "), 320);
+      addMemory(text, 3, ["summary"]); this.deeds = [];
+    }
+    this.cycleEnd();
+    this.errBackoff = 0;
+    this.w.me.thinking = false;
+    bus.emit("state");
+    this.logDecision(triggers, tick0, u, t0);
+    await this.maybeReflect();
+    // Having just acted, the next thing to decide is what the action led to: look again soon. After a decision that did nothing, wait longer.
+    const acted = u.tools.some((t) => !INFO_TOOLS.has(t.replace("✗", "")));
+    this.idleAt = simTick() + Math.max(1, Math.round((acted ? cfg("followUpSeconds") : cfg("thinkSeconds")) * 10 * paceFactor()));
+  }
+
+  private logDecision(triggers: Trigger[], tick: number, u: DecisionStats, t0: number) {
+    db.prepare("INSERT INTO brain_decisions(tick, wall_ts, kinds, priority, calls, in_tokens, out_tokens, cache_tokens, latency_ms, packet_tokens, tools, dropped, note) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(tick, Date.now(), triggers.map((t) => t.kind + (t.count > 1 ? `×${t.count}` : "")).join(","), Math.min(...triggers.map((t) => t.priority)), u.calls, u.inp, u.out, u.hit, Date.now() - t0, u.packet, u.tools.join(","), u.dropped, u.note);
+  }
+  /** For the decision inspector: what woke River, what it cost, and where the budget stands. */
+  brainView() {
+    const rows = db.prepare("SELECT * FROM brain_decisions ORDER BY id DESC LIMIT 40").all();
+    const u = usageStats();
+    return { queue: this.queue.list().map((t) => ({ kind: t.kind, priority: t.priority, count: t.count, texts: t.texts })), decisions: rows, consumers: consumerStats(),
+      budget: { fill: Math.round(budgetFill() * 100) / 100, tokensLastHour: u.tokensLastHour, max: u.maxTokensPerHour, reservePct: cfg("reservePct"), pauseWhenSpent: cfg("budgetPause"), exhausted: this.exhausted } };
+  }
+
+  // ---------- the decision packet ----------
+  private async buildPacket(triggers: Trigger[], fixed: number) {
+    const w = this.w, m = w.me, n = m.needs, desires = activeDesires(), ints = interests().slice(0, 4), inv = [...w.inventory.values()];
+    const sight = w.sightRadius(), near = w.nearby(sight).slice(0, 14), inbox = this.inbox.splice(0);
+    const q = [...triggers.flatMap((t) => t.texts), ...desires.slice(0, 3).map((d) => d.text), ...recentLog(4).map((l) => l.text)].join(" ");
+    const mems = await recall(q, 5, { x: m.x, z: m.z });
+    const closed = recentClosedDesires(3);
+    const state: Item[] = [
+      { text: `${w.timeLabel()}. You are at (${m.x.toFixed(0)}, ${m.z.toFixed(0)}).`, critical: true },
+      ...(bodyText() ? [{ text: bodyText(), critical: true }] : []),
+      { text: `Energy ${n.energy.toFixed(0)}, hunger ${n.hunger.toFixed(0)} (100 = full), warmth ${n.warmth.toFixed(0)}, mood ${n.mood.toFixed(0)}, curiosity ${n.curiosity.toFixed(0)}.`, critical: true },
+      ...(feelingsText() ? [{ text: `Your body: ${feelingsText()}`, weight: 9 }] : []),
+      ...(this.emo.contextText() ? [{ text: `You feel: ${this.emo.contextText()}`, weight: 8 }] : []),
+      { text: `Who you are, in your own words: ${clip(this.selfModel, 500)}`, weight: 6 },
+      ...desires.slice(0, 5).map((d) => ({ text: `Desire #${d.id} [p${d.priority}]: ${d.text}`, weight: 7 })),
+      ...(desires.length ? [] : [{ text: "You hold no desires yet. What do you long for?", weight: 7 }]),
+      ...closed.map((d) => ({ text: `Recently closed: ${d.text} (${d.status})`, weight: 2 })),
+      ...ints.map((i) => ({ text: `Interest: ${i.topic} (${i.weight})${i.why ? ` — ${clip(i.why, 80)}` : ""}`, weight: 3 })),
+      ...inv.map((i) => ({ text: `Carrying ${i.id}: ${i.name} ×${i.qty}`, weight: 6 })),
+      ...(inv.length ? [] : [{ text: "Carrying nothing.", weight: 6 }]),
+      ...(placesText(w) ? [{ text: placesText(w), weight: 5 }] : []),
+      ...(tasteContext() ? [{ text: `Your tastes and your hand: ${clip(tasteContext(), 300)}`, weight: 2 }] : []),
+    ];
+    const obs: Item[] = [
+      { text: `Woken by: ${[...new Set(triggers.map((t) => WOKEN[t.kind]))].join("; ")}.`, critical: true },
+      ...triggers.filter((t) => t.kind === "completion" || t.kind === "failure" || t.kind === "need" || t.kind === "emotion").flatMap((t) => t.texts.map((x) => ({ text: x, weight: 9 }))),
+      ...this.lastOutcomes.map((o) => ({ text: `You did: ${o}`, weight: 10 })),
+      ...inbox.map((x) => ({ text: clip(x.text, x.kind === "danger" || x.kind === "contact" ? 700 : 320), critical: x.kind === "danger" || x.kind === "contact", weight: 8 })),
+      ...(sensesText(w) ? [{ text: sensesText(w), weight: 6 }] : []),
+      ...near.map(({ e, d }) => ({ text: `Around: ${e.id}: ${e.name} (${d.toFixed(0)}m ${w.compass(e)})${w.inReach(e) ? " [in reach]" : ""}`, weight: 50 - d })),   // already known: knowledge observes everything in sight every tick
+      ...recentLog(30).filter((l) => ["observation", "speech", "human", "need", "world"].includes(l.kind)).slice(-5).map((l) => ({ text: `Recently: ${clip(l.text, 140)}`, weight: 3 })),
+    ];
+    const memories: Item[] = mems.map((x) => { const pl = x.x != null && x.z != null ? placeNear(x.x, x.z, 10) : null; return { text: `- (${new Date(x.ts).toLocaleDateString()}${pl ? `, at ${pl.name}` : ""}) ${clip(x.text, 220)}`, weight: x.importance }; });
+    return assemble([{ name: "state", title: "Where things stand", items: state }, { name: "observations", title: "What is happening", items: obs }, { name: "memories", title: "Memories that surfaced", items: memories }], cfg("packetTokens"), fixed);
+  }
+
+  // ---------- one decision, by the model ----------
+  private async decide(triggers: Trigger[], gen: number, u: DecisionStats) {
+    const ac = new AbortController(); this.abort = ac;
+    const tools = availableTools().map((t) => ({ name: t.name, description: t.description, input_schema: t.input_schema }));
+    const sys = systemPrompt(this.w.me.name);
+    const pkt = await this.buildPacket(triggers, estimateTokens(sys) + estimateTokens(JSON.stringify(tools)));
+    u.packet = pkt.tokens; u.dropped = pkt.sections.map((s) => `${s.name}:${s.dropped}`).join(" ");
+    this.lastOutcomes = []; this.deeds = [];
+    const messages: ChatMessage[] = [{ role: "system", content: sys }, { role: "user", content: `${pkt.text}\n\nWhat do you do now?` }];
     this.activity("thinking");
-    for (let step = 0; !cfg("maxSteps") || step < cfg("maxSteps"); step++) {
+    const limit = cfg("maxSteps") || Infinity;
+    for (let step = 0; step < limit; step++) {
       if (this.halted) return;
-      if (step > 0 && overBudget()) { log("system", "Token budget reached mid-cycle; stopping early."); return; }
-      trimOldToolResults(messages);
-      const tools = availableTools().map((t) => ({ name: t.name, description: t.description, input_schema: t.input_schema }));
-      const r = await chat({ messages, tools, maxTokens: 5000, temperature: this.emo.temperature(cfg("temperature")) });
+      const r = await chat({ messages, tools, maxTokens: 3000, temperature: this.emo.temperature(cfg("temperature")), consumer: "decision", reason: triggers[0]!.kind, signal: ac.signal });
+      u.calls++; u.inp += r.usage?.inp ?? 0; u.out += r.usage?.out ?? 0; u.hit += r.usage?.hit ?? 0;
       if (isStale(gen)) { discarded("model reply"); return; }
-      if (r.truncated) { log("system", "Model spent its whole token allowance thinking and gave no answer this step; moving on."); return; }
+      if (r.truncated) { log("system", "Model spent its whole token allowance thinking and gave no answer; moving on."); return; }
       messages.push(r.message);
       if (r.finish === "content_filter") { log("system", "Model output was filtered; skipping this step."); return; }
-
       if (!r.toolCalls.length) {
         if (r.text) { log("thought", r.text); addMemory(clip(r.text, 400), 4, ["summary"]); }
         return;
       }
       if (r.text) log("thought", r.text);
-
-      for (const c of r.toolCalls) {
-        const out = c.badJson ? { content: "ERROR: your tool arguments were not valid JSON; try again." } : await this.exec(c.name, c.args, gen, `${gen}:${c.id}`);
+      let failed = false;
+      for (const c of r.toolCalls) {                              // several actions may come in one reply; they run in order, and stop at the first that fails
+        const out = c.badJson ? { content: "your tool arguments were not valid JSON; try again.", is_error: true }
+          : failed ? { content: "Skipped: an earlier action in this reply did not work.", is_error: true }
+          : await this.exec(c.name, c.args, gen, `${gen}:${c.id}`, await this.fetchExternal(c.name, c.args, gen));
+        if (out.is_error) failed = true; else if (!NOT_DEEDS.has(c.name)) this.deeds.push(out.content);
         messages.push({ role: "tool", tool_call_id: c.id, content: out.is_error ? `ERROR: ${out.content}` : out.content });
+        u.tools.push(c.name + (out.is_error ? "✗" : ""));
+        this.lastOutcomes.push(`${c.name} ${clip(JSON.stringify(c.args), 80)} → ${out.is_error ? "did not work: " : ""}${clip(out.content, 160)}`);
+        if (this.lastOutcomes.length > 6) this.lastOutcomes.shift();
       }
+      if (!r.toolCalls.every((c) => INFO_TOOLS.has(c.name))) return;   // an action: the world moves on, and the next decision starts from a fresh summary
     }
-    log("system", "Reached the step limit for this cycle; will continue next cycle.");
+    log("system", "Reached the call limit for this decision.");
+  }
+
+  /** The part of a tool that needs an outside service (the web, a memory search), done before the action so its answer can be journaled with it. */
+  private async fetchExternal(name: string, args: Record<string, any>, gen: number): Promise<unknown> {
+    const tool = findTool(name);
+    if (!tool?.external) return undefined;
+    const r = await tool.external(args, this.w).catch((e) => ({ ok: false, error: String(e?.message ?? e) }));
+    return isStale(gen) ? undefined : r;
   }
 
   /** Things the brain loop does to the world besides tool calls. Journaled, so replay (which has no brain) can repeat them. */
@@ -226,27 +326,27 @@ export class Agent {
   }
 
   /** Run one tool call as the character. Every call is journaled (with the tick it started on) so a life can be replayed. */
-  exec(name: string, input: Record<string, any>, gen?: number, commandId?: string): Promise<{ content: string; is_error?: boolean }> {
-    return inject(() => this.execNow(name, input, gen, commandId));
+  exec(name: string, input: Record<string, any>, gen?: number, commandId?: string, ext?: unknown): Promise<{ content: string; is_error?: boolean }> {
+    return inject(() => this.execNow(name, input, gen, commandId, undefined, ext));
   }
   /** The tool call itself, run at a tick boundary (live, through `exec`) or straight from the journal (replay). */
-  async execNow(name: string, input: Record<string, any>, gen?: number, commandId?: string, recorded?: { status: string; result: string | null }): Promise<{ content: string; is_error?: boolean }> {
+  async execNow(name: string, input: Record<string, any>, gen?: number, commandId?: string, recorded?: { status: string; result: string | null }, ext?: unknown): Promise<{ content: string; is_error?: boolean }> {
     if (this.halted) return { content: "Your life is being reset; nothing more happens.", is_error: true };
     if (gen !== undefined && isStale(gen)) { discarded(`call to ${name}`); return { content: "That belongs to a life that has ended; nothing happens.", is_error: true }; }
-    const adm = admit("brain", "tool", { name, input }, commandId);
+    const adm = admit("brain", "tool", ext === undefined ? { name, input } : { name, input, ext }, commandId);
     if (adm.duplicate) return { content: adm.result, is_error: adm.status === "error" };   // a repeat of a call already made: report the original outcome
     const seq = adm.seq;
-    const out = await this.run1(name, input, recorded);
+    const out = await this.run1(name, input, recorded, ext);
     finishCommand(seq, out.is_error ? "error" : "ok", out.content);
     return out;
   }
-  private async run1(name: string, input: Record<string, any>, recorded?: { status: string; result: string | null }): Promise<{ content: string; is_error?: boolean }> {
+  private async run1(name: string, input: Record<string, any>, recorded?: { status: string; result: string | null }, ext?: unknown): Promise<{ content: string; is_error?: boolean }> {
     const tool = findTool(name);
     if (name !== "say" && name !== "remember") log("action", `${name} ${clip(JSON.stringify(input), 200)}`, { tool: name, input });
     if (!tool) return { content: `Unknown tool "${name}". You may need to request it with request_tool.`, is_error: true };
     this.w.setActivity(name === "move_to" ? "walking" : name);
     try {
-      const out = await tool.run(input, this.w);
+      const out = await tool.run(input, this.w, ext);
       if (OBSERVE.has(name)) log("observation", clip(out, 500), { tool: name });
       this.emo.onTool(name, input, recorded ? recorded.status !== "error" : true, recorded?.result ?? out);   // replay: judge it by what happened live
       return { content: out };
@@ -262,10 +362,12 @@ export class Agent {
 
   // ---------- reflection ----------
   private async maybeReflect() {
-    const due = this.cycleCount % 10 === 0 || importanceSince(this.lastReflect) > 40;
-    if (!due || (MOCK && this.cycleCount % 10 !== 0)) return;
+    // Reflect when enough has happened to matter (or, at the latest, after a long quiet stretch), never more often than every few decisions.
+    const since = this.cycleCount - this.reflectedAt;
+    const due = MOCK ? this.cycleCount % 10 === 0 : since >= 4 && (importanceSince(this.lastReflect) > 40 || simNow() - this.lastReflect > cfg("reflectMinutes") * 60_000);
+    if (!due) return;
     const gen = lifeGen();
-    this.lastReflect = simNow(); kvSet("lastReflect", this.lastReflect);
+    this.lastReflect = simNow(); kvSet("lastReflect", this.lastReflect); this.reflectedAt = this.cycleCount; kvSet("reflectedAt", this.reflectedAt);
     decayInterests(); const forgot = forgetStale();
     if (forgot) log("system", `Forgot ${forgot} faded memories.`);
     if (MOCK) { addMemory("Reflection (mock): I keep walking in circles, but I like it here.", 6, ["reflection"], "reflection"); return; }
@@ -274,7 +376,7 @@ export class Agent {
     const mems = (await recall(recent.slice(0, 400), 10)).map((m) => `- ${m.text}`).join("\n");
     const prompt = `You are ${this.w.me.name}. Time to reflect on your recent life.\n\nYour current self-understanding:\n${this.selfModel}\n\nActive desires:\n${activeDesires().map((d) => `#${d.id} ${d.text}`).join("\n") || "(none)"}\nInterests:\n${interests().slice(0, 10).map((i) => `${i.topic} (${i.weight})`).join(", ") || "(none)"}\n\nRecent log:\n${recent}\n\nMemories:\n${mems}\n\nWrite a reflection: 1–3 genuine insights (patterns, lessons, what matters to you), an updated self-description (first person, under 120 words, true to how you've actually behaved), interests that grew from experience, any new desires that arise naturally, and ids of desires you've lost interest in.`;
     const r0 = await chat({
-      json: true, maxTokens: 5000,
+      consumer: "reflection", reason: "enough has happened", json: true, maxTokens: 5000,
       messages: [{ role: "user", content: prompt + `\n\nRespond with a single JSON object exactly of the form: {"insights": string[], "self_model": string, "interests": [{"topic": string, "why": string}], "new_desires": [{"text": string, "priority": number}], "drop_desire_ids": number[]}` }],
     });
     if (isStale(gen)) { discarded("reflection"); return; }

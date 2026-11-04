@@ -25,10 +25,15 @@ export const DEFS: ConfigDef[] = [
   { key: "fallRate", group: "Survival", label: "Falls and stumbles", help: "0 means River never trips.", type: "number", def: 1, min: 0, max: 3, step: 0.25, unit: "×" },
 
   { key: "thinkSeconds", group: "River's mind", label: "Pause between thoughts", help: "Longer is cheaper.", type: "number", def: env("THINK_INTERVAL_MS", 8000) / 1000, min: 1, max: 120, step: 1, unit: "s" },
-  { key: "maxSteps", group: "River's mind", label: "Steps per thought", help: "0 means no limit.", type: "number", def: env("MAX_STEPS_PER_CYCLE", 0), min: 0, max: 40, step: 1 },
+  { key: "followUpSeconds", group: "River's mind", label: "Pause after acting", help: "How long River waits, after doing something, before deciding what to do next. Shorter means more actions and more tokens.", type: "number", def: 2, min: 0.5, max: 60, step: 0.5, unit: "s" },
+  { key: "maxSteps", group: "River's mind", label: "Calls per decision", help: "How many times the model may be asked within one decision (it can give several actions per reply). Information gathering allows a follow-up; any action ends the decision. 0 means no limit.", type: "number", def: env("MAX_STEPS_PER_CYCLE", 3), min: 0, max: 40, step: 1 },
+  { key: "packetTokens", group: "River's mind", label: "Size of what River is shown", help: "Input tokens for one decision, including its abilities. State, observations and memories share what the fixed parts leave; danger and a human's words are never cut.", type: "number", def: env("PACKET_TOKENS", 7000), min: 2000, max: 24000, step: 500 },
+  { key: "reflectMinutes", group: "River's mind", label: "Longest time between reflections", help: "River reflects when enough has happened to it, or after this many world minutes, whichever comes first.", type: "number", def: 45, min: 5, max: 600, step: 5, unit: "min" },
   { key: "temperature", group: "River's mind", label: "Temperature", help: "Higher is more adventurous and less predictable.", type: "number", def: env("RIVER_TEMPERATURE", 1.3), min: 0.5, max: 1.8, step: 0.05 },
   { key: "dreams", group: "River's mind", label: "Dreams per day", help: "0 turns dreaming off.", type: "number", def: env("MAX_DREAMS_PER_DAY", 4), min: 0, max: 10, step: 1 },
 
+  { key: "reservePct", group: "Budget", label: "Kept for urgent matters", help: "Share of the hourly tokens only a human's words and danger may use.", type: "number", def: 20, min: 0, max: 50, step: 5, unit: "%" },
+  { key: "budgetPause", group: "Budget", label: "Freeze the world when the budget is spent", help: "On: the world waits at the next decision until tokens free up. Off: the world carries on, River just stops deciding.", type: "toggle", def: true },
   { key: "tokensK", group: "Budget", label: "Tokens per hour", help: "Soft cap in thousands. River slows as it fills.", type: "number", def: env("MAX_TOKENS_PER_HOUR", 1_500_000) / 1000, min: 100, max: 6000, step: 100, unit: "k" },
   { key: "cycles", group: "Budget", label: "Thought cycles per hour", help: "Hard cap.", type: "number", def: env("MAX_CYCLES_PER_HOUR", 240), min: 30, max: 1000, step: 10 },
   { key: "offpeak", group: "Budget", label: "Off-peak multiplier", help: "Budget stretches by this much when the API is cheap.", type: "number", def: env("OFFPEAK_MULTIPLIER", 2), min: 1, max: 4, step: 0.5, unit: "×" },

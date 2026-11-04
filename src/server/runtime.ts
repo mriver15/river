@@ -21,8 +21,8 @@ import { Activities } from "./activities.ts";
 import { setupDeath } from "./death.ts";
 import { startDreams } from "./dreams.ts";
 import { startJournal } from "./journal.ts";
-import { every, STEP_MS, setSimPaused, setSimSpeed, speedForDayMinutes } from "./sim.ts";
-import { CHECKPOINT_EVERY, checkpoint, registerState } from "./recorder.ts";
+import { every, STEP_MS, setSimPaused, setSimSpeed, speedForDayMinutes, inject } from "./sim.ts";
+import { CHECKPOINT_EVERY, checkpoint, registerState, recordCommand, finishCommand } from "./recorder.ts";
 import { simTick } from "./sim.ts";
 import { decideRequest, GATED } from "./mind.ts";
 import type { ClientMsg, ToolRequest } from "../shared/types.ts";
@@ -40,13 +40,15 @@ export async function createRuntime() {
   ambient.creatures = creatures; world.creatures = creatures;
   const story = new Story(world); story.emotions = emotions; world.story = story;
   const catalog = new Catalog(world); catalog.story = story; catalog.sync();
-  bodyApi.attach(world, emotions, (msg) => agent.notify(msg, true));
+  bodyApi.attach(world, emotions, (msg) => agent.notify(msg, true, "danger"));
   setupDeath(world, agent); if (bodyApi.isDead()) agent.setPaused(true, true);
-  const wildlife = new Wildlife(world, emotions, ambient.say, (msg) => agent.notify(msg, true));
-  const fire = new Fire(world, ambient.say, (msg) => agent.notify(msg, true));
+  const wildlife = new Wildlife(world, emotions, ambient.say, (msg) => agent.notify(msg, true, "danger"));
+  const fire = new Fire(world, ambient.say, (msg) => agent.notify(msg, true, "danger"));
   world.fire = fire;
   const knowledge = new Knowledge(world);
-  const activities = new Activities(world, (msg, wake) => agent.notify(msg, wake), () => wildlife.threat());
+  const activities = new Activities(world, (msg, wake, kind) => agent.notify(msg, wake, kind), () => wildlife.threat());
+  // When the token budget runs out the brain may ask for the world to wait; it goes through the journal like any other freeze.
+  agent.setWorldPaused = (p, why) => void inject(() => { const m = { t: "sim_pause" as const, paused: p }; const seq = recordCommand("human", "sim_pause", m); humanCommand({ world, agent, emotions, ambient, creatures, story, catalog, wildlife, fire, knowledge, activities } as Runtime, m); finishCommand(seq, "ok", why); });
   activities.resume();
   return { world, emotions, agent, ambient, creatures, story, catalog, wildlife, fire, knowledge, activities };
 }
@@ -83,14 +85,14 @@ export interface HumanResult { notice?: { level: "ok" | "error"; text: string };
 export function humanCommand(rt: Runtime, m: ClientMsg): HumanResult {
   const { world, agent, emotions, catalog } = rt;
   /** If something appears close to River, River notices; far away it's simply there to be found. */
-  const arrived = (name: string, at: { x: number; z: number }) => { if (Math.hypot(at.x - world.me.x, at.z - world.me.z) < 15) agent.notify(`## News\nSomething new has appeared near you: "${name}". It wasn't there before.`); };
+  const arrived = (name: string, at: { x: number; z: number }) => { if (Math.hypot(at.x - world.me.x, at.z - world.me.z) < 15) agent.notify(`## News\nSomething new has appeared near you: "${name}". It wasn't there before.`, true, "contact"); };
   try {
     switch (m.t) {
       case "say": {
         const text = (m.text ?? "").trim().slice(0, 500); if (!text) return {};
         log("human", `Human: ${text}`); emotions.contact(); bus.emit("loud", { text: "a voice from outside spoke to you" });
         addMemory(`A voice from outside said to me: "${text}"`, 6, ["human"], "human");
-        agent.notify(`## Voice from outside\nA human speaks to you: "${text}"`);
+        agent.notify(`## Voice from outside\nA human speaks to you: "${text}"`, true, "contact");
         return {};
       }
       case "skip_day": {
@@ -99,7 +101,7 @@ export function humanCommand(rt: Runtime, m: ClientMsg): HumanResult {
       }
       case "config_set": return setConfig(String(m.key), m.value) ? {} : { notice: { level: "error", text: `Unknown or invalid setting: ${m.key}` } };
       case "config_reset": resetConfig(); log("system", "Settings reset to defaults."); return {};
-      case "sim_pause": setSimPaused(!!m.paused); log("system", m.paused ? "The world was frozen by a human." : "The world was thawed by a human."); bus.emit("state"); return {};
+      case "sim_pause": setSimPaused(!!m.paused); log("system", m.paused ? "The world was frozen." : "The world was thawed."); bus.emit("state"); return {};
       case "sim_speed": setSimSpeed(Number(m.speed)); log("system", `World speed set to ${Number(m.speed)}x.`); return {};
       case "approve": case "deny": {
         const approve = m.t === "approve", r = decideRequest(m.id, approve, m.note, approve ? (m as any).builtin : undefined);
@@ -109,7 +111,7 @@ export function humanCommand(rt: Runtime, m: ClientMsg): HumanResult {
           ? (granted ? `Your request "${r.name}" was APPROVED. You can now do it with the ability called "${granted}": ${GATED[granted]}`
             : r.name in GATED ? `Your request for "${r.name}" was APPROVED. You can now use it: ${GATED[r.name]}` : `Your idea for a new tool "${r.name}" was approved in principle — the human may build it; it isn't usable yet.`)
           : `Your request for "${r.name}" was DENIED.`;
-        agent.notify(`${verdict}${m.note ? ` The human added: "${m.note}"` : ""}`);
+        agent.notify(`${verdict}${m.note ? ` The human added: "${m.note}"` : ""}`, true, "contact");
         addMemory(verdict, 6, ["tools"]);
         // Building a new tool calls a model and writes a file: not replayed.
         return approve && !granted && !(r.name in GATED) ? { forge: r } : {};

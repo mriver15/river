@@ -7,7 +7,10 @@ let gen = kvGet<number>("lifeGen", 0);
 export const lifeGen = () => gen;
 export const isStale = (g: number) => g !== gen;
 /** Begin a new generation. Returns it. */
-export function beginGeneration(): number { gen++; kvSet("lifeGen", gen); return gen; }
+const listeners: (() => void)[] = [];
+/** Called whenever a new generation begins, e.g. to cancel requests that are in flight. */
+export const onNewGeneration = (fn: () => void) => { listeners.push(fn); };
+export function beginGeneration(): number { gen++; kvSet("lifeGen", gen); for (const f of listeners) f(); return gen; }
 /** A reset wipes the key-value table; write the counter back. */
 export const persistGeneration = () => kvSet("lifeGen", gen);
 /** Note (and count) a late result that was thrown away. */

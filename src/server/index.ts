@@ -55,6 +55,7 @@ const server = http.createServer(async (req, res) => {
   const json = (o: unknown) => { res.setHeader("content-type", "application/json"); res.end(JSON.stringify(o)); };
   if (url.pathname === "/api/memories") return json({ ...embeddingCoverage(), memories: await search(url.searchParams.get("q") ?? "", 60) });
   if (url.pathname === "/api/music") return json(libraryForUi());
+  if (url.pathname === "/api/brain") return json(agent.brainView());
   if (url.pathname === "/api/moments") return json(recentMoments(100));
   if (url.pathname === "/api/log") return json(logBefore(Number(url.searchParams.get("before") ?? 1e12), 200));
   if (fs.existsSync(DIST)) {

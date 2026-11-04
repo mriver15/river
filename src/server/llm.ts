@@ -15,9 +15,9 @@ export interface ChatMessage {
 }
 export interface ToolSpec { name: string; description: string; input_schema: Record<string, any> }
 /** `truncated`: the model spent its whole token allowance thinking and produced no answer. */
-export interface ChatResult { message: ChatMessage; text: string; truncated: boolean; toolCalls: { id: string; name: string; args: Record<string, any>; badJson?: boolean }[]; finish: string }
+export interface ChatResult { message: ChatMessage; text: string; truncated: boolean; usage?: { inp: number; out: number; hit: number }; toolCalls: { id: string; name: string; args: Record<string, any>; badJson?: boolean }[]; finish: string }
 
-export async function chat(opts: { messages: ChatMessage[]; tools?: ToolSpec[]; json?: boolean; maxTokens?: number; model?: string; temperature?: number }): Promise<ChatResult> {
+export async function chat(opts: { messages: ChatMessage[]; tools?: ToolSpec[]; json?: boolean; maxTokens?: number; model?: string; temperature?: number; consumer?: string; reason?: string; signal?: AbortSignal }): Promise<ChatResult> {
   const key = process.env.LLM_API_KEY ?? process.env.DEEPSEEK_API_KEY;
   if (!key && !LOCAL) throw new Error("DEEPSEEK_API_KEY is not set (put it in .env, or run with MOCK_LLM=1)");
   const body: Record<string, any> = { model: opts.model ?? MODEL, messages: opts.messages, max_tokens: opts.maxTokens ?? 4000, stream: false };
@@ -27,13 +27,14 @@ export async function chat(opts: { messages: ChatMessage[]; tools?: ToolSpec[]; 
 
   let lastErr = "";
   for (let attempt = 0; attempt < 3; attempt++) {
+    const t0 = Date.now();
     const res = await fetch(`${BASE}/chat/completions`, {
       method: "POST", headers: { "content-type": "application/json", ...(key ? { authorization: `Bearer ${key}` } : {}) },
-      body: JSON.stringify(body), signal: AbortSignal.timeout(180_000),
+      body: JSON.stringify(body), signal: opts.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(180_000)]) : AbortSignal.timeout(180_000),
     });
     if (res.ok) {
       const data: any = await res.json();
-      record(data.usage);
+      record(data.usage, { consumer: opts.consumer, reason: opts.reason, ms: Date.now() - t0 });
       const choice = data.choices?.[0];
       if (!choice) throw new Error("DeepSeek returned no choices");
       const m = choice.message;
@@ -44,10 +45,11 @@ export async function chat(opts: { messages: ChatMessage[]; tools?: ToolSpec[]; 
         catch { return { id: c.id, name: c.function.name, args: {}, badJson: true }; }
       });
       const text = (m.content ?? "").trim();
-      return { message, text, toolCalls, finish: choice.finish_reason, truncated: choice.finish_reason === "length" && !text && !toolCalls.length };
+      return { message, text, toolCalls, usage: { inp: data.usage?.prompt_tokens ?? 0, out: data.usage?.completion_tokens ?? 0, hit: data.usage?.prompt_cache_hit_tokens ?? 0 }, finish: choice.finish_reason, truncated: choice.finish_reason === "length" && !text && !toolCalls.length };
     }
     lastErr = `${res.status} ${(await res.text()).slice(0, 300)}`;
     if (res.status !== 429 && res.status < 500) break;
+    if (opts.signal?.aborted) throw new Error("cancelled");
     await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
   }
   throw new Error(`DeepSeek API error: ${lastErr}`);

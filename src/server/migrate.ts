@@ -56,6 +56,16 @@ export const MIGRATIONS: Migration[] = [
     id: "0006_blobs", description: "Binary state committed with the clock (grids)",
     up: (db) => { db.exec("CREATE TABLE IF NOT EXISTS sim_blobs (k TEXT PRIMARY KEY, v BLOB NOT NULL)"); },
   },
+  {
+    id: "0007_brain_decisions", description: "A log of what woke River's mind and what it cost",
+    up: (db) => {
+      db.exec(`CREATE TABLE IF NOT EXISTS brain_decisions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, tick INTEGER NOT NULL, wall_ts INTEGER NOT NULL, kinds TEXT NOT NULL, priority INTEGER NOT NULL,
+        calls INTEGER NOT NULL, in_tokens INTEGER NOT NULL, out_tokens INTEGER NOT NULL, cache_tokens INTEGER NOT NULL, latency_ms INTEGER NOT NULL,
+        packet_tokens INTEGER NOT NULL, tools TEXT NOT NULL, dropped TEXT NOT NULL, note TEXT NOT NULL DEFAULT ''
+      )`);
+    },
+  },
 ];
 
 export interface MigrationReport { applied: string[]; alreadyApplied: string[] }

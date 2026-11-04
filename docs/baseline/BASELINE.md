@@ -172,3 +172,46 @@ Still not done:
 - **Inventory capacity** does not exist in the game, so `gather` has none to check.
 - **Learned routines and a general planner:** out of scope by design.
 - **In-flight appraisals:** an emotion appraisal that is waiting on an embedding at the instant of a restart is dropped (it is derived from a tool result that was already committed).
+
+## MVP 4: the event-driven brain
+
+Design and rules: `docs/DECISION_PACKET.md`. Code: `src/brain/` (trigger queue, packet assembly: pure and unit-tested) and `src/server/agent.ts`.
+
+What changed:
+
+- **Decisions are woken by triggers, not by a timer.** Danger, a human's words, a need falling (with hysteresis), an activity that failed or ended with nobody waiting, a strong feeling, something perceived, and a quiet moment, each with a priority, expiry, merge key and minimum spacing. Everything eligible is answered by one decision, most urgent first.
+- **Fresh compact packets, no growing transcript.** Each decision is shown a bounded summary (state, observations, memories) built from budgeted sections; danger and a human's words are never cut. A decision makes one or two model calls (information tools allow one follow-up; any action ends the decision), may contain several actions in one reply, and stops at the first that fails. What was just done and how it went is carried into the next packet.
+- **Accounting and budget.** Every model call is tagged by consumer (decision, reflection, dream, story, forge) with tokens in/out/cached and latency; each decision is logged (`brain_decisions`) and shown in a new **Brain** tab. The last 20% of the hourly allowance is reserved for danger and a human; when it is spent the world either waits at the next decision (default) or carries on without new ones. Activities and reflexes continue either way; River is not put to sleep for want of budget.
+- **Reflection** now follows experience: enough importance since the last one, or a maximum interval (default 45 world minutes), never more often than every four decisions.
+- **Cancellation.** In-flight model calls are aborted on a new life or reset; late answers are discarded.
+- **Outside services are journaled.** `recall`, `web_search` and `web_fetch` fetch first, and the answer travels with the command, so the action is a pure function of it. (Found when real-model soaks diverged by half a second in one emotion timestamp: the embedding lookup finished a few ticks after the call began live but instantly in replay.)
+- **Deterministic action summaries.** The old loop saved a model-written summary at the end of every long cycle; the new one keeps a memory of what was actually done (successful, non-trivial actions), written without a model call.
+
+### Token measurement
+
+Same fixture (`new-life`, the same island), same model (`deepseek-flash`), same 12 wall minutes at 1x (0.5 simulated day), `npm run baseline`. Baseline = the two MVP 0 / pre-MVP 4 runs. Live-model behaviour differs from run to run, so this is a small sample, not a confidence interval.
+
+| Run | Tokens | Tokens per simulated day | Model calls | Actions | Tokens per action | Memories |
+|---|---|---|---|---|---|---|
+| baseline 1 | 1,010,571 | 2,021,142 | 84 | 85 | 11,889 | 14 |
+| baseline 2 | 956,654 | 1,913,308 | 77 | 79 | 12,109 | 16 |
+| MVP 4 (a) | 398,849 | 797,698 | 97 | 103 | 3,872 | 21 |
+| MVP 4 (b) | 544,151 | 1,088,302 | 135 | 157 | 3,465 | 22 |
+| MVP 4 (c) | 384,665 | 769,330 | 96 | 99 | 3,885 | 23 |
+
+- **Per simulated day: mean 885k against 1.97M, a 55% reduction** (range 45% to 61% across the three runs, so one of three did not reach the 50% target). **Per action: 3.7k against 12.0k, a 69% reduction.** Average input per call fell from about 12k to 3.8k tokens: the old cost was the conversation growing across a 40-call cycle.
+- **Activity went up, not down:** 99 to 157 actions in the 12 minutes (against 79 to 85), and more memories. This depends on the setting `followUpSeconds` (pause after acting, default 2 s). An earlier configuration that applied the 8-second quiet-moment pause after every decision measured 150k to 272k tokens per simulated day (a 86% to 92% reduction) but River took only 25 to 48 actions in the same time: cheaper because it acted less. The setting moves along that tradeoff; the default was chosen to keep River at least as active as before.
+- **Provider and behaviour variance is large** (the six MVP 4 runs ranged from 150k to 1.09M tokens per simulated day depending on how far River chose to walk and how often it was woken). Not measured: a controlled comparison on matched seeds with a fixed action script, and missed critical interruptions in live runs (no run met a lethal threat; the scripted tests cover the priority and latency behaviour).
+- Decisions averaged 1.6 calls and about 7 seconds of model latency; the packet averaged 700 to 800 tokens on top of about 2.9k fixed tokens (system prompt and tool list).
+
+### Tests
+
+`tests/brain.test.ts` (queue, merging, expiry, spacing, hysteresis, packet budgets, critical items kept) and `tests/decisions.test.ts`, which runs the real agent against a scripted local model: no model call while an activity runs; a threat and a human voice are taken first whatever the arrival order; the packet stays within its budget and is a fresh two-message summary; an action ends the decision and the call limit holds; several actions in a reply run in order and stop at the first failure; a failing provider is retried without doing anything twice; a late answer from a previous life changes nothing; an empty allowance holds ordinary decisions back, still lets a human through the reserve, and freezes the world only if told to; a need that stays low wakes the mind once.
+
+Not done in MVP 4:
+
+- No small-model or cheaper-model path for routine decisions (the spec's explicit exclusion: deterministic procedures are the first answer).
+- Delta packets: every packet is a full compact baseline. Providers' prompt caching is used opportunistically, never relied on.
+- Embedding model and version are not pinned in the recorded relevance scores.
+- Tool descriptions (about 2.1k tokens per call) are sent whole every time; trimming or offering only relevant tools would save more but changes what River can discover.
+- A human's words wait for the current action to finish rather than interrupting it (a rest and a walk's own reflexes excepted).

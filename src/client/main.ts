@@ -6,6 +6,7 @@ import { ask, handleNotice, initChrome, inspect, renderBudget, renderHud, setCon
 import { addLog, hooks, initLog, resetLog } from "./ui/log.ts";
 import { drawMap, lastMap } from "./ui/map.ts";
 import { initMemory, loadMemories } from "./ui/memory.ts";
+import { loadBrain } from "./ui/brain.ts";
 import { initMusic, onRiverScore } from "./ui/music.ts";
 import { onMoment } from "./ui/moments.ts";
 import { renderDeath } from "./ui/death.ts";
@@ -20,9 +21,11 @@ let lastAudio = 0;
 // ---------- rendering ----------
 renderers.log = () => {}; renderers.mind = renderMind; renderers.story = renderStory; renderers.map = () => { drawMap(); renderCatalog(); };
 renderers.items = renderItems; renderers.tools = renderTools; renderers.memory = () => void loadMemories(($("memq") as HTMLInputElement).value);
+renderers.brain = () => void loadBrain();
 function renderAll() {
   renderBudget(); renderTools();                       // tools always runs: it keeps the tab badge fresh
   for (const t of ["mind", "story", "map", "items"] as const) if (isTab(t)) renderers[t]();
+  if (isTab("brain")) renderers.brain();
 }
 
 function setAgent(a: AgentView) {

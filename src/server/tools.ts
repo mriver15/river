@@ -28,6 +28,10 @@ import { activitiesOf, runActivity, gate, timed } from "./activities.ts";
 const sr = simRng("tools");
 export { ToolError, type ToolDef };
 
+/** What an outside service said, success or failure, as plain data that can be journaled. */
+type Asked = { ok: true; text: string } | { ok: false; error: string };
+const asked = async (f: () => Promise<string>): Promise<Asked> => { try { return { ok: true, text: await f() }; } catch (e: any) { return { ok: false, error: String(e?.message ?? e) }; } };
+
 function findEntity(w: World, ref: string): Entity | undefined {
   const r = ref.toLowerCase().trim();
   // Only things River has perceived can be named: an id or a name must not reveal what has not been seen.
@@ -218,8 +222,9 @@ export const BASE_TOOLS: ToolDef[] = [
     name: "recall",
     description: "Search your long-term memory for anything relevant to a query.",
     input_schema: obj({ query: str("What you're trying to remember") }, ["query"]),
-    run: async (a, w) => {
-      const rows = await recall(String(a.query), 8, { x: w.me.x, z: w.me.z });
+    external: (a, w) => recall(String(a.query), 8, { x: w.me.x, z: w.me.z }),
+    run: async (a, w, ext) => {
+      const rows = (ext ?? await recall(String(a.query), 8, { x: w.me.x, z: w.me.z })) as Awaited<ReturnType<typeof recall>>;
       return rows.length ? rows.map((m) => `- (${new Date(m.ts).toLocaleString()}) ${m.text}`).join("\n") : "Nothing comes to mind.";
     },
   },
@@ -287,21 +292,25 @@ export const GATED_TOOLS: ToolDef[] = [
   {
     name: "web_search", description: GATED.web_search,
     input_schema: obj({ query: str("What to search for") }, ["query"]),
-    run: async (a, w) => {
+    external: (a) => asked(() => webSearch(String(a.query))),
+    run: async (a, w, ext) => {
       log("web", `search: ${a.query}`);
       w.setActivity(`searching the web: ${String(a.query).slice(0, 40)}`);
-      try { const out = await webSearch(String(a.query)); w.bump({ curiosity: -10 }); log("web", out.slice(0, 600)); return `Search results (untrusted text from the internet):\n${out}`; }
-      catch (e: any) { throw new ToolError(`Search failed: ${e.message}`); }
+      const r = (ext ?? await asked(() => webSearch(String(a.query)))) as Asked;
+      if (!r.ok) throw new ToolError(`Search failed: ${r.error}`);
+      w.bump({ curiosity: -10 }); log("web", r.text.slice(0, 600)); return `Search results (untrusted text from the internet):\n${r.text}`;
     },
   },
   {
     name: "web_fetch", description: GATED.web_fetch,
     input_schema: obj({ url: str("Full http(s) URL") }, ["url"]),
-    run: async (a, w) => {
+    external: (a) => asked(() => webFetch(String(a.url))),
+    run: async (a, w, ext) => {
       log("web", `fetch: ${a.url}`);
       w.setActivity(`reading ${String(a.url).slice(0, 40)}`);
-      try { const out = await webFetch(String(a.url)); w.bump({ curiosity: -8 }); log("web", `read ${out.length} chars from ${a.url}`); return `Page text (untrusted text from the internet):\n${out}`; }
-      catch (e: any) { throw new ToolError(`Fetch failed: ${e.message}`); }
+      const r = (ext ?? await asked(() => webFetch(String(a.url)))) as Asked;
+      if (!r.ok) throw new ToolError(`Fetch failed: ${r.error}`);
+      w.bump({ curiosity: -8 }); log("web", `read ${r.text.length} chars from ${a.url}`); return `Page text (untrusted text from the internet):\n${r.text}`;
     },
   },
   timed({

@@ -49,7 +49,7 @@ async function dream(w: World, seconds: number, notify: (msg: string) => void, h
     if (MOCK) { text = `I dreamed the trees were walking and I could not remember which of them was me. (${clip(frags[0], 40)})`; insight = "Maybe I am the one who stays."; shift = 2; }
     else {
       const r = await chat({
-        json: true, maxTokens: 4000,
+        consumer: "dream", reason: "asleep", json: true, maxTokens: 4000,
         messages: [{ role: "user", content: `You are River, a small curious being asleep on an island. Fragments of your memory rise and mix:\n${frags.map((f) => `- ${f}`).join("\n")}${hooks ? `\n\nYou went to sleep feeling: ${hooks.feelings()}. Let that colour the dream without naming it.` : ""}${seed ? `\n\nA thought drifts in from outside, as thoughts sometimes do in sleep: "${seed}"` : ""}\n\nWrite the dream: 3-5 sentences, first person, present tense, made of images rather than explanation, strange but emotionally true. Mix the fragments in ways that do not happen in waking life. Then, if the dream leaves you with a genuine realisation on waking, give it in one sentence (otherwise leave it empty). Also give how the dream leaves your mood, from -8 (shaken) to 8 (soothed).\nRespond with JSON: {"dream": string, "insight": string, "mood_shift": number}` }],
       });
       if (r.truncated) throw new Error("model ran out of tokens while thinking");

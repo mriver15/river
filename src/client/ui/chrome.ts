@@ -4,8 +4,8 @@ import { S, ctx, TABS, renderers, send, type TabName } from "../state.ts";
 import { EMOTIONS, EMOTION_ORDER, intensityWord } from "../../shared/emotions.ts";
 import type { AgentView, Entity } from "../../shared/types.ts";
 
-const TAB_LABEL: Record<TabName, string> = { log: "Log", mind: "Mind", story: "Story", map: "Map", items: "Items", tools: "Tools", memory: "Memory" };
-const TAB_ICON: Record<TabName, IconName> = { log: "log", mind: "mind", story: "story", map: "map", items: "items", tools: "tools", memory: "memory" };
+const TAB_LABEL: Record<TabName, string> = { log: "Log", mind: "Mind", story: "Story", map: "Map", items: "Items", tools: "Tools", memory: "Memory", brain: "Brain" };
+const TAB_ICON: Record<TabName, IconName> = { log: "log", mind: "mind", story: "story", map: "map", items: "items", tools: "tools", memory: "memory", brain: "brain" };
 const badges: Partial<Record<TabName, number>> = {};
 
 // ---------- tabs ----------

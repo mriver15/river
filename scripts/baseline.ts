@@ -16,7 +16,7 @@ if (!process.env.DEEPSEEK_API_KEY && !process.env.LLM_API_KEY && !process.env.LL
 const src = path.resolve(`.fixtures/${fixture}.db`), runDir = path.resolve(".fixtures/run");
 if (!fs.existsSync(src)) throw new Error(`missing ${src}; run npm run fixtures first`);
 fs.mkdirSync(runDir, { recursive: true });
-const stamp = new Date().toISOString().replace(/[:.]/g, "-"), dbFile = path.join(runDir, `${fixture}-${stamp}.db`);
+const stamp = new Date().toISOString().replace(/[:.]/g, "-"), dbFile = path.join(runDir, `${fixture}-${stamp}-p${port}.db`);
 fs.copyFileSync(src, dbFile, fs.constants.COPYFILE_EXCL);
 
 console.log(`running ${minutes} min on ${dbFile} (port ${port})`);
@@ -34,12 +34,19 @@ setTimeout(async () => {
   const cycles = kv("cycleCount") ?? 0;
   const agent = kv("agent");
   const memories = (db.prepare("SELECT COUNT(*) n FROM memories").get() as { n: number }).n;
+  type D = { kinds: string; calls: number; in_tokens: number; out_tokens: number; packet_tokens: number; latency_ms: number; tools: string; note: string };
+  let decisions: D[] = []; try { decisions = db.prepare("SELECT kinds, calls, in_tokens, out_tokens, packet_tokens, latency_ms, tools, note FROM brain_decisions ORDER BY id").all() as unknown as D[]; } catch { /* a database from before the decision log */ }
+  const byConsumer: Record<string, { calls: number; tokens: number }> = {};
+  for (const r of recs as any[]) { const c = (byConsumer[r.c ?? "decision"] ??= { calls: 0, tokens: 0 }); c.calls++; c.tokens += r.inp + r.out; }
+  const kinds: Record<string, number> = {}; for (const d of decisions) for (const k of d.kinds.split(",")) kinds[k.replace(/×\d+$/, "")] = (kinds[k.replace(/×\d+$/, "")] ?? 0) + 1;
+  const tools: Record<string, number> = {}; for (const d of decisions) for (const t of d.tools.split(",").filter(Boolean)) tools[t.replace("✗", "")] = (tools[t.replace("✗", "")] ?? 0) + 1;
+  const actions = Object.values(tools).reduce((a, n) => a + n, 0);
   db.close();
 
   const inp = recs.reduce((a, r) => a + r.inp, 0), out = recs.reduce((a, r) => a + r.out, 0), hit = recs.reduce((a, r) => a + r.hit, 0);
   const simDays = minutes / 24;   // 1x speed; fixture dayMinutes default is 24
   const row = { when: new Date().toISOString(), fixture, minutes, simDays: +simDays.toFixed(3), calls: recs.length, cycles, inputTokens: inp, outputTokens: out, cacheHitTokens: hit,
-    tokensPerSimDay: Math.round((inp + out) / simDays), tokensPerCycle: cycles ? Math.round((inp + out) / cycles) : null, memories, endedAt: agent && { x: +agent.x.toFixed(1), z: +agent.z.toFixed(1) }, db: path.relative(process.cwd(), dbFile) };
+    tokensPerSimDay: Math.round((inp + out) / simDays), tokensPerCycle: cycles ? Math.round((inp + out) / cycles) : null, memories, decisions: decisions.length, callsPerDecision: decisions.length ? +(decisions.reduce((a, d) => a + d.calls, 0) / decisions.length).toFixed(2) : null, tokensPerDecision: decisions.length ? Math.round((inp + out) / decisions.length) : null, avgPacketTokens: decisions.length ? Math.round(decisions.reduce((a, d) => a + d.packet_tokens, 0) / decisions.length) : null, avgLatencyMs: decisions.length ? Math.round(decisions.reduce((a, d) => a + d.latency_ms, 0) / decisions.length) : null, wokenBy: kinds, actions, toolsUsed: tools, byConsumer, endedAt: agent && { x: +agent.x.toFixed(1), z: +agent.z.toFixed(1) }, db: path.relative(process.cwd(), dbFile) };
   fs.appendFileSync(path.join(runDir, "results.jsonl"), JSON.stringify(row) + "\n");
   console.log(row);
   if (!recs.length) { console.error("no usage recorded: check", dbFile + ".log"); process.exit(1); }

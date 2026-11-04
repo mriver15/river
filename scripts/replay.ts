@@ -44,7 +44,7 @@ sim.setSimPaused(false);
 const drain = () => new Promise<void>((r) => setImmediate(r));
 const pending: Promise<unknown>[] = [];
 const apply = (c: (typeof cmds)[number]) => {
-  if (c.type === "tool" && c.source === "brain") pending.push(rt.agent.execNow(c.payload.name, c.payload.input, undefined, undefined, { status: c.status, result: c.result }));
+  if (c.type === "tool" && c.source === "brain") pending.push(rt.agent.execNow(c.payload.name, c.payload.input, undefined, undefined, { status: c.status, result: c.result }, c.payload.ext));
   else if (c.source === "external" && c.type === "relevance") rt.emotions.resolveRelevance(c.payload);
   else if (c.source === "external" && c.type === "dream") applyDream(rt.world, c.payload, () => {}, { feelings: () => rt.emotions.describe(), after: () => rt.emotions.afterDream() });
   else if (c.source === "brain") rt.agent.applyBrain(c.payload);
