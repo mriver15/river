@@ -48,7 +48,7 @@ export const interests = (): Interest[] =>
 export const GATED: Record<string, string> = {
   web_search: "Search the real web. Lets you find out about anything you're curious about (including things outside this island).",
   web_fetch: "Open a specific web page by URL and read it.",
-  craft: "Combine up to 3 items from your inventory into a new invented item.",
+  craft: "Make things from what you carry. Follow a recipe (say `list` to see what you know how to make), or combine up to 3 items into a keepsake. What a made thing can DO depends on what it is made of and how it is put together, not on what you call it.",
   plant: "Plant a seed in the ground; it grows over a few minutes into a flower, bush or tree.",
 
 };

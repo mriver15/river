@@ -25,12 +25,22 @@ import { ToolError, obj, num, str, type ToolDef } from "./toolkit.ts";
 import { simNow, simRng } from "./sim.ts";
 import { available, takeLoose, takeOneUnit } from "./gathering.ts";
 import { activitiesOf, runActivity, gate, timed } from "./activities.ts";
+import { RECIPES, recipeByName } from "../content/recipes.ts";
+import { checkRecipe, craftNow, describeRecipe } from "./crafting.ts";
 const sr = simRng("tools");
 export { ToolError, type ToolDef };
 
 /** What an outside service said, success or failure, as plain data that can be journaled. */
 type Asked = { ok: true; text: string } | { ok: false; error: string };
 const asked = async (f: () => Promise<string>): Promise<Asked> => { try { return { ok: true, text: await f() }; } catch (e: any) { return { ok: false, error: String(e?.message ?? e) }; } };
+
+/** What a carried thing actually is: its material, its state, what it can do, what is inside. Only what the world knows. */
+function itemFacts(w: World, i: import("./items.ts").ItemInstance): string {
+  const d = w.items.describe(i), mats = [...new Set(i.parts.map((p) => p.material))].join(" and ");
+  const state = [i.condition.durability < 0.95 ? (i.condition.durability <= 0 ? "broken" : i.condition.durability < 0.4 ? "badly worn" : "worn") : "", i.condition.wetness > 0.5 ? "soaked" : i.condition.wetness > 0.2 ? "damp" : ""].filter(Boolean);
+  const made = i.provenance.sourceIds.length && !i.provenance.unknown ? ` Made from ${i.provenance.sourceIds.length} thing${i.provenance.sourceIds.length > 1 ? "s" : ""}.` : "";
+  return `Made of ${mats}; about ${w.items.unitMass(i).toFixed(2)} kg.${state.length ? ` It is ${state.join(" and ")}.` : ""} ${d.capabilities.length ? `It can: ${d.capabilities.join(", ")}.` : "It has no use beyond being what it is."}${made}${d.contents.length ? ` Inside: ${d.contents.map((c) => `${c.qty > 1 ? `${c.qty} ` : ""}${c.name}`).join(", ")}.` : ""}`;
+}
 
 function findEntity(w: World, ref: string): Entity | undefined {
   const r = ref.toLowerCase().trim();
@@ -119,7 +129,8 @@ export const BASE_TOOLS: ToolDef[] = [
       if (inv) {
         if (inv.props?.beat) ((w as any).story as Story)?.found(inv.props.beat);
         w.bump({ curiosity: -3 });
-        return `${inv.name} ×${inv.qty}: ${inv.desc}${inv.props?.text ? `\nYou read: "${inv.props.text}"` : ""}`;
+        const inst = w.items.get(inv.id), facts = inst ? itemFacts(w, inst) : "";
+        return `${inv.name} ×${inv.qty}: ${inv.desc}${inv.props?.text ? `\nYou read: "${inv.props.text}"` : ""}${facts ? `\n${facts}` : ""}`;
       }
       const e = findEntity(w, String(a.id));
       if (!e) throw new ToolError("Nothing like that known. Use look.");
@@ -158,10 +169,31 @@ export const BASE_TOOLS: ToolDef[] = [
     run: (a, w) => {
       const it = w.findItem(String(a.item));
       if (!it) throw new ToolError("You don't have that.");
-      const took = w.takeItem(it.id, 1)!;
-      const p = w.spotNearMe(1.5);
-      w.spawn("item", took.name, p.x, p.z, { takeable: true, item: took.kind, itemName: took.name, desc: took.desc, ...(took.props ?? {}) });
-      return `You put down ${took.name}.`;
+      try { w.items.drop(it.id, 1); } catch (e: any) { throw new ToolError(e.message); }       // the same thing, set down: it keeps what it is
+      return `You put down ${it.name}.`;
+    },
+  },
+  {
+    name: "stow",
+    description: "Put some of what you carry inside a container you carry (a basket, say). It can hold only so much, and a container cannot be put inside itself.",
+    input_schema: obj({ item: str("What to put in (id or name)"), container: str("The container (id or name)"), quantity: num("How many (default: all)") }, ["item", "container"]),
+    run: (a, w) => {
+      const it = w.findItem(String(a.item)), c = w.findItem(String(a.container));
+      if (!it) throw new ToolError("You don't have that."); if (!c) throw new ToolError("You aren't carrying that container.");
+      try { const n = Math.max(1, Math.round(Number(a.quantity ?? it.qty))); const got = w.items.stow(it.id, n, c.id); return `You put ${n > 1 ? `${n} ` : ""}${got.name} in ${c.name}.`; }
+      catch (e: any) { throw new ToolError(e.message); }
+    },
+  },
+  {
+    name: "take_out",
+    description: "Take something back out of a container you carry.",
+    input_schema: obj({ item: str("What to take out (id or name)"), container: str("The container (id or name)"), quantity: num("How many (default: all)") }, ["item", "container"]),
+    run: (a, w) => {
+      const c = w.findItem(String(a.container)); if (!c) throw new ToolError("You aren't carrying that container.");
+      const ref = String(a.item).toLowerCase(), inside = w.items.contents(c.id).find((x) => x.id === a.item || x.name.toLowerCase() === ref || x.kind === ref);
+      if (!inside) throw new ToolError(`There is no ${a.item} in ${c.name}.`);
+      try { const n = Math.max(1, Math.round(Number(a.quantity ?? inside.qty))); const got = w.items.takeOut(inside.id, n, c.id); return `You take ${n > 1 ? `${n} ` : ""}${got.name} out of ${c.name}.`; }
+      catch (e: any) { throw new ToolError(e.message); }
     },
   },
   {
@@ -274,7 +306,7 @@ export const GATED_TOOLS: ToolDef[] = [
   BURN_TOOL,
   timed(BUILD_TOOL),
   timed(CLOTHE_TOOL),
-  DEFEND_TOOL,
+  timed(DEFEND_TOOL),
   timed(TEND_TOOL),
   FISH_TOOL,
   timed(COLOUR_TOOL),
@@ -315,14 +347,40 @@ export const GATED_TOOLS: ToolDef[] = [
   },
   timed({
     name: "craft", description: GATED.craft,
-    input_schema: obj({ ingredients: { type: "array", items: { type: "string" }, description: "1–3 inventory items (one of each is consumed)" }, name: str("Name of the new item"), description: str("What it is and does") }, ["ingredients", "name", "description"]),
+    input_schema: obj({
+      recipe: str("A recipe to follow, by name, or `list` to see what you know how to make"),
+      use: { type: "array", items: { type: "string" }, description: "recipe: which of your items to use, if you care (ids or names)" },
+      ingredients: { type: "array", items: { type: "string" }, description: "keepsake: 1–3 items to combine (one of each is used up)" },
+      name: str("keepsake: what you call it"), description: str("keepsake: what it is, in your words. It does not change what it can do."),
+    }),
     run: (a, w) => {
-      const items = itemRefs(w, a.ingredients, 3);
-      gate(w, 3000, `crafting ${String(a.name).slice(0, 40)}`);
+      const q = String(a.recipe ?? "").trim();
+      if (q.toLowerCase() === "list") return `What you know how to make:\n${RECIPES.map(describeRecipe).join("\n")}\nOr combine up to 3 things into a keepsake: it can be whatever you say it is, but it will not do anything a pile of those things could not.`;
+      if (q) {
+        const r = recipeByName(q);
+        if (!r) throw new ToolError(`You don't know a way to make "${q}". You know: ${RECIPES.map((x) => x.name).join(", ")}.`);
+        const prefer = (Array.isArray(a.use) ? a.use : []).map((x: unknown) => w.findItem(String(x))?.id).filter(Boolean) as string[];
+        checkRecipe(w, r, prefer);                                                    // everything checked, nothing touched
+        gate(w, r.durationMs, `making ${r.name}`);
+        const made = craftNow(w, r, prefer);                                         // only now is anything used up
+        w.bump({ mood: 4, curiosity: -3 });
+        return `You make ${made.item.name} from ${made.used.map((u) => `${u.qty > 1 ? `${u.qty} ` : ""}${u.name}`).join(", ")}.${made.item.props.dmg ? ` It will hit for about ${made.item.props.dmg} and reach ${made.item.props.reach}m.` : ""}`;
+      }
+      const items = itemRefs(w, a.ingredients, 3), name = String(a.name ?? "").trim().slice(0, 60) || "a keepsake";
+      gate(w, 3000, `making ${name}`);
+      const parts = new Map<string, number>(), sources: string[] = [];
+      for (const it of items) {
+        const inst = w.items.get(it.id); if (!inst || inst.qty < 1) throw new ToolError("You don't have all of those items.");
+        for (const p of inst.parts) parts.set(p.material, (parts.get(p.material) ?? 0) + p.mass);
+        sources.push(inst.id);
+      }
       items.forEach((i) => w.takeItem(i.id, 1));
-      w.addItem("crafted", String(a.name).slice(0, 60), String(a.description).slice(0, 300));
+      const made = w.items.add("crafted", name, String(a.description ?? "").slice(0, 300) || `Something made from ${items.map((i) => i.name).join(" and ")}.`, 1, { keepsake: true }, {
+        sources, maker: true, defId: "keepsake", parts: [...parts].map(([material, mass]) => ({ material, mass: +mass.toFixed(4) })), note: "an experiment: a keepsake",
+      });
+      w.items.rename(made.id, name);
       w.bump({ mood: 6, curiosity: -4 });
-      return `You crafted: ${a.name}.`;
+      return `You crafted: ${name}. It is a keepsake, made of ${items.map((i) => i.name).join(" and ")}: it is what you say it is, and it does nothing a pile of those things could not.`;
     },
   }),
   {

@@ -9,6 +9,8 @@ import { ToolError, obj, str, type ToolDef } from "./toolkit.ts";
 import type { Entity, Weather } from "../shared/types.ts";
 import type { World } from "./world.ts";
 import { persisted } from "./persist.ts";
+import { defForKind } from "../content/items.ts";
+import { MATERIALS } from "../content/materials.ts";
 import { simNow, simRng, simSleep, every } from "./sim.ts";
 const sr = simRng("fire");
 
@@ -19,7 +21,14 @@ const FLAM: Record<string, Flam> = {
   mushroom: { dur: 6, radius: 1.5, p: 0.02 }, sprout: { dur: 8, radius: 1.5, p: 0.03 }, structure: { dur: 60, radius: 4, p: 0.012 },
   book: { dur: 10, radius: 1.5, p: 0.03 }, item: { dur: 12, radius: 1.5, p: 0.03 },
 };
-const flam = (e: Entity): Flam | null => (e.kind === "structure" && e.props.flammable === false ? null : e.kind === "item" ? (["plank", "flute"].includes(e.props.item) ? FLAM.item : null) : FLAM[e.kind] ?? null);
+/** how wet a loose item is, 0..1 (set by the Fire system, which can see the item registry) */
+let wetnessOf: (id: string) => number = () => 0;
+/** Whether a loose item can burn comes from what it is made of; a soaked one will not catch. */
+const itemFlam = (e: Entity): Flam | null => {
+  const d = defForKind(String(e.props.item ?? "")), fuel = d.parts.some((p) => MATERIALS[p.material]?.fuel);
+  return fuel && wetnessOf(e.id) < 0.6 ? FLAM.item : null;
+};
+const flam = (e: Entity): Flam | null => (e.kind === "structure" && e.props.flammable === false ? null : e.kind === "item" ? itemFlam(e) : FLAM[e.kind] ?? null);
 const WEATHER_SPREAD: Record<Weather, number> = { clear: 1, cloudy: 0.9, windy: 1.7, fog: 0.5, rain: 0.15, storm: 0.05 };
 const rand = (a: number, b: number) => a + sr() * (b - a);
 const CHAR_REGROW_MS = 30 * 60_000;
@@ -32,6 +41,7 @@ export class Fire {
   private tickN = 0;
 
   constructor(private w: World, private say: (text: string, at?: { x: number; z: number }, r?: number) => boolean, private notify: (m: string) => void) {
+    wetnessOf = (id) => this.w.items.get(id)?.condition.wetness ?? 0;
     const s = persisted("fire", () => ({ lastSay: this.lastSay, lastHurt: this.lastHurt, tickN: this.tickN }));   // throttles and the regrowth cadence, committed with the clock
     if (s) { this.lastSay = s.lastSay; this.lastHurt = s.lastHurt; this.tickN = s.tickN; }
   }
@@ -107,7 +117,7 @@ export class Fire {
       e.kind = "char"; e.name = `burnt ${name}`;
       e.props = { wasKind: oldKind, was: name, desc: `What is left of the ${name}: blackened, brittle, still warm to the touch. Ash lies thick around it.`, regrowAt: simNow() + CHAR_REGROW_MS, yields: ["charcoal"], stock: 2, max: 2, noRegrow: true };
       w.putEntity(e);
-    } else w.removeEntity(e.id);                                  // small plants, books, planks: gone
+    } else { if (oldKind === "item") w.items.burn(e.id); w.removeEntity(e.id); }           // small plants and books: gone; things that were fuel leave a little ash
     this.say(`The ${name} has burnt itself out.`, e, 40);
   }
 

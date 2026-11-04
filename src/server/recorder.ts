@@ -53,7 +53,7 @@ const extraState = new Map<string, () => unknown>();
 export const registerState = (name: string, fn: () => unknown) => { extraState.set(name, fn); };
 /** Tables written only through journaled paths (tools and human commands). Memories, desires and interests are not here:
  *  the brain loop writes them (thoughts, reflections), and replay has no brain. */
-const TABLES = ["places", "tunes", "compositions", "works", "palette", "opinions", "lives", "catalog", "tools", "moments", "sim_activities", "known_entities"];
+const TABLES = ["places", "tunes", "compositions", "works", "palette", "opinions", "lives", "catalog", "tools", "moments", "sim_activities", "known_entities", "item_instances", "item_events"];
 
 /** Hash of everything physical, in named parts so a mismatch says where it diverged. */
 export function stateParts(w: World): Record<string, string> {
@@ -79,7 +79,7 @@ export function stateParts(w: World): Record<string, string> {
 export const stateHash = (parts: Record<string, string>) => canonicalHash(Object.fromEntries(Object.entries(parts).filter(([k]) => k[0] !== "_")));
 
 export function checkpoint(w: World) {
-  const parts = { ...stateParts(w), ...Object.fromEntries([...extraState].map(([k, fn]) => [`_raw_${k}`, JSON.stringify(fn())])), _me: JSON.stringify({ x: w.me.x, z: w.me.z, activity: w.me.activity, sleeping: w.me.sleeping, needs: w.me.needs }) };
+  const parts = { ...stateParts(w), _audit: JSON.stringify(w.items.audit()), ...Object.fromEntries([...extraState].map(([k, fn]) => [`_raw_${k}`, JSON.stringify(fn())])), _me: JSON.stringify({ x: w.me.x, z: w.me.z, activity: w.me.activity, sleeping: w.me.sleeping, needs: w.me.needs }) };
   db.prepare("INSERT OR REPLACE INTO sim_checkpoints(tick, hash, parts) VALUES(?,?,?)").run(simTick(), stateHash(parts), JSON.stringify(parts));
 }
 

@@ -106,7 +106,25 @@ export function renderItems() {
   const g = el("div", "grid2");
   for (const i of S.inventory) {
     const c = el("div", "card"), top = el("div", "row"); top.append(el("b", "", i.name)); if (i.qty > 1) top.append(el("span", "qty", `×${i.qty}`));
-    c.append(top, clamped(i.desc, 2, "sub")); if (i.props?.text) { const d = el("details"); d.style.marginTop = "6px"; d.append(el("summary", "sub", "Read"), el("div", "sub", `“${i.props.text}”`)); c.append(d); }
+    c.append(top, clamped(i.desc, 2, "sub"));
+    const more = el("details"); more.style.marginTop = "6px"; const sum = el("summary", "sub", "What it is"); more.append(sum);
+    more.ontoggle = async () => {                                  // the inspector: only what the world knows
+      if (!more.open || more.querySelector(".facts")) return;
+      const d = await (await fetch(`/api/item?id=${encodeURIComponent(i.id)}`)).json(), f = el("div", "sub facts");
+      if (d.error) { f.textContent = d.error; more.append(f); return; }
+      const cond = d.condition, lines = [
+        `${d.id} · ${d.definition}`,
+        `Made of ${[...new Set(d.materials.map((m: any) => m.material))].join(" and ")}, about ${d.massKg} kg`,
+        `Condition: ${Math.round(cond.durability * 100)}% sound, ${Math.round(cond.wetness * 100)}% wet, ${Math.round(cond.temperatureC)}°C`,
+        d.capabilities.length ? `It can: ${d.capabilities.join(", ")}` : "It has no use beyond being what it is",
+        d.provenance.unknown ? "Origin: not known" : `Made or found at tick ${d.provenance.createdAtTick}${d.provenance.sourceIds.length ? ` from ${d.provenance.sourceIds.join(", ")}` : ""}`,
+        ...(d.lineage.splitFrom ? [`Split from ${d.lineage.splitFrom}`] : []), ...(d.lineage.mergedFrom?.length ? [`Joined by ${d.lineage.mergedFrom.join(", ")}`] : []),
+        ...(d.contents.length ? [`Inside: ${d.contents.map((c: any) => `${c.qty} ${c.name}`).join(", ")}`] : []),
+      ];
+      for (const l of lines) f.append(el("div", "", l));
+      more.append(f);
+    };
+    c.append(more); if (i.props?.text) { const d = el("details"); d.style.marginTop = "6px"; d.append(el("summary", "sub", "Read"), el("div", "sub", `“${i.props.text}”`)); c.append(d); }
     g.append(c);
   }
   t.append(g);

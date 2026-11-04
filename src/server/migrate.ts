@@ -66,6 +66,21 @@ export const MIGRATIONS: Migration[] = [
       )`);
     },
   },
+  {
+    id: "0008_item_instances", description: "Every item as an instance with one identity, a condition, a provenance and one location",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS item_instances (
+          id TEXT PRIMARY KEY, def_id TEXT NOT NULL, def_version TEXT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, desc TEXT NOT NULL, qty INTEGER NOT NULL,
+          props TEXT NOT NULL, durability REAL NOT NULL, wetness REAL NOT NULL, temp REAL NOT NULL, parts TEXT NOT NULL, prov TEXT NOT NULL, visual TEXT NOT NULL,
+          loc_kind TEXT NOT NULL, loc_a TEXT, loc_x REAL, loc_z REAL, lineage TEXT NOT NULL, named INTEGER NOT NULL DEFAULT 0, created_tick INTEGER NOT NULL, ended_tick INTEGER,
+          created_seq INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS item_events (seq INTEGER PRIMARY KEY AUTOINCREMENT, tick INTEGER NOT NULL, item TEXT NOT NULL, type TEXT NOT NULL, detail TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS item_events_item ON item_events(item);
+      `);
+    },
+  },
 ];
 
 export interface MigrationReport { applied: string[]; alreadyApplied: string[] }

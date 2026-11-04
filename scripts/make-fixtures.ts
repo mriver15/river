@@ -45,7 +45,7 @@ async function seed(name: Name) {
       break;
     case "animals":
       body({});
-      for (const [id, sp, tr, nm, trust, alive] of [["cr_1", "fox", "bold", "Ember", 0.7, 1], ["cr_2", "deer", "shy", null, 0.1, 1], ["cr_3", "rabbit", "curious", "Pip", 0.9, 0]] as const)
+      for (const [id, sp, tr, nm, trust, alive] of [["cr_1", "fox", "bold", "Ember", 0.7, 1], ["cr_2", "deer", "skittish", null, 0.1, 1], ["cr_3", "rabbit", "curious", "Pip", 0.9, 0]] as const)
         db.prepare("INSERT INTO creatures(id,species,trait,name,trust,met,last_seen,alive) VALUES(?,?,?,?,?,?,?,?)").run(id, sp, tr, nm, trust, 1, NOW - MIN, alive);
       ent("animal_1", "animal", "fox", 7, 7, { creature: "cr_1" });
       break;

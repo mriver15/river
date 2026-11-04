@@ -1,5 +1,5 @@
 import { cfg } from "./config.ts";
-import { warmthFactor, worn } from "./clothing.ts";
+import { warmthFactor, worn, attachItems } from "./clothing.ts";
 import { bodyView } from "./body.ts";
 import { db, kvGet, kvSet } from "./db.ts";
 import { bus, log } from "./bus.ts";
@@ -9,6 +9,7 @@ import type { EmotionName } from "../shared/emotions.ts";
 import type { AgentView, Entity, EntityKind, InventoryItem, Needs, Weather } from "../shared/types.ts";
 import { simNow, simRng, after, DAY_MS, legacyWallBoot } from "./sim.ts";
 import { planPath } from "./nav.ts";
+import { ItemRegistry } from "./items.ts";
 import { persisted, persistedBlob, onFlush } from "./persist.ts";
 const sr = simRng("world");
 
@@ -28,6 +29,8 @@ export class World {
   seed = DEFAULT_SEED;
   entities = new Map<string, Entity>();
   inventory = new Map<string, InventoryItem>();
+  /** every item that exists, with one identity and one place each */
+  readonly items = new ItemRegistry(this);
   epoch = 0;
   weather: Weather = "clear";
   /** current feelings, set by the Emotions system once a second so the viewer can show them */
@@ -83,8 +86,8 @@ export class World {
     if (rows.length === 0) this.generate();
     else for (const r of rows) this.entities.set(r.id, { id: r.id, kind: r.kind, name: r.name, x: r.x, z: r.z, props: JSON.parse(r.props) });
     this.ensureMaterials();
-    for (const r of db.prepare("SELECT * FROM inventory").all() as any[])
-      this.inventory.set(r.id, { id: r.id, kind: r.kind, name: r.name, desc: r.desc, qty: r.qty, props: r.props ? JSON.parse(r.props) : undefined });
+    attachItems(this.items);
+    this.items.load();                                      // carried and loose items become instances (once), then the views are built
     // the walked-path and burnt-ground grids, committed with the clock as raw floats
     const hb = persistedBlob("heat", () => new Uint8Array(this.heat.buffer, this.heat.byteOffset, this.heat.byteLength));
     if (hb && hb.byteLength === this.heat.byteLength) this.heat.set(new Float32Array(hb.buffer, hb.byteOffset, hb.byteLength / 4));
@@ -189,7 +192,7 @@ export class World {
   reset(freshWorld: boolean) {
     this.walk?.done({ arrived: false, reason: "a new life began" }); this.walk = null;
     Object.assign(this.me, { x: 4, z: 4, heading: 0, activity: "waking up", speech: null, speechUntil: 0, sleeping: false, sleepUntil: 0, thinking: false, needs: { energy: 90, hunger: 70, mood: 60, curiosity: 70, warmth: 75 } });
-    this.inventory.clear(); this.sleepStart = 0;
+    this.items.reset(freshWorld); this.sleepStart = 0;
     for (const e of [...this.entities.values()]) if (e.props.beat) this.removeEntity(e.id);   // the old story's traces
     if (freshWorld) {
       this.quiet = true;
@@ -208,14 +211,17 @@ export class World {
   // ---------- entity ops ----------
   putEntity(e: Entity) {
     this.entities.set(e.id, e);
+    if (e.kind === "item") this.items.entityAdded(e);
     db.prepare("INSERT INTO entities(id,kind,name,x,z,props) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,name=excluded.name,x=excluded.x,z=excluded.z,props=excluded.props")
       .run(e.id, e.kind, e.name, e.x, e.z, JSON.stringify(e.props));
     if (!this.quiet) bus.emit("entity", { t: "entity", op: "upsert", entity: e });
   }
   /** Move an entity without persisting (animals move constantly; the ambient loop persists them occasionally). */
-  moveEntity(e: Entity) { this.moved.add(e.id); bus.emit("entity", { t: "entity", op: "upsert", entity: e }); }
+  moveEntity(e: Entity) { if (e.kind === "item") this.items.entityMoved(e); this.moved.add(e.id); bus.emit("entity", { t: "entity", op: "upsert", entity: e }); }
   removeEntity(id: string) {
+    const was = this.entities.get(id);
     this.entities.delete(id);
+    if (was?.kind === "item") this.items.entityRemoved(id);
     db.prepare("DELETE FROM entities WHERE id = ?").run(id);
     if (!this.quiet) bus.emit("entity", { t: "entity", op: "remove", id });
   }
@@ -266,32 +272,21 @@ export class World {
     return dirs[(Math.round(a / (Math.PI / 4)) + 8) % 8];
   }
 
-  // ---------- inventory ----------
-  addItem(kind: string, name: string, desc: string, qty = 1, props?: Record<string, any>) {
-    const existing = [...this.inventory.values()].find((i) => i.kind === kind && i.name === name && !props?.text && i.props?.hex === props?.hex);
-    if (existing) { existing.qty += qty; this.saveItem(existing); }
-    else {
-      const it: InventoryItem = { id: this.newId("item"), kind, name, desc, qty, props };
-      this.inventory.set(it.id, it); this.saveItem(it);
-    }
-    bus.emit("state");
+  // ---------- inventory (an adapter over the item registry, which is the authority) ----------
+  addItem(kind: string, name: string, desc: string, qty = 1, props?: Record<string, any>, o?: { sources?: string[]; maker?: boolean; condition?: Partial<import("./items.ts").Condition>; note?: string; defId?: string; parts?: { material: string; mass: number }[] }) {
+    return this.items.add(kind, name, desc, qty, props, o);
   }
-  private saveItem(it: InventoryItem) {
-    db.prepare("INSERT INTO inventory(id,kind,name,desc,qty,props) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET qty=excluded.qty, name=excluded.name, desc=excluded.desc, props=excluded.props")
-      .run(it.id, it.kind, it.name, it.desc, it.qty, it.props ? JSON.stringify(it.props) : null);
-  }
-  renameItem(id: string, name: string) { const it = this.inventory.get(id); if (!it) return; it.name = name; this.saveItem(it); bus.emit("state"); }
-  takeItem(id: string, qty = 1): InventoryItem | null {
-    const it = this.inventory.get(id);
-    if (!it || it.qty < qty) return null;
-    it.qty -= qty;
-    if (it.qty <= 0) { this.inventory.delete(id); db.prepare("DELETE FROM inventory WHERE id = ?").run(id); } else this.saveItem(it);
-    bus.emit("state");
-    return { ...it, qty };
-  }
+  renameItem(id: string, name: string) { this.items.rename(id, name); }
+  takeItem(id: string, qty = 1): InventoryItem | null { return this.items.take(id, qty); }
   findItem(ref: string): InventoryItem | undefined {
     const r = ref.toLowerCase();
     return this.inventory.get(ref) ?? [...this.inventory.values()].find((i) => i.name.toLowerCase() === r || i.kind.toLowerCase() === r);
+  }
+  /** A fresh id in the world's shared sequence. */
+  allocId(prefix: string) { return this.newId(prefix); }
+  /** Put an entity on the ground under an id that already means something (an item that has been put down). */
+  spawnWithId(kind: EntityKind, id: string, name: string, x: number, z: number, props: Record<string, any>) {
+    const e: Entity = { id, kind, name, x, z, props }; this.putEntity(e); return e;
   }
 
   // ---------- time ----------

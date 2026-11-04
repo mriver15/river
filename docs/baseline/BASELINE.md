@@ -215,3 +215,30 @@ Not done in MVP 4:
 - Embedding model and version are not pinned in the recorded relevance scores.
 - Tool descriptions (about 2.1k tokens per call) are sent whole every time; trimming or offering only relevant tools would save more but changes what River can discover.
 - A human's words wait for the current action to finish rather than interrupting it (a rest and a walk's own reflexes excepted).
+
+## MVP 5: persistent objects and mechanical crafting
+
+Code: `src/content/` (materials, item definitions, recipes: pure and tested), `src/server/items.ts` (the registry), `src/server/crafting.ts`.
+
+What changed:
+
+- **Every item is an instance** with one identity, a definition (`id@version`), a quantity, a condition (durability, wetness, temperature), the materials and mass it is actually made of, a provenance (when, by whom, from what), a visual record (recipe id, seed) for MVP 6, a lineage, and exactly one location: the ground, River's hands, a body slot, inside another item, or consumed (with the event that consumed it). The registry is the single authority; `World.inventory` and the item entities on the ground are projections it keeps in step, and the old `addItem` / `takeItem` / `findItem` API is an adapter over it, so the 110 existing call sites did not change.
+- **Moving a thing keeps it what it is.** Picking up, putting down and wearing keep the same id, condition and provenance. Putting down part of a stack makes a child with lineage (`splitFrom`); picking it back up folds it into the stack and records `mergedFrom` / `mergedInto`. Naming or inscribing a thing makes it its own (it stops stacking). Worlds from before this existed are adopted once, with their origin marked *unknown*, not invented.
+- **Materials and capabilities.** Eight starting materials (wood, stone, bark, moss, hide, clay, charcoal, pigment) plus inert ones for what already existed (food, shell, glass, metal, paper). What a thing can do (burn, bind, cut, pierce, hold, insulate, be a shaft...) is derived from its materials and shape by versioned rules, never from its name or description. An unknown kind gets an inert definition. A broken tool does nothing.
+- **Recipes and assemblies.** `sharpen_stick`, `spear` (shaft + head + binding, mass budget and part limits), `cord`, `basket`. Parts are matched by capability, so a "perfect rope" that is really a keepsake does not bind. Everything is checked first and changes nothing if it fails; a valid recipe uses up exactly the declared parts (tools are worn, not used up), conserves mass (the product weighs what went into it), stores what it was made from, and scales its stats (a spear's damage and reach) by the parts' condition with a small seeded variation. The free-text `craft` now follows a recipe (`list` shows them) or makes a **keepsake**: it can be called anything, and the world is honest that it does nothing a pile of its parts could not.
+- **Containers and equipment.** Baskets hold up to a mass; `stow` / `take_out`; a container cannot hold itself or be nested in a loop; if it is used up what was inside lands where it was, neither lost nor doubled. Worn clothing is now simply the garments in River's body slots.
+- **Fire and wear.** Only things made of fuel burn, a soaked one resists, and the ash left is at most a fifth of the mass that burned. Weapons wear when they hit and break at zero.
+- **Item inspector.** The Items tab shows what each carried thing is (materials, mass, condition, what it can do, where it came from, how it was split or joined); `/api/item?id=` gives the full record and history; River's own `inspect` states the same facts, nothing else.
+- **Audit.** `registry.audit()` proves the invariants (one location per item, no loop, capacity, whole positive quantities, projections in step); it runs at every replay checkpoint and the soaks fail if it ever reports a violation.
+
+Bugs found while building it: the record of a merge was kept in memory but never written (found by the lineage test); condition drift was in memory only until something else touched the item (found by the restart test); a fixture gave a deer a trait the game does not have, which made trust NaN, which silently ended recordings early (the state hash refuses non-finite numbers) — the game now treats an unknown stored trait as "curious" and clamps trust.
+
+Tests: `content`, `recipes` (pure), `items` (migration from a pre-items world, identity through pickup/drop/equip, split and merge lineage, naming, invalid recipes touching nothing, exact consumption and mass conservation, descriptions granting nothing, keepsakes not standing in for parts, fire and ash, taking a structure down, container limits and loops, reset); 70 tests pass. The restart suite gained an `items` scenario (13 scenarios, all identical). The 20-seed mock soak (the mock brain now also drops and picks things up) and the 4-seed real-model soak replay exactly with a clean item audit.
+
+Not done in MVP 5:
+
+- **Partially completed construction.** `build` is still all-or-nothing: materials are spent when the work ends, and an interruption leaves everything intact (so there is no half-built thing to cancel or recover). Taking a structure down returns a fixed 60% of what it was built from, not an amount tied to its damage.
+- Only four recipes; pigment grinding and mixing, cooking (a plugin), sewing and building keep their own rules, and they record no per-ingredient provenance yet. Items made by plugins and gifts from the catalog are adopted with an unknown origin.
+- Condition: wetness and temperature drift with the weather and are read only by fire (soaked things resist) and clothing (wet garments warm less); durability is worn by tools and weapons. Temperature has no consumer yet.
+- Container capacity is by mass only (no volume), and items inside are not part of the inventory the model is shown, only reachable through `inspect`.
+- The visual record (recipe id, seed, colour) is stored and stable but nothing draws from it until MVP 6.

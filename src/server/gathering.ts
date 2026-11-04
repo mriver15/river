@@ -23,13 +23,12 @@ export function takeOneUnit(w: World, e: Entity, prefer?: string): { kind: strin
   const kind: string = prefer && e.props.yields.includes(prefer) ? prefer : e.props.yields[Math.floor(sr() * e.props.yields.length)];
   const [name, desc] = ITEM_NAMES[kind];
   e.props.stock--; e.props.lastTake = simNow(); w.putEntity(e);
-  w.addItem(kind, name, desc);
+  w.addItem(kind, name, desc, 1, undefined, { sources: [e.id] });         // where it came from is part of what it is
   return { kind, name };
 }
 /** Pick up a loose item lying on the ground. */
 export function takeLoose(w: World, e: Entity): string {
-  const props = e.props.text ? { text: e.props.text, topic: e.props.topic, title: e.props.title, beat: e.props.beat } : undefined;
-  w.removeEntity(e.id);
-  w.addItem(e.props.item ?? e.kind, e.props.title ?? e.props.itemName ?? e.name.replace(/^book: /, ""), e.props.desc ?? "", 1, props);
-  return e.name;
+  const name = e.name;
+  w.items.pickUp(e.id);                                               // the same object, now in River's hands
+  return name;
 }

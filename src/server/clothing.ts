@@ -6,6 +6,7 @@ import { describeColour } from "./colour.ts";
 import { ToolError, obj, str, type ToolDef } from "./toolkit.ts";
 import type { World } from "./world.ts";
 import type { Worn } from "../shared/types.ts";
+import type { ItemInstance, ItemRegistry } from "./items.ts";
 import { simSleep } from "./sim.ts";
 import { gate } from "./activities.ts";
 
@@ -17,8 +18,11 @@ const GARMENTS: Record<string, { slot: Slot; need: number; warm: number }> = {
 };
 const FIBRE: Record<string, { hex: string; word: string }> = { bark: { hex: "#7a6246", word: "bark" }, moss: { hex: "#5a8a46", word: "moss" }, hide: { hex: "#7a5c3e", word: "hide" } };
 
-export const worn = (): Worn[] => kvGet<Worn[]>("worn", []);
-const setWorn = (l: Worn[]) => { kvSet("worn", l); bus.emit("state"); };
+/** What River wears is whatever garments are in its body slots: the registry decides, not a separate list. */
+let registry: ItemRegistry | null = null;
+export const attachItems = (r: ItemRegistry) => { registry = r; };
+const asWorn = (i: ItemInstance): Worn => ({ slot: i.props.slot, garment: i.props.garment, name: i.name, hex: i.props.hex, warm: i.props.warm * (0.5 + 0.5 * i.condition.durability) * (1 - 0.3 * i.condition.wetness), desc: `${i.name} (${describeColour(i.props.hex)} ${i.props.garment})` });
+export const worn = (): Worn[] => (registry?.equipped() ?? []).filter((i) => i.kind === "garment").map(asWorn);
 /** fraction of weather and night chill that clothing turns away */
 export const warmthFactor = () => Math.min(0.55, worn().reduce((s, g) => s + g.warm, 0));
 
@@ -71,11 +75,12 @@ export const CLOTHE_TOOL: ToolDef = {
         hex = dye.props.hex; dyed = ` dyed ${dye.name.replace(/ pigment \(.*\)$/, "")}`;
       }
       gate(w, 3500, `sewing a ${a.garment}`);
+      const made = [...used.map((u) => u.it.id), ...(dye ? [dye.id] : [])];           // what it is made of, recorded before it is spent
       if (dye) w.takeItem(dye.id, 1);                              // the dye is spent with the rest, once the work is done
       for (const u of used) w.takeItem(u.it.id, u.n);
       const name = String(a.name ?? "").trim().slice(0, 40) || `${describeColour(hex)} ${a.garment}`;
       const mats = used.map((u) => FIBRE[u.it.kind].word);
-      w.addItem("garment", name, `A ${a.garment}${dyed} (${describeColour(hex)}), sewn from ${[...new Set(mats)].join(" and ")}. It goes on your ${spec.slot}.`, 1, { garment: a.garment, slot: spec.slot, hex, warm: spec.warm });
+      w.addItem("garment", name, `A ${a.garment}${dyed} (${describeColour(hex)}), sewn from ${[...new Set(mats)].join(" and ")}. It goes on your ${spec.slot}.`, 1, { garment: a.garment, slot: spec.slot, hex, warm: spec.warm }, { sources: made, maker: true });
       w.bump({ mood: 6, curiosity: -4, energy: -3 });
       bus.emit("made", { name, tags: [String(a.garment), "clothing", ...mats, describeColour(hex)], kind: "garment" });
       log("world", `River made ${name}.`, { perceived: true });
@@ -84,18 +89,15 @@ export const CLOTHE_TOOL: ToolDef = {
     if (act === "wear") {
       const it = w.findItem(String(a.name ?? ""));
       if (!it || it.kind !== "garment") throw new ToolError(`You aren't carrying a garment called "${a.name}".`);
-      const slot = it.props!.slot as Slot, cur = worn(), old = cur.find((g) => g.slot === slot);
-      w.takeItem(it.id, 1);
-      if (old) w.addItem("garment", old.name, old.desc, 1, { garment: old.garment, slot: old.slot, hex: old.hex, warm: old.warm });
-      const g: Worn = { slot, garment: it.props!.garment, name: it.name, hex: it.props!.hex, warm: it.props!.warm, desc: `${it.name} (${describeColour(it.props!.hex)} ${it.props!.garment})` };
-      setWorn([...cur.filter((x) => x.slot !== slot), g]); w.bump({ mood: 3 });
+      const slot = it.props!.slot as Slot, old = worn().find((g) => g.slot === slot);
+      w.items.equip(it.id, slot);                              // the same garment, now on the body; what was there goes back to the pack
+      w.bump({ mood: 3 });
       return `You put on ${it.name}.${old ? ` ${old.name} goes back in your pack.` : ""} ${bodyText()}`;
     }
     if (act === "take_off") {
       const cur = worn(), ref = String(a.name ?? "").toLowerCase(), g = cur.find((x) => x.name.toLowerCase().includes(ref) || x.slot === ref);
       if (!g) throw new ToolError(cur.length ? `You are wearing ${cur.map((x) => x.name).join(", ")}.` : "You have nothing on.");
-      w.addItem("garment", g.name, g.desc, 1, { garment: g.garment, slot: g.slot, hex: g.hex, warm: g.warm });
-      setWorn(cur.filter((x) => x !== g));
+      w.items.unequip((i) => i.kind === "garment" && i.name === g.name && i.props.slot === g.slot);
       return `You take off ${g.name} and carry it. ${bodyText()}`;
     }
     throw new ToolError("Use make, wear or take_off.");

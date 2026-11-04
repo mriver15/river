@@ -73,6 +73,7 @@ for (const [tick, live] of liveCps) {
 }
 if (process.env.REPLAY_SQL) for (const [name, d] of [["live", src], ["replay", mine]] as const) console.error(name, JSON.stringify((d as any).prepare(process.env.REPLAY_SQL).all()));
 const dump = process.env.REPLAY_DUMP; if (dump) fs.writeFileSync(dump, JSON.stringify([...replayCps.values()].map((r) => ({ tick: r.tick, hash: r.hash, parts: JSON.parse(r.parts) })), null, 1));
-console.log(JSON.stringify({ snapshotTick: snap.tick, endTick, commandsReplayed: ci, checkpoints: liveCps.size, matched, networkAttempts: netCalls, firstDivergence: firstBad }, null, 1));
+const audit = rt.world.items.audit();
+console.log(JSON.stringify({ itemAudit: audit.slice(0, 5), snapshotTick: snap.tick, endTick, commandsReplayed: ci, checkpoints: liveCps.size, matched, networkAttempts: netCalls, firstDivergence: firstBad }, null, 1));
 fs.rmSync(dir, { recursive: true, force: true });
-process.exit(firstBad || netCalls ? 1 : 0);
+process.exit(firstBad || netCalls || audit.length ? 1 : 0);

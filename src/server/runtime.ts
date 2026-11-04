@@ -69,6 +69,11 @@ export function startSystems(rt: Runtime) {
     if (key === "predators" || key === "smallWild") wildlife.refresh();
     if (key === "prey") ambient.refreshWildlife();
   });
+  // slow upkeep of how things stand: weather wets what lies out in it, warmth dries it, temperatures drift toward the air's
+  every(5000, () => {
+    const t = world.worldTime(), night = t < 0.23 || t > 0.78, wet = world.weather === "storm" ? 1.5 : world.weather === "rain" ? 1 : world.weather === "fog" ? 0.3 : 0;
+    world.items.tickCondition(5, wet, (night ? 8 : 18) - (wet > 0 ? 3 : 0));
+  }, "items");
   ambient.start();
   fire.start();
   setLocator(() => ({ x: world.me.x, z: world.me.z }));

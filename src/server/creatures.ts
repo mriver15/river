@@ -30,7 +30,8 @@ export class Creatures {
   constructor(private w: World, private say: (text: string, at?: { x: number; z: number }, r?: number) => boolean) {
     this.lastSync = persisted("creatures", () => ({ lastSync: this.lastSync }))?.lastSync ?? 0;
     for (const r of db.prepare("SELECT * FROM creatures").all() as any[])
-      this.rows.set(r.id, { id: r.id, species: r.species, trait: r.trait, name: r.name, trust: r.trust, met: r.met, lastSeen: r.last_seen, alive: !!r.alive });
+      this.rows.set(r.id, { id: r.id, species: r.species, trait: r.trait in TRUST_RATE ? r.trait : "curious",                         // an unknown trait would make trust NaN
+        name: r.name, trust: Number.isFinite(r.trust) ? Math.max(0, Math.min(1, r.trust)) : 0, met: r.met, lastSeen: r.last_seen, alive: !!r.alive });
   }
   start() {
     every(1000, () => this.tick(1), "creatures");

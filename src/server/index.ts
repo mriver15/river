@@ -56,6 +56,11 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === "/api/memories") return json({ ...embeddingCoverage(), memories: await search(url.searchParams.get("q") ?? "", 60) });
   if (url.pathname === "/api/music") return json(libraryForUi());
   if (url.pathname === "/api/brain") return json(agent.brainView());
+  if (url.pathname === "/api/item") {                              // the item inspector: identity, place, condition, make-up, what it can do, where it came from
+    const i = world.items.get(url.searchParams.get("id") ?? "");
+    return json(i ? { ...world.items.describe(i), history: world.items.history(i.id) } : { error: "no such item" });
+  }
+  if (url.pathname === "/api/items") return json({ items: world.items.all().map((i) => ({ id: i.id, name: i.name, qty: i.qty, loc: i.loc.kind })), audit: world.items.audit() });
   if (url.pathname === "/api/moments") return json(recentMoments(100));
   if (url.pathname === "/api/log") return json(logBefore(Number(url.searchParams.get("before") ?? 1e12), 200));
   if (fs.existsSync(DIST)) {

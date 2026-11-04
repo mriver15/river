@@ -14,6 +14,9 @@ import type { Entity } from "../shared/types.ts";
 import type { Emotions } from "./emotions.ts";
 import type { World } from "./world.ts";
 import { persisted } from "./persist.ts";
+import { gate } from "./activities.ts";
+import { checkRecipe, craftNow } from "./crafting.ts";
+import { recipeById } from "../content/recipes.ts";
 import { simNow, simRng, simSleep, every, after } from "./sim.ts";
 const sr = simRng("wildlife");
 
@@ -287,9 +290,9 @@ const wildNear = (w: World, r: number) => w.nearby(r).map((o) => o).filter((o) =
 
 /** The best thing River is holding to hit with. */
 const weapon = (w: World) => {
-  const held = [...w.inventory.values()].filter((i) => i.props?.dmg).sort((a, b) => b.props!.dmg - a.props!.dmg)[0];
-  if (held) return { name: held.name, dmg: held.props!.dmg as number, reach: held.props!.reach as number };
-  const stick = w.findItem("stick"); return stick ? { name: "stick", dmg: 5, reach: 1.9 } : { name: "bare hands", dmg: 2, reach: 1.3 };
+  const held = [...w.inventory.values()].filter((i) => i.props?.dmg && (w.items.get(i.id)?.condition.durability ?? 1) > 0).sort((a, b) => b.props!.dmg - a.props!.dmg)[0];
+  if (held) return { id: held.id, name: held.name, dmg: (held.props!.dmg as number) * (0.4 + 0.6 * (w.items.get(held.id)?.condition.durability ?? 1)), reach: held.props!.reach as number };
+  const stick = w.findItem("stick"); return stick ? { id: stick.id, name: "stick", dmg: 5, reach: 1.9 } : { id: "", name: "bare hands", dmg: 2, reach: 1.3 };
 };
 /** An animal dies: it becomes something River can butcher. */
 function kill(e: Entity, w: World, emo: Emotions | null) {
@@ -308,26 +311,21 @@ export const DEFEND_TOOL: ToolDef = {
   input_schema: obj({ action: { type: "string", enum: ["strike", "shout", "throw", "freeze", "sharpen", "bind"], description: "what to do" }, item: str("throw: the stone to throw (default: a stone)") }, ["action"]),
   run: async (a, w: World) => {
     const act = String(a.action ?? ""), now = simNow();
-    if (act === "sharpen") {
-      const stick = w.findItem("stick"), stone = w.findItem("stone");
-      if (!stick || !stone) throw new ToolError("To make a point you need a stick and a stone to scrape it on.");
-      w.setActivity("sharpening a stick"); await simSleep(4000); w.takeItem(stick.id, 1);
-      w.addItem("weapon", "sharpened stick", "A stick whittled to a hard point. It will pierce.", 1, { dmg: 9, reach: 2.2 }); w.bump({ energy: -3 });
-      return "You scrape the end of the stick against the stone until it holds a hard, narrow point.";
-    }
-    if (act === "bind") {
-      const pt = w.findItem("sharpened stick"), stone = w.findItem("stone"), bark = [...w.inventory.values()].find((i) => i.kind === "bark" || i.kind === "hide");
-      if (!pt || !stone || !bark) throw new ToolError("A spear needs a sharpened stick, a stone for the point, and a strip of bark or hide to lash it with.");
-      w.setActivity("binding a spear"); await simSleep(5000); w.takeItem(pt.id, 1); w.takeItem(stone.id, 1); w.takeItem(bark.id, 1);
-      w.addItem("weapon", "stone-tipped spear", "A long stick with a chipped stone lashed to its end. It reaches well and cuts deep.", 1, { dmg: 17, reach: 2.7 }); w.bump({ energy: -3, mood: 4 });
-      return "You wedge the stone into a split in the shaft and bind it tight, wrap after wrap. It has weight, and reach. It is a spear.";
+    if (act === "sharpen" || act === "bind") {
+      const r = recipeById(act === "sharpen" ? "sharpen_stick" : "spear")!;
+      checkRecipe(w, r);                                                   // a point needs a rod and something to scrape it with; a spear a pointed shaft, a stone head and a binding
+      gate(w, r.durationMs, act === "sharpen" ? "sharpening a stick" : "binding a spear");
+      const made = craftNow(w, r);
+      if (act === "sharpen") { return `You scrape the end of the stick against the stone until it holds a hard, narrow point. (${made.item.name}: hits for about ${made.item.props.dmg}, reaches ${made.item.props.reach}m.)`; }
+      w.bump({ mood: 4 });
+      return `You wedge the stone into a split in the shaft and bind it tight, wrap after wrap. It has weight, and reach. It is a spear. (Hits for about ${made.item.props.dmg}, reaches ${made.item.props.reach}m.)`;
     }
     if (act === "freeze") { freezeUntil = now + 25_000; w.setActivity("holding perfectly still"); await simSleep(4000); return "You go still, hardly breathing, and let the world move around you. It will last a while if you don't move."; }
     const threats = wildNear(w, 30).filter((o) => WILD[o.e.props.species].cls === "predator");
     if (act === "strike") {
       const wp = weapon(w), t = threats[0];
       if (!t || t.d > wp.reach + 1.1) throw new ToolError(t ? `The nearest threat is ${t.d.toFixed(0)}m away; with ${wp.name} you must be within ${(wp.reach + 1.1).toFixed(0)}m.` : "Nothing dangerous is close enough to strike.");
-      w.setActivity("fighting"); await simSleep(900); w.bump({ energy: -3 });
+      w.setActivity("fighting"); await simSleep(900); w.bump({ energy: -3 }); if (wp.id) w.items.wear(wp.id, 0.04);   // hitting things wears what hits
       const e = t.e, dmg = wp.dmg * rand(0.7, 1.3), max = e.props.maxHp ?? 40;
       e.props.hp = (e.props.hp ?? max) - dmg; instance?.provoke(e);
       if (e.props.hp <= 0) { kill(e, w, (instance as any)?.emo ?? null); return `You drive ${wp.name} home and the ${e.props.species} staggers, drops, and does not get up. It is dead. Your hands are shaking.`; }

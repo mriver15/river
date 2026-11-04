@@ -24,10 +24,16 @@ export function setupDeath(w: World, agent: Agent) {
       lit ? "A fire was burning nearby." : "There was no fire.", made.length ? `They had made ${made.join(", ")}.` : "They had made nothing."].join(" ");
     db.prepare("INSERT INTO lives(name,born,died,days,cause,x,z,summary) VALUES(?,?,?,?,?,?,?,?)").run(name, d.born, d.at, days, d.cause, d.x, d.z, text);
     w.spawn("grave", `grave of ${name}`, d.x, d.z, { desc: `A low mound of earth under a flat stone. Something is scratched on the stone.`, text });
-    let n = 0;                                                                     // what it carried lies where it fell
-    for (const i of w.inventory.values()) for (let k = 0; k < Math.min(i.qty, 3) && n < 12; k++, n++) {
-      const a = sr() * 6.28, r = 1.2 + sr() * 1.6;
-      w.spawn("item", i.name, d.x + Math.cos(a) * r, d.z + Math.sin(a) * r, { takeable: true, item: i.kind, itemName: i.name, desc: i.desc });
+    // What it carried and wore lies where it fell: the same things, with the same identity and condition. A stack is scattered a few
+    // units at a time; what is not scattered goes with the life that ended (and is recorded as such), never duplicated.
+    let n = 0;
+    for (const it of [...w.items.carried(), ...w.items.equipped()]) {
+      if (it.loc.kind === "equipped") w.items.unequip((x) => x.id === it.id);
+      for (let k = 0; k < Math.min(it.qty, 3) && n < 12; k++, n++) {
+        const a = sr() * 6.28, r = 1.2 + sr() * 1.6;
+        const live = w.items.get(it.id); if (!live || live.loc.kind === "world") break;
+        w.items.drop(it.id, 1, { x: d.x + Math.cos(a) * r, z: d.z + Math.sin(a) * r });
+      }
     }
     log("world", `${name} died: ${d.cause}.`, { perceived: false });
     addMemory(`${name} died: ${d.cause}.`, 10, ["death"]);
