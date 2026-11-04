@@ -88,19 +88,8 @@ wss.on("connection", (ws) => {
       finishCommand(adm.seq, failed ? "error" : "ok", r.notice?.text ?? "");
       if (m.t === "config_reset") broadcast({ t: "config", config: configView() });
       if (r.notice) (r.toAll ? broadcast : (x: ServerMsg) => afterCommit(() => send(ws, x)))({ t: "notice", ...r.notice });
+      if (r.forge && process.env.RIVER_AUTO_FORGE !== "0") forge(r.forge).then(announce);
       ack(failed ? "error" : "ok", r.notice?.text);
-    } else if (m.t === "approve" || m.t === "deny") {
-      const r = decideRequest(m.id, m.t === "approve", m.note, m.t === "approve" ? m.builtin : undefined);
-      if (r) {
-        const granted = m.t === "approve" && m.builtin && m.builtin in GATED ? m.builtin : null;
-        const verdict = m.t === "approve"
-          ? (granted ? `Your request "${r.name}" was APPROVED. You can now do it with the ability called "${granted}": ${GATED[granted]}`
-            : r.name in GATED ? `Your request for "${r.name}" was APPROVED. You can now use it: ${GATED[r.name]}` : `Your idea for a new tool "${r.name}" was approved in principle — the human may build it; it isn't usable yet.`)
-          : `Your request for "${r.name}" was DENIED.`;
-        agent.notify(`${verdict}${m.note ? ` The human added: "${m.note}"` : ""}`);
-        addMemory(verdict, 6, ["tools"]);
-        if (m.t === "approve" && !granted && !(r.name in GATED) && process.env.RIVER_AUTO_FORGE !== "0") forge(r).then(announce);
-      }
     } else if (m.t === "reset_budget") {
       agent.restartCycles(); send(ws, { t: "notice", level: "ok", text: "Budget window reset. River is thinking again." });
     } else if (m.t === "reset_river") {
@@ -108,14 +97,12 @@ wss.on("connection", (ws) => {
       if (!c.ok) return void send(ws, { t: "notice", level: "error", text: c.error! });
       if (resetting) return void send(ws, { t: "notice", level: "error", text: "A reset is already in progress." });
       resetting = true;
-      recordCommand("human", "reset_river", { world: !!m.world }, cid);   // a lifecycle boundary: replay ends here (the code is not kept)
       resetRiver({ world: !!m.world }, { agent, world, ambient, emotions, creatures, story, catalog, wildlife })
         .then((r) => { broadcast(initMsg()); broadcast({ t: "notice", level: "ok", text: `A new River has awakened. Your previous life is saved at ${r.backup}.` }); })
         .catch((e) => send(ws, { t: "notice", level: "error", text: `Reset failed: ${e.message}` }))
         .finally(() => { resetting = false; });
     } else if (m.t === "new_life") {
       if (!bodyApi.isDead()) return void send(ws, { t: "notice", level: "error", text: "River is alive." });
-      recordCommand("human", "new_life", {}, cid);                          // a lifecycle boundary: replay ends here
       if (resetting) return;
       resetting = true;
       resetRiver({ world: false }, { agent, world, ambient, emotions, creatures, story, catalog, wildlife })

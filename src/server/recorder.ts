@@ -48,6 +48,13 @@ export function commandsFrom(d: { prepare: typeof db.prepare }, tick: number): C
   return (d.prepare("SELECT seq, tick, source, type, payload FROM sim_commands WHERE tick >= ? ORDER BY seq").all(tick) as any[]).map((r) => ({ ...r, payload: JSON.parse(r.payload) }));
 }
 
+const extraState = new Map<string, () => unknown>();
+/** A system registers state that belongs in the hash (replay checks it at every checkpoint). */
+export const registerState = (name: string, fn: () => unknown) => { extraState.set(name, fn); };
+/** Tables written only through journaled paths (tools and human commands). Memories, desires and interests are not here:
+ *  the brain loop writes them (thoughts, reflections), and replay has no brain. */
+const TABLES = ["places", "tunes", "compositions", "works", "palette", "opinions", "lives", "catalog", "tools", "moments"];
+
 /** Hash of everything physical, in named parts so a mismatch says where it diverged. */
 export function stateParts(w: World): Record<string, string> {
   const rng = Object.fromEntries(Object.entries(rngState()).filter(([k]) => !BRAIN_STREAMS.has(k)));
@@ -65,6 +72,8 @@ export function stateParts(w: World): Record<string, string> {
     scorch: canonicalHash(Array.from(w.scorch)),
     creatures: canonicalHash(db.prepare("SELECT * FROM creatures ORDER BY id").all()),
     body: canonicalHash(body),
+    tables: canonicalHash(TABLES.map((t) => [t, db.prepare(`SELECT * FROM ${t} ORDER BY 1`).all()])),
+    ...Object.fromEntries([...extraState].sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, fn]) => [k, canonicalHash(fn())])),
   };
 }
 /** Keys starting with "_" are readable diagnostics stored beside the hashes; they are not part of the comparison. */

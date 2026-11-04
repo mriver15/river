@@ -103,11 +103,26 @@ Results:
 | `VERIFY_LIVE=1 npm run verify:replay -- 240 new-life` (real model and embeddings) | exact |
 | Unit tests (`npm test`) | 18 pass |
 
-Still not done in MVP 2:
+Closing items, done after the first completion pass:
 
-- The soak uses the mock brain. Real-model runs are verified for minutes, not three simulated days per seed.
-- Crash testing covers SIGKILL, not power loss or a disk that lies.
-- Replay does not cross a reset, new life, tool approval or forging; those are boundaries, not replayed.
-- Mid-run snapshots are still not faithful (in-flight timers are closures); only the boot snapshot is. Persistent activities (MVP 3) are the fix.
-- Journal stories, reflections and web results are not journaled and do not touch the hashed state.
-- Emotions, memories and desires are not in the hash. They affect the hashed state only through the journaled paths, so a divergence that stays in them would go unseen until it reaches `needs`.
+- **Wider hash.** Checkpoints now also hash emotion state (levels, habituation, recent actions) and the tables written only through journaled paths (places, tunes, compositions, works, palette, opinions, lives, catalog, tool grants, moments). The 8-seed and then 20-seed soaks still replay exactly.
+- **Replay across approvals and resets.** `approve`/`deny` go through the same path live and in replay. A reset journals the moment of the wipe (`reset_apply`), not the request, because the request waits for the in-flight cycle and the wipe can land ticks later. Replay applies the same wipe (`resetApply`). The soak now approves a tool request and resets the life in every seed (and the whole island in every third seed).
+- **Backup names.** Reset backups were named to the second; worlds resetting in the same second collided and the later reset failed. Names are now per database and never overwrite.
+- **Real-model soak.** `SOAK_LIVE=1 npm run soak -- 3 3 3`: 3 seeds, 3 simulated days each at 12x with the real model and real embeddings, 148-192 commands each, one reset and one approval each: 144/144 checkpoints matched per seed, no network calls in replay.
+
+Results now:
+
+| Check | Result |
+|---|---|
+| `npm run soak -- 20 3 4` (mock brain, resets and approvals in every seed) | all 20 exact |
+| `SOAK_LIVE=1 npm run soak -- 3 3 3` (real model) | all 3 exact |
+| `npm run crash-test` | pass (3 SIGKILLs, 75 acknowledged commands) |
+| `npm test` | 18 pass |
+
+What MVP 2 still does not cover:
+
+- Power loss: the crash test uses SIGKILL. `synchronous=NORMAL` can lose the last few commits on a power cut.
+- Forging a tool (a model call that writes a plugin file) and installing or rejecting forged tools are not replayed.
+- Memories, desires and interests are not in the hash. The brain loop writes them (thoughts, reflections, which replay does not reproduce), so they cannot be compared. They influence the hashed state only through journaled actions.
+- Mid-run snapshots are still not faithful: in-flight timers are closures. Persistent activities (MVP 3) remove this, and are the next step.
+- Journal stories and reflections prose are not reproduced.

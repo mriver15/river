@@ -57,6 +57,8 @@ export class Emotions {
   }
 
   start() { every(1000, () => this.tick(1), "emotions"); }
+  /** Everything that decides how feelings evolve, for state hashing. */
+  state() { return { level: this.level, why: this.why, edge: this.edge, momentAt: this.momentAt, habit: this.habit, recent: this.recent, acts: this.acts, fails: [...this.fails], places: [...this.places] }; }
   reset() { for (const n of EMOTION_ORDER) this.level[n] = 0; this.why = {}; this.edge = {}; this.momentAt = {}; this.habit = {}; this.recent = []; this.acts = []; this.fails.clear(); this.places.clear(); this.concerns = []; this.concernsKey = ""; kvSet("emotions", { level: this.level, why: this.why }); kvSet("habit", {}); }
 
   // ---------- core ----------

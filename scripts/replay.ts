@@ -30,15 +30,12 @@ const sim = await import("../src/server/sim.ts");
 const { createRuntime, startSystems, humanCommand } = await import("../src/server/runtime.ts");
 const { commandsFrom, setRecording, setReplaying } = await import("../src/server/recorder.ts");
 const { applyDream } = await import("../src/server/dreams.ts");
+const { resetApply } = await import("../src/server/reset.ts");
 setRecording(false); setReplaying(true);
 
 const cmds = commandsFrom(src as any, snap.tick);
 const liveCps = new Map((src.prepare("SELECT tick, hash, parts FROM sim_checkpoints WHERE tick > ? ORDER BY tick").all(snap.tick) as any[]).map((r) => [r.tick as number, r]));
-// A reset or a new life wipes the world the snapshot describes: replay covers the segment before the first one.
-const boundary = cmds.find((c) => c.type === "reset_river" || c.type === "new_life");
-const usable = [...liveCps.keys()].filter((t) => !boundary || t <= boundary.tick);
-const endTick = Math.max(0, ...usable);
-for (const t of [...liveCps.keys()]) if (t > endTick) liveCps.delete(t);
+const endTick = Math.max(0, ...liveCps.keys());
 
 const rt = await createRuntime();
 startSystems(rt);
@@ -50,6 +47,7 @@ const apply = (c: (typeof cmds)[number]) => {
   else if (c.source === "external" && c.type === "relevance") rt.emotions.resolveRelevance(c.payload);
   else if (c.source === "external" && c.type === "dream") applyDream(rt.world, c.payload, () => {}, { feelings: () => rt.emotions.describe(), after: () => rt.emotions.afterDream() });
   else if (c.source === "brain") rt.agent.applyBrain(c.payload);
+  else if (c.source === "human" && c.type === "reset_apply") resetApply(c.payload, rt);
   else if (c.source === "human") humanCommand(rt, c.payload);
 };
 

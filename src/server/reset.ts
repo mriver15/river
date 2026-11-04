@@ -7,6 +7,7 @@ import path from "node:path";
 import { DB_PATH, db, kvGet } from "./db.ts";
 import { beginGeneration, persistGeneration } from "./lifecycle.ts";
 import { suspendTx, resumeTx } from "./sim.ts";
+import { recordCommand } from "./recorder.ts";
 import { log } from "./bus.ts";
 import { clearMemoryCaches } from "./memory.ts";
 import { resetDreams } from "./dreams.ts";
@@ -32,7 +33,8 @@ export function checkCode(code: string): { ok: boolean; error?: string } {
 function backup(): string {
   const dir = path.join(path.dirname(path.resolve(DB_PATH)), "backups"); fs.mkdirSync(dir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  const file = path.join(dir, `river-${stamp}.db`);
+  let file = path.join(dir, `${path.basename(DB_PATH, ".db")}-${stamp}.db`);
+  for (let n = 2; fs.existsSync(file); n++) file = path.join(dir, `${path.basename(DB_PATH, ".db")}-${stamp}-${n}.db`);   // never overwrite or collide
   db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);       // a consistent snapshot, safe with WAL and a live server
   const rel = path.relative(process.cwd(), file);
   return rel.startsWith("..") ? file : rel;
@@ -42,7 +44,14 @@ async function resetInner(opts: { world: boolean }, d: { agent: Agent; world: Wo
   const file = backup();
   log("system", `A new River is beginning. Database backed up to ${file}.`);
   await d.agent.halt();                                       // let the current cycle finish; nothing new starts
+  recordCommand("human", "reset_apply", { world: opts.world });   // the moment of the wipe is what replay repeats (the wait above can span ticks)
+  resetApply(opts, d);
+  return { backup: file };
+}
 
+type Deps = Parameters<typeof resetInner>[1];
+/** The wipe itself: synchronous, so it happens at one instant of the simulation. Live and replay both run it. */
+export function resetApply(opts: { world: boolean }, d: Deps): void {
   // 1. wipe the database
   const tables = ["memories", "events", "desires", "interests", "places", "journal", "tunes", "compositions", "moments", "creatures", "catalog", "opinions", "palette", "works", "tools", "tool_requests", "forged", "inventory"];
   if (opts.world) tables.push("entities");
@@ -64,7 +73,6 @@ async function resetInner(opts: { world: boolean }, d: { agent: Agent; world: Wo
   d.agent.resume(true);
   log("system", `A new River awakens${opts.world ? " on a new island" : ""}.`);
   void kvGet;                                                 // (kv helpers re-seed themselves lazily)
-  return { backup: file };
 }
 
 /**

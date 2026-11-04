@@ -20,9 +20,10 @@ import { setupDeath } from "./death.ts";
 import { startDreams } from "./dreams.ts";
 import { startJournal } from "./journal.ts";
 import { every, STEP_MS, setSimPaused, setSimSpeed, speedForDayMinutes } from "./sim.ts";
-import { CHECKPOINT_EVERY, checkpoint } from "./recorder.ts";
+import { CHECKPOINT_EVERY, checkpoint, registerState } from "./recorder.ts";
 import { simTick } from "./sim.ts";
-import type { ClientMsg } from "../shared/types.ts";
+import { decideRequest, GATED } from "./mind.ts";
+import type { ClientMsg, ToolRequest } from "../shared/types.ts";
 
 export async function createRuntime() {
   await loadPlugins();
@@ -49,6 +50,7 @@ export type Runtime = Awaited<ReturnType<typeof createRuntime>>;
 /** Register every periodic system, in a fixed order (the order decides each system's phase within a second). Does not start the clock. */
 export function startSystems(rt: Runtime) {
   const { world, emotions, agent, ambient, creatures, story, wildlife, fire } = rt;
+  registerState("emotions", () => emotions.state());
   every(STEP_MS, () => world.tick(STEP_MS / 1000), "world");
   setSimSpeed(speedForDayMinutes(cfg("dayMinutes")));
   onConfig((key, v) => {
@@ -67,8 +69,8 @@ export function startSystems(rt: Runtime) {
 }
 
 /** Human commands that change the world. Live and replay both run them through here. */
-export const REPLAYABLE = new Set(["say", "skip_day", "config_set", "config_reset", "sim_pause", "sim_speed", "gift", "catalog_add", "catalog_place", "catalog_retrieve", "catalog_delete"]);
-export interface HumanResult { notice?: { level: "ok" | "error"; text: string }; toAll?: boolean }
+export const REPLAYABLE = new Set(["say", "skip_day", "config_set", "config_reset", "sim_pause", "sim_speed", "gift", "catalog_add", "catalog_place", "catalog_retrieve", "catalog_delete", "approve", "deny"]);
+export interface HumanResult { notice?: { level: "ok" | "error"; text: string }; toAll?: boolean; forge?: ToolRequest }
 
 export function humanCommand(rt: Runtime, m: ClientMsg): HumanResult {
   const { world, agent, emotions, catalog } = rt;
@@ -91,6 +93,19 @@ export function humanCommand(rt: Runtime, m: ClientMsg): HumanResult {
       case "config_reset": resetConfig(); log("system", "Settings reset to defaults."); return {};
       case "sim_pause": setSimPaused(!!m.paused); log("system", m.paused ? "The world was frozen by a human." : "The world was thawed by a human."); bus.emit("state"); return {};
       case "sim_speed": setSimSpeed(Number(m.speed)); log("system", `World speed set to ${Number(m.speed)}x.`); return {};
+      case "approve": case "deny": {
+        const approve = m.t === "approve", r = decideRequest(m.id, approve, m.note, approve ? (m as any).builtin : undefined);
+        if (!r) return {};
+        const builtin = approve ? (m as any).builtin as string | undefined : undefined, granted = approve && builtin && builtin in GATED ? builtin : null;
+        const verdict = approve
+          ? (granted ? `Your request "${r.name}" was APPROVED. You can now do it with the ability called "${granted}": ${GATED[granted]}`
+            : r.name in GATED ? `Your request for "${r.name}" was APPROVED. You can now use it: ${GATED[r.name]}` : `Your idea for a new tool "${r.name}" was approved in principle — the human may build it; it isn't usable yet.`)
+          : `Your request for "${r.name}" was DENIED.`;
+        agent.notify(`${verdict}${m.note ? ` The human added: "${m.note}"` : ""}`);
+        addMemory(verdict, 6, ["tools"]);
+        // Building a new tool calls a model and writes a file: not replayed.
+        return approve && !granted && !(r.name in GATED) ? { forge: r } : {};
+      }
       case "gift": {
         if (!m.name?.trim()) return {};
         const id = catalog.add({ name: m.name, desc: m.desc || "A gift left by the human." }), at = catalog.place(id);
