@@ -11,7 +11,7 @@ import { Streams, type StreamState } from "../sim/random.ts";
 
 export { STEP_MS, DAY_MS };
 
-interface Saved { wall0: number; base: number; tick: number; speed: number; paused: boolean; seed: number; rng: Record<string, StreamState> }
+interface Saved { wall0: number; base: number; tick: number; speed: number; paused: boolean; seed: number; rng: Record<string, StreamState>; /** wall time of the last commit, for offline catch-up */ wallSaved?: number }
 const saved = kvGet<Saved | null>("sim", null);
 const wallBoot = Date.now();
 
@@ -21,6 +21,8 @@ const clock = newClock(0);
 if (saved) Object.assign(clock, { tick: saved.tick, speed: saved.speed, paused: saved.paused });
 const streams = new Streams(saved?.seed ?? (wallBoot % 2_000_000_011), saved?.rng ?? {});
 export const isFreshClock = !saved;
+/** When the last process committed, in wall ms, and the speed it was running at: what offline catch-up converts an absence with. */
+export const lastCommit = { wall: saved?.wallSaved ?? 0, speed: saved?.speed ?? 1, tick: saved?.tick ?? 0, paused: saved?.paused ?? false };
 
 export const simNow = () => base + clock.tick * STEP_MS;
 export const simTick = () => clock.tick;
@@ -85,9 +87,18 @@ function step() {
   }
   for (const s of systems) {
     if ((clock.tick + s.offset) % s.every !== 0) continue;
+    const t0 = performance.now();
     try { s.fn((s.every * STEP_MS) / 1000); } catch (e) { errorHook(s.name, e); }
+    const p = perf.get(s.name) ?? { ms: 0, runs: 0 }; p.ms += performance.now() - t0; p.runs++; perf.set(s.name, p);
   }
 }
+/** Wall time each periodic system has used (a measurement for the dashboard; it never feeds back into the simulation). */
+const perf = new Map<string, { ms: number; runs: number }>();
+export const simPerf = () => [...perf].map(([name, p]) => ({ name, ms: +p.ms.toFixed(1), runs: p.runs })).sort((a, b) => b.ms - a.ms);
+export const resetSimPerf = () => perf.clear();
+/** Ticks per wall second the host loop (or an advance) most recently achieved. */
+let rate = { ticksPerSec: 0, at: 0 };
+export const simRate = () => rate;
 
 /** Run the ticks owed for `wallMs` of wall time, at most `maxTicks`. Returns the number run. */
 export function pump(wallMs: number, maxTicks = 100): number {
@@ -101,14 +112,14 @@ export function runTicks(n: number) { for (let i = 0; i < n; i++) step(); }
 
 export function save() {
   flushPersisted();
-  kvSet("sim", { wall0: legacyWallBoot, base, tick: clock.tick, speed: clock.speed, paused: clock.paused, seed: streams.seed, rng: streams.save() } satisfies Saved);
+  kvSet("sim", { wall0: legacyWallBoot, base, tick: clock.tick, speed: clock.speed, paused: clock.paused, seed: streams.seed, rng: streams.save(), wallSaved: Date.now() } satisfies Saved);
 }
 export function setSimPaused(p: boolean) { clock.paused = p; save(); }
 /** 1 = the canonical 24-minute day. 2 = a 12-minute day. */
 export function setSimSpeed(s: number) { clock.speed = Math.max(0.1, Math.min(100, s)); save(); }
 export const speedForDayMinutes = (minutes: number) => 24 / minutes;
 
-export function simInfo() { return { tick: clock.tick, speed: clock.speed, paused: clock.paused, lagMs: Math.round(clock.lagMs), systems: systems.length, timers: timers.length }; }
+export function simInfo() { return { tick: clock.tick, speed: clock.speed, paused: clock.paused, lagMs: Math.round(clock.lagMs), systems: systems.length, timers: timers.length, advancing: ffOwner, ticksPerSec: Math.round(rate.ticksPerSec) }; }
 
 // ---- durability: one transaction per host turn ----
 // Writes made by ticks, by the continuations between ticks and by commands arriving between turns share one open transaction, which
@@ -129,6 +140,10 @@ export function suspendTx() { txSuspended = true; commitTx(); }
 export function resumeTx() { txSuspended = false; beginTx(); }
 
 let timer: NodeJS.Timeout | null = null, hosted = false;
+/** While an advance owns the stepping, the host loop stands aside (and does not bank the wall time that passes meanwhile). */
+let ffOwner = false;
+export const setAdvancing = (on: boolean) => { ffOwner = on; };
+export const isAdvancing = () => ffOwner;
 const drain = () => new Promise<void>((r) => setImmediate(r));
 
 // ---- the injection queue ----
@@ -161,6 +176,7 @@ export function start(hz = 40) {
   beginTx();
   timer = setInterval(async () => {
     if (busy) return;
+    if (ffOwner) { last = performance.now(); return; }
     busy = true;
     try {
       const t = performance.now(), owed = advanceWall(clock, t - last, 100); last = t;
@@ -168,10 +184,24 @@ export function start(hz = 40) {
       for (; done < owed && !clock.paused; done++) { step(); await drain(); await flushInjected(); }
       await flushInjected();                              // also while the world is frozen: River may still act on a paused world
       consumeTicks(clock, done);
+      if (done) rate = { ticksPerSec: done / Math.max(0.001, (performance.now() - t) / 1000), at: Date.now() };
       commitTx();
     } finally { busy = false; }
   }, 1000 / hz);
   for (const sig of ["SIGINT", "SIGTERM"] as const) process.once(sig, () => { if (txOpen) { save(); db.exec("COMMIT"); } else save(); process.exit(0); });
+}
+/**
+ * Run up to `n` ticks the way the host loop does (one tick, then the event loop, then whatever was injected), without waiting for the
+ * wall clock, and commit. This is the only way the world moves faster than real time: the same step, so the same outcome.
+ * Returns the ticks run (fewer than `n` if the world is frozen). The caller yields between batches so controls stay responsive.
+ */
+export async function runBatch(n: number, stopWhen?: () => boolean): Promise<number> {
+  let done = 0; const t0 = performance.now();
+  for (; done < n && !clock.paused; done++) { step(); await drain(); await flushInjected(); if (stopWhen?.()) { done++; break; } }
+  await flushInjected();
+  if (done) rate = { ticksPerSec: done / Math.max(0.001, (performance.now() - t0) / 1000), at: Date.now() };
+  commitTx();
+  return done;
 }
 export function stop() { if (timer) clearInterval(timer); timer = null; if (txOpen) { save(); db.exec("COMMIT"); txOpen = false; } else save(); }
 

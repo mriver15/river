@@ -7,6 +7,7 @@ import { addLog, hooks, initLog, resetLog } from "./ui/log.ts";
 import { drawMap, lastMap } from "./ui/map.ts";
 import { initMemory, loadMemories } from "./ui/memory.ts";
 import { loadBrain } from "./ui/brain.ts";
+import { onAdvance, onReplay } from "./ui/sim.ts";
 import { initMusic, onRiverScore } from "./ui/music.ts";
 import { onMoment } from "./ui/moments.ts";
 import { renderDeath } from "./ui/death.ts";
@@ -68,6 +69,8 @@ function handle(m: ServerMsg) {
     }
     case "agent": setAgent(m.agent); break;
     case "config": S.config = m.config; renderSettings(); break;
+    case "advance": onAdvance(m.progress, m.done); break;
+    case "replay": onReplay(m); break;
     case "log": addLog(m.entry, ctx.live); break;
     case "fx": ctx.scene?.fx(m.kind); m.kind === "lightning" ? ctx.audio?.thunder() : ctx.audio?.meteor(); break;
     case "notice": if (!handleNotice(m)) toast({ title: m.level === "ok" ? "Done" : "Couldn't do that", body: m.text, color: m.level === "ok" ? "var(--accent)" : "var(--bad)", ttl: 7000 }); break;

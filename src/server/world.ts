@@ -256,7 +256,7 @@ export class World {
   /** How far River can make things out: the dark, fog and storms close the world in; a fire pushes the dark back. */
   sightRadius(): number {
     const t = this.worldTime(), night = t < 0.23 || t > 0.78;
-    let r = night ? 11 : 32;
+    let r = night ? cfg("sightNight") : cfg("sightDay");
     if (this.weather === "fog") r = Math.min(r, 14); else if (this.weather === "storm") r = Math.min(r, 17); else if (this.weather === "rain") r = Math.min(r, 24);
     return this.lit() ? Math.max(r, 26) : r;
   }

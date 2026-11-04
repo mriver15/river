@@ -92,7 +92,7 @@ function initActions() {
   btn("btn-stop", "stop", "Stop what River is doing", () => send({ t: "activity_cancel" }));
   btn("btn-freeze", "freeze", "Freeze the whole world (W)", () => send({ t: "sim_pause", paused: !S.stats?.worldPaused }));
   box.append(el("span", "sep"));
-  btn("btn-nextday", "sunrise", "Skip to the next dawn", () => { if (confirm("Skip ahead to the next dawn?")) send({ t: "skip_day" }); });
+  btn("btn-nextday", "sunrise", "Run the world forward to the next dawn", () => { if (confirm("Run the world forward to the next dawn? It runs every tick, quickly, and stops if something urgent needs River.")) send({ t: "sim_advance", until: "dawn", decision: "stop" }); });
   btn("btn-controls", "sliders", "Controls: budget, new River", openControls);
   btn("btn-panel", "panel", "Hide panel (\\)", () => setSide(document.body.dataset.side !== "open"));
 }

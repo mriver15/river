@@ -1,6 +1,7 @@
 import type { Score } from "./music.ts";
 import type { EmotionName } from "./emotions.ts";
 import type { VisualPacket } from "../content/visuals.ts";
+import type { AdvanceProgress, AdvanceResult } from "./advance.ts";
 
 export type EntityKind =
   | "tree" | "rock" | "bush" | "flower" | "mushroom" | "shell"
@@ -95,8 +96,12 @@ export interface TasteView { opinions: Opinion[]; palette: PaletteColor[]; works
 
 export interface MemoryRow { id: number; ts: number; kind: string; text: string; importance: number; tags: string; x?: number | null; z?: number | null }
 
-export interface ConfigDef { key: string; group: string; label: string; help: string; type: "number" | "toggle"; def: number | boolean; min?: number; max?: number; step?: number; unit?: string }
-export interface ConfigView { defs: ConfigDef[]; values: Record<string, number | boolean> }
+/** A parameter: what it is, where it lives, how it may change. `applies`: immediate (the next time it is read), new-instance (the next life or creature), restart (after a restart or migration). */
+export interface ConfigDef {
+  key: string; group: string; label: string; help: string; type: "number" | "toggle"; def: number | boolean; min?: number; max?: number; step?: number; unit?: string;
+  owner?: string; applies?: "immediate" | "new-instance" | "restart"; needs?: string[]; ruleset?: string;
+}
+export interface ConfigView { defs: ConfigDef[]; values: Record<string, number | boolean>; /** the immutable set of values now in force */ paramSet?: string; ruleset?: string; presets?: { id: string; label: string; help: string }[] }
 
 export interface Stats {
   cyclesLastHour: number; maxCyclesPerHour: number; paused: boolean; mock: boolean; model: string;
@@ -116,6 +121,9 @@ export type ServerMsg =
   | { t: "ack"; cid: string; status: "ok" | "error" | "duplicate"; result?: string }
   | { t: "score"; title: string; score: Score }
   | { t: "moment"; moment: Moment }
+  | { t: "advance"; progress: AdvanceProgress | null; done?: AdvanceResult }
+  /** a read-only replay of a recorded life: where it is, how fast, and whether every checkpoint so far matched the recording */
+  | { t: "replay"; tick: number; startTick: number; endTick: number; speed: number; paused: boolean; done: boolean; checked: number; diverged: number; source: string }
   | { t: "log"; entry: LogEntry }
   | { t: "entity"; op: "upsert"; entity: Entity }
   | { t: "entity"; op: "remove"; id: string }
@@ -139,6 +147,11 @@ export type ClientMsg = (
   | { t: "config_set"; key: string; value: number | boolean }
   | { t: "config_reset" }
   | { t: "skip_day" }
+  | { t: "sim_advance"; until: "dawn" | "ticks" | "minutes"; amount?: number; decision?: "stop" | "wait" | "defer" }
+  | { t: "sim_cancel" }
+  | { t: "replay_speed"; speed: number }
+  | { t: "replay_pause"; paused: boolean }
+  | { t: "config_preset"; id: string }
   | { t: "forge"; id: number }
   | { t: "install"; name: string }
   | { t: "reject"; name: string }

@@ -1,0 +1,10 @@
+{
+  "name": "needs-and-animals",
+  "days": 1,
+  "seeds": [1, 2, 3],
+  "scenarios": [
+    { "name": "standard", "preset": "default" },
+    { "name": "gentle", "preset": "gentle" },
+    { "name": "harsh", "preset": "harsh" }
+  ]
+}

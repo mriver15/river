@@ -1,12 +1,21 @@
 // Settings the human can change while River lives. Values are read at the moment they are used, so a change takes effect at once.
 // Defaults come from the environment (so existing .env files still work); changes made in the UI are stored and win over them.
-import { kvGet, kvSet } from "./db.ts";
+import { db, kvGet, kvSet } from "./db.ts";
+import { simTick } from "./sim.ts";
+import { canonicalHash } from "../sim/hash.ts";
+import { PRESETS, presetById } from "../content/presets.ts";
+import { RULES_VERSION } from "../content/materials.ts";
 import type { ConfigDef, ConfigView } from "../shared/types.ts";
 
 const env = (k: string, d: number) => { const v = Number(process.env[k]); return process.env[k] !== undefined && Number.isFinite(v) ? v : d; };
 
 export const DEFS: ConfigDef[] = [
   { key: "dayMinutes", group: "Time & weather", label: "Length of a day", help: "Real minutes for one full day and night. Changing it keeps the current time of day.", type: "number", def: 24, min: 2, max: 240, step: 1, unit: "min" },
+  { key: "sightDay", group: "Perception", label: "How far River sees by day", help: "Metres in clear daylight. Fog, storms and rain shorten it; a fire lengthens the night.", type: "number", def: 32, min: 10, max: 80, step: 1, unit: "m" },
+  { key: "sightNight", group: "Perception", label: "How far River sees at night", help: "Metres in the dark, away from any light.", type: "number", def: 11, min: 4, max: 40, step: 1, unit: "m" },
+  { key: "emotionSpeed", group: "Feelings", label: "How fast feelings fade", help: "Scales every feeling's half-life: 2 means they fade twice as fast, 0.5 half as fast. Loneliness has no half-life and is unaffected.", type: "number", def: 1, min: 0.25, max: 4, step: 0.25, unit: "×" },
+  { key: "offlineCatchup", group: "Time & weather", label: "Catch up after an absence", help: "Off: the world waits, frozen, while the server is not running. On: when it starts again, the world runs forward by the time that passed, up to the limit below, and tells you what happened.", type: "toggle", def: false },
+  { key: "catchupMaxDays", group: "Time & weather", label: "Longest catch-up", help: "World days, at most, simulated after an absence. Time beyond this is reported as not simulated.", type: "number", def: 1, min: 0.1, max: 7, step: 0.1, unit: "days" },
   { key: "weather", group: "Time & weather", label: "Weather", help: "Off means clear skies always.", type: "toggle", def: true },
   { key: "ambientRate", group: "Time & weather", label: "World events", help: "How often strange and beautiful things happen. 0 is none.", type: "number", def: env("AMBIENT_RATE", 1), min: 0, max: 3, step: 0.25, unit: "×" },
 
@@ -39,14 +48,30 @@ export const DEFS: ConfigDef[] = [
   { key: "cycles", group: "Budget", label: "Thought cycles per hour", help: "Hard cap.", type: "number", def: env("MAX_CYCLES_PER_HOUR", 240), min: 30, max: 1000, step: 10 },
   { key: "offpeak", group: "Budget", label: "Off-peak multiplier", help: "Budget stretches by this much when the API is cheap.", type: "number", def: env("OFFPEAK_MULTIPLIER", 2), min: 1, max: 4, step: 0.5, unit: "×" },
 ];
+/** Who owns each parameter, and what it only means when something else is on. Everything here takes effect the next time it is read. */
+const OWNER: Record<string, string> = { "Time & weather": "clock", Wildlife: "wildlife", Survival: "body", Instincts: "activities", "River's mind": "brain", Budget: "brain", Perception: "perception", Feelings: "emotions" };
+const NEEDS: Record<string, string[]> = { reflexEscapeDistance: ["reflexEscape"], damageScale: ["predators"], catchupMaxDays: ["offlineCatchup"] };
+export const RULESET = `rules-${RULES_VERSION}`;
+for (const d of DEFS) { d.owner ??= OWNER[d.group] ?? "world"; d.applies ??= "immediate"; d.ruleset ??= RULESET; if (NEEDS[d.key]) d.needs ??= NEEDS[d.key]; }
 const byKey = new Map(DEFS.map((d) => [d.key, d]));
 let over: Record<string, number | boolean> = kvGet<Record<string, number | boolean>>("config", {});
 const listeners: ((key: string, value: number | boolean, old: number | boolean) => void)[] = [];
 
-export function cfg(key: "weather" | "prey" | "smallWild" | "predators" | "lethal" | "traceAll"): boolean;
+export function cfg(key: "weather" | "prey" | "smallWild" | "predators" | "lethal" | "traceAll" | "offlineCatchup"): boolean;
 export function cfg(key: string): number;
 export function cfg(key: string): any { const d = byKey.get(key); if (!d) throw new Error(`unknown setting ${key}`); const v = over[key]; return v === undefined ? d.def : v; }
 export const onConfig = (fn: (key: string, value: number | boolean, old: number | boolean) => void) => { listeners.push(fn); };
+
+/** The values now in force, as one immutable set identified by its hash. A snapshot or a checkpoint names the set it ran under. */
+export const effective = (): Record<string, number | boolean> => Object.fromEntries(DEFS.map((d) => [d.key, cfg(d.key)]));
+export const paramSet = (): string => canonicalHash({ ruleset: RULESET, values: effective() }).slice(0, 16);
+/** Remember the set in force and when it began, so a past run can be matched to the parameters it ran under. */
+export function recordParams(cause: string) {
+  const hash = paramSet(), last = db.prepare("SELECT hash FROM sim_param_log ORDER BY seq DESC LIMIT 1").get() as { hash: string } | undefined;
+  db.prepare("INSERT OR IGNORE INTO sim_param_sets(hash, ruleset, json, first_tick) VALUES(?,?,?,?)").run(hash, RULESET, JSON.stringify(effective()), simTick());
+  if (last?.hash !== hash) db.prepare("INSERT INTO sim_param_log(tick, hash, cause) VALUES(?,?,?)").run(simTick(), hash, cause);
+}
+export const paramHistory = () => db.prepare("SELECT l.tick, l.hash, l.cause, s.json FROM sim_param_log l JOIN sim_param_sets s ON s.hash = l.hash ORDER BY l.seq DESC LIMIT 50").all() as { tick: number; hash: string; cause: string; json: string }[];
 
 export function setConfig(key: string, raw: unknown): boolean {
   const d = byKey.get(key); if (!d) return false;
@@ -54,7 +79,15 @@ export function setConfig(key: string, raw: unknown): boolean {
   if (d.type === "toggle") v = !!raw; else { const n = Number(raw); if (!Number.isFinite(n)) return false; v = Math.min(d.max!, Math.max(d.min!, Math.round(n / d.step!) * d.step!)); }
   const old = cfg(key); if (old === v) return true;
   over = { ...over, [key]: v }; if (v === d.def) delete over[key];
-  kvSet("config", over); for (const f of listeners) f(key, v, old); return true;
+  kvSet("config", over); recordParams(`${key} = ${v}`); for (const f of listeners) f(key, v, old); return true;
 }
-export function resetConfig() { for (const d of DEFS) if (over[d.key] !== undefined) setConfig(d.key, d.def); over = {}; kvSet("config", {}); }
-export const configView = (): ConfigView => ({ defs: DEFS, values: Object.fromEntries(DEFS.map((d) => [d.key, cfg(d.key)])) as Record<string, number | boolean> });
+/** Apply a named preset: each value in it, as one change. Returns the keys it changed. */
+export function applyPreset(id: string): string[] | null {
+  const p = presetById(id); if (!p) return null;
+  const changed: string[] = [];
+  if (id === "default") { resetConfig(); return ["(all)"]; }
+  for (const [k, v] of Object.entries(p.values)) if (cfg(k) !== v && setConfig(k, v)) changed.push(k);
+  return changed;
+}
+export function resetConfig() { for (const d of DEFS) if (over[d.key] !== undefined) setConfig(d.key, d.def); over = {}; kvSet("config", {}); recordParams("reset to defaults"); }
+export const configView = (): ConfigView => ({ defs: DEFS, values: effective(), paramSet: paramSet(), ruleset: RULESET, presets: PRESETS.map(({ id, label, help }) => ({ id, label, help })) });

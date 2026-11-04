@@ -1,5 +1,6 @@
 // Command journal, checkpoint hashes and boot snapshots: the inputs and evidence replay needs.
 // Replay = restore the boot snapshot, rerun the recorded commands at their recorded ticks, and compare checkpoint hashes.
+import { paramSet, recordParams } from "./config.ts";
 import fs from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -88,11 +89,11 @@ export function checkpoint(w: World) {
  * what replay repeats, so the snapshot must not include their effects.
  */
 export function snapshotBoot(): { tick: number; file: string; hash: string } {
-  saveSim();
+  saveSim(); recordParams("boot");
   const tick = simTick(), dir = path.join(path.dirname(DB_PATH), "snapshots"), file = path.join(dir, `${path.basename(DB_PATH)}.snapshot-${tick}.db`);   // named for its database: several worlds may share a directory
   fs.mkdirSync(dir, { recursive: true }); fs.rmSync(file, { force: true });
   db.prepare("VACUUM INTO ?").run(file);
   const hash = createHash("sha256").update(fs.readFileSync(file)).digest("hex");
-  db.prepare("INSERT OR REPLACE INTO sim_snapshots(tick, file, hash, created_at) VALUES(?,?,?,?)").run(tick, file, hash, Date.now());
+  db.prepare("INSERT OR REPLACE INTO sim_snapshots(tick, file, hash, created_at, param_set) VALUES(?,?,?,?,?)").run(tick, file, hash, Date.now(), paramSet());
   return { tick, file, hash };
 }

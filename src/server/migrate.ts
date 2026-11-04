@@ -93,6 +93,16 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: "0010_parameter_sets", description: "Immutable parameter sets, which one was in force when, and which one each boot snapshot used",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS sim_param_sets (hash TEXT PRIMARY KEY, ruleset TEXT NOT NULL, json TEXT NOT NULL, first_tick INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS sim_param_log (seq INTEGER PRIMARY KEY AUTOINCREMENT, tick INTEGER NOT NULL, hash TEXT NOT NULL, cause TEXT NOT NULL);
+      `);
+      addColumn(db, "sim_snapshots", "param_set", "TEXT");
+    },
+  },
 ];
 
 export interface MigrationReport { applied: string[]; alreadyApplied: string[] }

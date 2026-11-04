@@ -18,7 +18,8 @@ function row(d: ConfigDef): HTMLElement {
     s.oninput = () => (out.textContent = fmt(d, Number(s.value))); s.onchange = () => send({ t: "config_set", key: d.key, value: Number(s.value) }); r.append(s);
   }
   r.append(el("div", "muted small", d.help));
-  if (d.key === "dayMinutes") { const b = el("button", "btn sm", "Skip to the next dawn"); b.onclick = () => send({ t: "skip_day" }); r.append(b); }
+  if (d.owner) r.append(el("div", "muted small", `${d.owner} · ${d.applies ?? "immediate"}${d.needs?.length ? ` · matters when ${d.needs.join(", ")} is on` : ""}`));
+  if (d.key === "dayMinutes") { const b = el("button", "btn sm", "Run forward to the next dawn"); b.onclick = () => send({ t: "sim_advance", until: "dawn", decision: "stop" }); r.append(b); }
   return r;
 }
 

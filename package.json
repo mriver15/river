@@ -19,7 +19,10 @@
     "crash-test": "tsx scripts/crash-test.ts",
     "soak": "tsx scripts/soak-replay.ts",
     "restart-test": "tsx scripts/restart-test.ts",
-    "gallery:shots": "tsx scripts/gallery-shots.ts"
+    "gallery:shots": "tsx scripts/gallery-shots.ts",
+    "experiment": "tsx scripts/experiment.ts",
+    "replay:serve": "tsx scripts/replay-serve.ts",
+    "replay:serve-test": "tsx scripts/replay-serve-test.ts"
   },
   "dependencies": {
     "three": "^0.187.0",

@@ -134,7 +134,7 @@ export class Emotions {
   tick(dt: number) {
     const w = this.w, me = w.me;
     for (const n of EMOTION_ORDER) {
-      this.level[n] = decay(this.level[n], dt, EMOTIONS[n].half);          // simulated seconds; never negative, never non-finite
+      this.level[n] = decay(this.level[n], dt * cfg("emotionSpeed"), EMOTIONS[n].half);          // simulated seconds; never negative, never non-finite
     }
     // loneliness is an integrator: it grows with silence and eases with company
     const near = w.nearby(12).filter(({ e }) => e.kind === "animal"), trusted = Math.max(0, ...near.map(({ e }) => (e.props.trust as number) ?? 0));

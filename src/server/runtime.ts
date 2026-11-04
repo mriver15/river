@@ -1,10 +1,11 @@
 // The world and everything that acts in it, built the same way for the live server and for headless replay.
 // Nothing here opens a socket or calls a model.
-import { cfg, onConfig, resetConfig, setConfig } from "./config.ts";
+import { applyPreset, cfg, onConfig, resetConfig, setConfig } from "./config.ts";
 import { kvSet } from "./db.ts";
 import { bus, log } from "./bus.ts";
 import { addMemory, setLocator, setSalience } from "./memory.ts";
 import { InnerLife } from "./inner.ts";
+import { Advancer } from "./advance.ts";
 import { Agent } from "./agent.ts";
 import { loadPlugins } from "./tools.ts";
 import { reapInterrupted } from "./smith.ts";
@@ -53,7 +54,8 @@ export async function createRuntime() {
   // When the token budget runs out the brain may ask for the world to wait; it goes through the journal like any other freeze.
   agent.setWorldPaused = (p, why) => void inject(() => { const m = { t: "sim_pause" as const, paused: p }; const seq = recordCommand("human", "sim_pause", m); humanCommand({ world, agent, emotions, ambient, creatures, story, catalog, wildlife, fire, knowledge, activities } as Runtime, m); finishCommand(seq, "ok", why); });
   activities.resume();
-  return { world, emotions, inner, agent, ambient, creatures, story, catalog, wildlife, fire, knowledge, activities };
+  const advancer = new Advancer({ world, agent });
+  return { world, emotions, inner, advancer, agent, ambient, creatures, story, catalog, wildlife, fire, knowledge, activities };
 }
 export type Runtime = Awaited<ReturnType<typeof createRuntime>>;
 
@@ -92,7 +94,7 @@ export function startSystems(rt: Runtime) {
 }
 
 /** Human commands that change the world. Live and replay both run them through here. */
-export const REPLAYABLE = new Set(["say", "skip_day", "config_set", "config_reset", "sim_pause", "sim_speed", "gift", "catalog_add", "catalog_place", "catalog_retrieve", "catalog_delete", "approve", "deny", "activity_cancel"]);
+export const REPLAYABLE = new Set(["say", "skip_day", "config_preset", "config_set", "config_reset", "sim_pause", "sim_speed", "gift", "catalog_add", "catalog_place", "catalog_retrieve", "catalog_delete", "approve", "deny", "activity_cancel"]);
 export interface HumanResult { notice?: { level: "ok" | "error"; text: string }; toAll?: boolean; forge?: ToolRequest }
 
 export function humanCommand(rt: Runtime, m: ClientMsg): HumanResult {
@@ -113,6 +115,11 @@ export function humanCommand(rt: Runtime, m: ClientMsg): HumanResult {
         return { notice: { level: "ok", text: `Skipped ahead to dawn on day ${day}.` }, toAll: true };
       }
       case "config_set": return setConfig(String(m.key), m.value) ? {} : { notice: { level: "error", text: `Unknown or invalid setting: ${m.key}` } };
+      case "config_preset": {
+        const changed = applyPreset(String(m.id));
+        if (!changed) return { notice: { level: "error", text: `There is no preset called "${m.id}".` } };
+        log("system", `Preset "${m.id}" applied${changed.length ? `: ${changed.join(", ")}` : " (nothing needed to change)"}.`); return { notice: { level: "ok", text: `Preset "${m.id}" applied.` }, toAll: true };
+      }
       case "config_reset": resetConfig(); log("system", "Settings reset to defaults."); return {};
       case "sim_pause": setSimPaused(!!m.paused); log("system", m.paused ? "The world was frozen." : "The world was thawed."); bus.emit("state"); return {};
       case "sim_speed": setSimSpeed(Number(m.speed)); log("system", `World speed set to ${Number(m.speed)}x.`); return {};

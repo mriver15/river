@@ -36,6 +36,9 @@ async function one(seed: number, port: number) {
     if (n % 5 === 0) send({ t: "say", text: `hello ${n}` });
     if (n === 7) send({ t: "config_set", key: "predators", value: false });
     if (n === 12) send({ t: "config_set", key: "predators", value: true });
+    if (n === 6) send({ t: "config_preset", id: "gentle" });                                    // parameters change as recorded commands
+    if (n === 14) send({ t: "config_preset", id: "default" });
+    if (n === 10) send({ t: "sim_advance", until: "minutes", amount: 20, decision: "defer" });   // and so does running the world forward: the replay steps the same ticks
     if (n === 5) send({ t: "approve", id: 1, note: "yes" });                                    // the mock brain asks for web_search early on
     if (n === 8) send({ t: "reset_river", code: process.env.RIVER_RESET_CODE ?? "2888", world: seed % 3 === 0 });   // a new life, and every third seed a new island
   }

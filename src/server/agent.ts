@@ -84,7 +84,15 @@ export class Agent {
     bus.on("moment", (m: { intensity?: number; title?: string }) => { if ((m.intensity ?? 0) >= 0.6) this.raise("emotion", `a strong feeling: ${m.title ?? ""}`); });
   }
   /** Something warrants a decision. Cheap to call; the queue merges, orders and expires. */
-  raise(kind: TriggerKind, text: string, key?: string) { this.queue.raise(kind, text, simTick(), key ? { key } : {}); this.wake(); }
+  raise(kind: TriggerKind, text: string, key?: string) { this.raised[kind] = (this.raised[kind] ?? 0) + 1; this.queue.raise(kind, text, simTick(), key ? { key } : {}); this.wake(); }
+  /** How many times each kind of trigger has been raised since the process started: an advance reports the difference. */
+  readonly raised: Partial<Record<TriggerKind, number>> = {};
+  /** Is a decision unresolved? `urgent` is a pending trigger at or above this priority (lower is more urgent); `thinking` is one in flight. */
+  decisionState(maxPriority = 2): { thinking: boolean; urgent: boolean; queued: number } {
+    const now = simTick();
+    return { thinking: this.w.me.thinking, urgent: (this.w.me.thinking && this.deciding <= maxPriority) || this.queue.list().some((t) => t.priority <= maxPriority && t.expiresAt > now), queued: this.queue.size };
+  }
+  private deciding = 9;
 
   stats() {
     const hourAgo = Date.now() - 3_600_000;
@@ -194,7 +202,7 @@ export class Agent {
   private async decideOnce(triggers: Trigger[]) {
     this.cycleTimes.push(Date.now()); kvSet("cycleTimes", this.cycleTimes);
     this.cycleCount++; kvSet("cycleCount", this.cycleCount);
-    this.w.me.thinking = true;
+    this.w.me.thinking = true; this.deciding = Math.min(...triggers.map((t) => t.priority));
     const gen = lifeGen(), t0 = Date.now(), tick0 = simTick();
     const u: DecisionStats = { calls: 0, inp: 0, out: 0, hit: 0, ms: 0, packet: 0, tools: [], dropped: "", note: "" };
     const run = MOCK ? this.mockCycle() : this.decide(triggers, gen, u);

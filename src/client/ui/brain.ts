@@ -1,5 +1,6 @@
 import { $, el, ago } from "../dom.ts";
 import { loadHeart } from "./heart.ts";
+import { loadSim } from "./sim.ts";
 
 const n = (v: number) => (v >= 10_000 ? `${(v / 1000).toFixed(0)}k` : v.toLocaleString());
 
@@ -8,6 +9,7 @@ export async function loadBrain() {
   const box = $("brainview"); let b: any;
   try { b = await (await fetch("/api/brain")).json(); } catch { return void (box.textContent = "The brain's log is not available."); }
   box.replaceChildren();
+  await loadSim(box);
 
   const bud = b.budget, card = el("div", "card"), pct = Math.min(100, Math.round(bud.fill * 100));
   card.append(el("div", "row", `Budget this hour: ${n(bud.tokensLastHour)} of ${n(bud.max)} tokens (${pct}%)`));

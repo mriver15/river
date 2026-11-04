@@ -330,3 +330,33 @@ Still not done:
 - **Memory salience** is a bounded boost to importance; it does not yet affect recall ranking.
 - **Item repair** has no tool for River to use; only the registry method and structure repair exist.
 - **The relevance annotation** was exercised in tests with injected results, not against a live embedding service in this phase.
+
+## MVP 8: fast-forward, offline progression and tuning
+
+Code: `src/server/advance.ts` (advance and catch-up), `sim.runBatch`, `src/server/timeline.ts`, `src/server/config.ts` (registry, parameter sets, presets) with `src/content/presets.ts`, `src/server/replay-driver.ts`, `scripts/` (`ff-equivalence`, `experiment`, `replay-serve`), `src/client/ui/sim.ts`.
+
+What changed:
+
+- **Advance = the same ticks.** `sim.runBatch` is the host loop's own step (tick, event loop, injected work) with the wall clock removed; while an advance runs the host loop stands aside and does not bank the wall time that passes. Nothing is skipped or estimated. `npm test` runs `scripts/ff-equivalence.ts` twice (the ordinary host loop at speed, and an advance) from copies of one database and requires every checkpoint hash to match, both for a tick count and for "to the next dawn".
+- **Next dawn is real.** "Skip to dawn" used to shift the calendar's origin, which rewrote every earlier day and skipped growth, weather and injuries. It now runs the ticks to dawn (`sim_advance`); the calendar origin never moves. `skip_day` is kept only so old journals replay, and the button maps to the advance.
+- **Stop conditions and control.** An advance runs in 100-tick batches and yields between them. It stops at its target, at River's death (at that tick), at a new urgent decision (priority danger, contact or need) when the policy is `stop`, at a tick or wall-time budget, when cancelled (heard within a batch), or when the world is frozen. Policies for decisions: `stop`, `wait` (bounded wait for the decision, then carry on) or `defer` (carry on; count what was called for). A decision already waiting when the advance began does not stop it.
+- **Offline catch-up.** Off by default (the world waits, frozen). When on, the next start converts the absence at the speed the world was running, up to a limit in world days (default 1), through the same advance, with the brain not yet running, so what would have needed a decision is counted, not decided. The part beyond the limit is reported as not simulated, never run or dropped silently. A summary (what was logged, moments, items, decisions called for, needs before and after) is kept and shown.
+- **Days from ticks.** Day index and `simNow` depend only on the tick count, so changing speed cannot move a past event between days; a test checks it.
+- **Parameter registry.** Every setting names its owner, how it applies (`immediate`, `new-instance`, `restart`), the ruleset, bounds and what it depends on. New parameters: how far River sees by day and night, and how fast feelings fade. The values in force form an immutable set identified by a hash; the history of sets, and the set each boot snapshot ran under, are stored. Changes and presets are journaled commands (`config_set`, `config_preset`), so a replay repeats them; the soak now includes presets and an advance.
+- **Presets.** Standard, Gentle, Harsh, Lively, Quiet, Close horizons.
+- **Timeline and causes.** `/api/timeline` lists commands, activities, item histories, feeling traces, the log and decisions from the stored records, filtered by actor, object, source, activity or event chain (follow a feeling back to the event that caused it). No model is involved.
+- **Experiment runner.** `npm run experiment [spec.json]` runs scenarios (a preset and/or parameter overrides) over several seeds in separate processes with the mock brain, and prints a comparison against the first scenario. On the example spec it ran about 10,000 ticks per second (about 1,000 times real time); gentle survived 3 of 3 seeds for a day, standard and harsh 0 of 3.
+- **Read-only visual replay.** `npm run replay:serve -- recorded.db` runs a recorded life from its snapshot through its journal and shows it in the normal client, with pause and speed, refusing every command, using no model or network, and checking each checkpoint against the recording as it goes. `npm run replay:serve-test` records a short life and verifies this end to end (48 checkpoints matched). `scripts/replay.ts` shares the same driver.
+- **Simulation panel.** In the Brain tab: the clock, speed, pauses, engine lag, ticks per second, ruleset and parameter set, pending decisions; advance controls with a progress bar, stop button and decision policy; the last advance and the catch-up summary; presets and the history of parameter sets; where the engine's time goes; and the timeline with filters.
+
+Checks: typecheck and build clean; 161 unit tests (including the equivalence run, the stop conditions, catch-up conversion, parameter sets, timeline filters); replays of `new-life`, `fire` and `injury`, a 3-seed 1-day soak that now includes presets and an advance, and the build/items/alive restart scenarios all match. The full 20-seed regression was not run.
+
+Still not done:
+
+- **No optimised skipping.** Every advanced tick is a real tick; the 13.2 jump-ahead was not built, so it needed no per-system equivalence tests. Speed is whatever the machine gives (about 1,000 times real time here).
+- **`restart` and `new-instance` parameters.** The registry records how each parameter applies, but every current parameter is `immediate`; staging a change until the next restart or life is not implemented.
+- **Branching** from a replay was not started.
+- **Replay seeking.** The replay can pause and change speed but not jump; it restarts from its snapshot.
+- **A restart during an advance** simply resumes from the last committed batch; the advance is not resumed.
+- **Experiments** use the mock brain, one preset or parameter set per scenario, and fixed metrics (needs, health, fear, grief, items, works, moments); there is no confidence interval, only means over seeds.
+- **The client panels were built and type-checked but not screenshot-reviewed.**

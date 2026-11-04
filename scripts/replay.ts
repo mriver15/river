@@ -27,11 +27,9 @@ let netCalls = 0;
 globalThis.fetch = (() => { netCalls++; throw new Error("network is disabled during replay"); }) as typeof fetch;
 
 const sim = await import("../src/server/sim.ts");
-const { createRuntime, startSystems, humanCommand } = await import("../src/server/runtime.ts");
+const { createRuntime, startSystems } = await import("../src/server/runtime.ts");
+const { ReplayDriver } = await import("../src/server/replay-driver.ts");
 const { commandsFrom, setRecording, setReplaying } = await import("../src/server/recorder.ts");
-const { applyDream } = await import("../src/server/dreams.ts");
-const { resetApply } = await import("../src/server/reset.ts");
-const { beginGeneration } = await import("../src/server/lifecycle.ts");
 setRecording(false); setReplaying(true);
 
 const cmds = commandsFrom(src as any, snap.tick);
@@ -41,27 +39,10 @@ const endTick = Math.max(0, ...liveCps.keys());
 const rt = await createRuntime();
 startSystems(rt);
 sim.setSimPaused(false);
-const drain = () => new Promise<void>((r) => setImmediate(r));
-const pending: Promise<unknown>[] = [];
-const apply = (c: (typeof cmds)[number]) => {
-  if (c.type === "tool" && c.source === "brain") pending.push(rt.agent.execNow(c.payload.name, c.payload.input, undefined, undefined, { status: c.status, result: c.result }, c.payload.ext));
-  else if (c.source === "external" && c.type === "relevance") rt.emotions.resolveRelevance(c.payload);
-  else if (c.source === "external" && c.type === "dream") applyDream(rt.world, c.payload, () => {}, { feelings: () => rt.emotions.describe(), after: () => rt.emotions.afterDream() });
-  else if (c.source === "brain") rt.agent.applyBrain(c.payload);
-  else if (c.source === "human" && c.type === "reset_start") beginGeneration();
-  else if (c.source === "human" && c.type === "reset_apply") resetApply(c.payload, rt);
-  else if (c.source === "human") humanCommand(rt, c.payload);
-};
-
 if (sim.simTick() !== snap.tick) throw new Error(`restored tick ${sim.simTick()} != snapshot tick ${snap.tick}`);
-let ci = 0;
-while (sim.simTick() < endTick) {
-  while (ci < cmds.length && cmds[ci]!.tick <= sim.simTick()) { apply(cmds[ci++]!); await drain(); }   // one at a time: live ran them in sequence
-  if (sim.simPaused()) { if (ci >= cmds.length) break; continue; }      // a frozen world does not tick; the journal says when it thaws
-  sim.runTicks(1);
-  await drain();
-}
-await Promise.race([Promise.allSettled(pending), new Promise((r) => setTimeout(r, 2000))]);
+const driver = new ReplayDriver(rt, cmds, endTick);
+while (await driver.step());
+await driver.settle();
 
 const mine = new DatabaseSync(work, { readOnly: true });
 const replayCps = new Map((mine.prepare("SELECT tick, hash, parts FROM sim_checkpoints WHERE tick > ? ORDER BY tick").all(snap.tick) as any[]).map((r) => [r.tick as number, r]));
@@ -74,6 +55,6 @@ for (const [tick, live] of liveCps) {
 if (process.env.REPLAY_SQL) for (const [name, d] of [["live", src], ["replay", mine]] as const) console.error(name, JSON.stringify((d as any).prepare(process.env.REPLAY_SQL).all()));
 const dump = process.env.REPLAY_DUMP; if (dump) fs.writeFileSync(dump, JSON.stringify([...replayCps.values()].map((r) => ({ tick: r.tick, hash: r.hash, parts: JSON.parse(r.parts) })), null, 1));
 const audit = rt.world.items.audit();
-console.log(JSON.stringify({ itemAudit: audit.slice(0, 5), snapshotTick: snap.tick, endTick, commandsReplayed: ci, checkpoints: liveCps.size, matched, networkAttempts: netCalls, firstDivergence: firstBad }, null, 1));
+console.log(JSON.stringify({ itemAudit: audit.slice(0, 5), snapshotTick: snap.tick, endTick, commandsReplayed: driver.ci, checkpoints: liveCps.size, matched, networkAttempts: netCalls, firstDivergence: firstBad }, null, 1));
 fs.rmSync(dir, { recursive: true, force: true });
 process.exit(firstBad || netCalls || audit.length ? 1 : 0);

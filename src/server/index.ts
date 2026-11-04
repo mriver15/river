@@ -4,11 +4,13 @@ import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import { bus, log, logBefore, recentLog } from "./bus.ts";
 import { createRuntime, startSystems, humanCommand, REPLAYABLE } from "./runtime.ts";
-import { recordCommand, finishCommand, snapshotBoot, admit, recoverCommands } from "./recorder.ts";
+import { recordCommand, finishCommand, snapshotBoot, admit, recoverCommands, commandsFrom, setRecording, setReplaying } from "./recorder.ts";
+import { ReplayDriver } from "./replay-driver.ts";
+import { DatabaseSync } from "node:sqlite";
 import { afterCommit } from "./sim.ts";
 import * as sim from "./sim.ts";
 import { every, STEP_MS, speedForDayMinutes } from "./sim.ts";
-import { kvGet, kvSet } from "./db.ts";
+import { db, kvGet, kvSet } from "./db.ts";
 import { cfg, configView, onConfig, resetConfig, setConfig } from "./config.ts";
 import { search, addMemory, embedPending, embeddingCoverage, setLocator } from "./memory.ts";
 import { GATED, activeDesires, decideRequest, interests, requests, toolInfos } from "./mind.ts";
@@ -30,13 +32,19 @@ import { setupDeath } from "./death.ts";
 import { checkCode, resetRiver } from "./reset.ts";
 import { libraryForUi } from "./music.ts";
 import { recentMoments } from "./moments.ts";
+import { timeline } from "./timeline.ts";
+import { catchUp } from "./advance.ts";
+import { paramHistory, paramSet, RULESET } from "./config.ts";
+import { PRESETS } from "../content/presets.ts";
 import { journalList, startJournal } from "./journal.ts";
 import { plantSeed, startDreams } from "./dreams.ts";
 import type { ClientMsg, ServerMsg } from "../shared/types.ts";
 
 const PORT = Number(process.env.PORT ?? 8787);
-recoverCommands();                                // whatever was running when the last process stopped is not running now
-const snap = snapshotBoot();                      // the state replay restores: taken before anything is constructed
+// A read-only replay (scripts/replay-serve.ts) runs a recorded life from its snapshot, in a copy of the database, and shows it.
+const REPLAY = process.env.RIVER_REPLAY ? (JSON.parse(process.env.RIVER_REPLAY) as { recorded: string; snapTick: number }) : null;
+if (!REPLAY) recoverCommands();                   // whatever was running when the last process stopped is not running now
+const snap = REPLAY ? { tick: sim.simTick(), hash: "replay" } : snapshotBoot();      // the state replay restores: taken before anything is constructed
 const rt = await createRuntime();
 const { world, emotions, agent, ambient, creatures, story, catalog, wildlife, fire } = rt;
 
@@ -62,6 +70,15 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === "/api/items") return json({ items: world.items.all().map((i) => ({ id: i.id, name: i.name, qty: i.qty, loc: i.loc.kind })), audit: world.items.audit() });
   if (url.pathname === "/api/mind") return json(rt.inner.view());                       // the inner life: relationships, beliefs with evidence, observations, and why feelings moved
+  if (url.pathname === "/api/sim") {                                // the simulation panel: where the clock is, what it costs, what an advance did, which parameters are in force
+    const info = sim.simInfo(), last = rt.advancer.last;
+    return json({ ...info, day: world.day(), timeLabel: world.timeLabel(), brainPaused: agent.stats().paused, decisions: agent.decisionState(), advance: { current: rt.advancer.current, last }, catchup: kvGet("catchup", null),
+      perf: sim.simPerf().slice(0, 12), ruleset: RULESET, paramSet: paramSet(), params: paramHistory().slice(0, 8).map((p) => ({ tick: p.tick, hash: p.hash, cause: p.cause })), presets: PRESETS.map(({ id, label, help }) => ({ id, label, help })) });
+  }
+  if (url.pathname === "/api/timeline") {
+    const q = url.searchParams, n = (k: string) => (q.get(k) ? Number(q.get(k)) : undefined);
+    return json(timeline({ actor: q.get("actor") ?? undefined, object: q.get("object") ?? undefined, activity: q.get("activity") ?? undefined, chain: q.get("chain") ?? undefined, source: q.get("source") ?? undefined, fromTick: n("from"), toTick: n("to"), limit: n("limit") }));
+  }
   if (url.pathname === "/api/moments") return json(recentMoments(100));
   if (url.pathname === "/api/log") return json(logBefore(Number(url.searchParams.get("before") ?? 1e12), 200));
   if (fs.existsSync(DIST)) {
@@ -82,13 +99,58 @@ const broadcast = (m: ServerMsg) => afterCommit(() => wss.clients.forEach((c) =>
 const initMsg = (): ServerMsg => ({ t: "init", moments: recentMoments(30), heat: heatCells(), scorch: scorchCells(), seed: world.seed, entities: [...world.entities.values()], agent: world.view(), log: recentLog(300), ...(() => { const { t, ...s } = stateMsg(); return s; })() });
 let resetting = false;
 
+// ---------- read-only replay ----------
+const player = { speed: 4, paused: false, done: false, checked: 0, diverged: 0, tick: 0, startTick: 0, endTick: 0, source: "", lastCheck: 0 };
+const replayMsg = (): ServerMsg => ({ t: "replay", tick: sim.simTick(), startTick: player.startTick, endTick: player.endTick, speed: player.speed, paused: player.paused, done: player.done, checked: player.checked, diverged: player.diverged, source: player.source });
+async function playReplay() {
+  const src = new DatabaseSync(REPLAY!.recorded, { readOnly: true });
+  setRecording(false); setReplaying(true);
+  const cmds = commandsFrom(src as any, REPLAY!.snapTick);
+  const live = new Map((src.prepare("SELECT tick, hash FROM sim_checkpoints WHERE tick > ?").all(REPLAY!.snapTick) as { tick: number; hash: string }[]).map((r) => [r.tick, r.hash]));
+  const driver = new ReplayDriver(rt, cmds, Math.max(0, ...live.keys()));
+  Object.assign(player, { startTick: REPLAY!.snapTick, endTick: driver.endTick, source: path.basename(REPLAY!.recorded), lastCheck: REPLAY!.snapTick });
+  sim.setSimPaused(false);
+  let last = performance.now(), carry = 0, lastSend = 0;
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 25));
+    const now = performance.now(), dt = now - last; last = now;
+    if (!player.paused && !player.done) {
+      carry += (dt / 1000) * player.speed * 10;                                  // ten ticks to a world second
+      const n = Math.min(Math.floor(carry), 400); carry -= n;
+      for (let i = 0; i < n; i++) if (!(await driver.step())) { player.done = true; await driver.settle(); break; }
+      for (const r of db.prepare("SELECT tick, hash FROM sim_checkpoints WHERE tick > ? ORDER BY tick").all(player.lastCheck) as { tick: number; hash: string }[]) {
+        player.lastCheck = r.tick; if (live.has(r.tick)) { player.checked++; if (live.get(r.tick) !== r.hash) player.diverged++; }
+      }
+    }
+    if (now - lastSend > 250) { lastSend = now; broadcast(replayMsg()); }
+  }
+}
+
 wss.on("connection", (ws) => {
-  send(ws, initMsg()); send(ws, { t: "config", config: configView() });
+  send(ws, initMsg()); send(ws, { t: "config", config: configView() }); if (REPLAY) send(ws, replayMsg());
   ws.on("message", (raw) => {
     let m: ClientMsg; try { m = JSON.parse(String(raw)); } catch { return; }
+    if (REPLAY) {                                                    // a replay is only watched: nothing a client sends changes the world
+      if (m.t === "replay_speed") player.speed = Math.max(0.5, Math.min(64, Number(m.speed) || 1));
+      else if (m.t === "replay_pause") player.paused = !!m.paused;
+      else send(ws, { t: "notice", level: "error", text: "This is a replay of a recorded life. It can be watched, not changed." });
+      return;
+    }
     const cid = typeof m.cid === "string" ? m.cid.slice(0, 80) : undefined;
     const ack = (status: "ok" | "error" | "duplicate", result?: string) => { if (cid) afterCommit(() => send(ws, { t: "ack", cid, status, result })); };
-    if (REPLAYABLE.has(m.t)) {
+    if (m.t === "sim_advance" || m.t === "skip_day") {            // moving faster than real time: the same ticks, in batches, with a way to stop
+      if (rt.advancer.current) return void ack("error", "an advance is already running");
+      const until = m.t === "skip_day" || m.until === "dawn" ? { kind: "dawn" as const } : m.until === "minutes" ? { kind: "minutes" as const, minutes: Math.max(0.1, Math.min(24 * 60, Number(m.amount) || 10)) } : { kind: "ticks" as const, ticks: Math.max(1, Math.min(14_400 * 3, Math.floor(Number(m.amount) || 600))) };
+      const seq = recordCommand("external", "advance", { until, decision: m.t === "sim_advance" ? m.decision ?? "stop" : "stop", from: sim.simTick() });
+      ack("ok");
+      void rt.advancer.run({ until, decision: m.t === "sim_advance" ? m.decision ?? "stop" : "stop" }).then((r) => {
+        finishCommand(seq, "ok", `${r.reason} after ${r.ticks} ticks`);
+        const why = r.reason === "target" ? "" : ` (${r.reason === "decision" ? "stopped: a decision is waiting" : r.reason === "death" ? "stopped: River died" : r.reason === "cancelled" ? "cancelled" : r.reason === "budget" ? "stopped at its work limit" : "the world is frozen"})`;
+        log("system", `Advanced ${Math.round(r.summary.simSeconds / 60)} world minutes in ${(r.wallMs / 1000).toFixed(1)} s (${r.ticksPerSec} ticks/s)${why}.`);
+        broadcast({ t: "notice", level: r.reason === "target" || r.reason === "cancelled" ? "ok" : "error", text: `Advanced ${Math.round(r.summary.simSeconds / 60)} world minutes${why}.` });
+      }).catch((e) => { finishCommand(seq, "error", String(e?.message ?? e)); broadcast({ t: "notice", level: "error", text: `Advance failed: ${e?.message ?? e}` }); });
+    } else if (m.t === "sim_cancel") { rt.advancer.cancel(); ack("ok");
+    } else if (REPLAYABLE.has(m.t)) {
       const { cid: _c, ...body } = m, adm = admit("human", m.t, body, cid);
       if (adm.duplicate) return void ack("duplicate", adm.result);       // already done: report the original outcome, do nothing
       const r = humanCommand(rt, m), failed = r.notice?.level === "error";
@@ -149,9 +211,14 @@ bus.on("state", () => { stateTimer ??= setTimeout(() => { stateTimer = null; bro
 setInterval(() => broadcast({ t: "agent", agent: world.view() }), 200);
 setInterval(() => bus.emit("state"), 5000); // needs/stats refresh
 
-server.listen(PORT, () => {
-  console.log(`River world on http://localhost:${PORT}  (dev client: http://localhost:5173)`);
+let lastProgress = 0;
+rt.advancer.onProgress = (p, done) => { const now = Date.now(); if (p && !done && now - lastProgress < 150) return; lastProgress = now; broadcast({ t: "advance", progress: p, ...(done ? { done } : {}) }); };      // a few a second, whatever the speed
+server.listen(PORT, async () => {
+  console.log(`River ${REPLAY ? "replay" : "world"} on http://localhost:${PORT}  (dev client: http://localhost:5173)`);
   startSystems(rt);
+  if (REPLAY) { void playReplay(); return; }
+  const away = await catchUp(rt.advancer);            // an absence, if the human chose to have the world catch up (default: it waits, frozen)
+  if (away) console.log(`Caught up ${away.ticksRun} of ${away.ticksOwed} ticks after ${Math.round(away.absentMs / 60_000)} minutes away.`);
   sim.start();
   agent.run();
   log("system", `Boot snapshot at tick ${snap.tick} (${snap.hash.slice(0, 8)}) for replay.`);
