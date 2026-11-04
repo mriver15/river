@@ -8,11 +8,13 @@ import { INSTRUMENTS, MusicError, analyze, compile, noteName, type ComposeSpec, 
 import type { World } from "./world.ts";
 import { simNow } from "./sim.ts";
 import { gate, secondPass } from "./activities.ts";
+import { capabilitiesOf, defById } from "../content/items.ts";
 
 /** The monolith hums A1 and drops a semitone with each shift; this is the pitch class it is on now. */
 const humPitchClass = (shifts: number) => (((9 - shifts) % 12) + 12) % 12;
 /** Wind instruments aren't handed out. River needs to have found or made something to blow through. */
-const windInstrument = (w: World) => [...w.inventory.values()].find((i) => /flute|pipe|whistle|reed|horn|ocarina/i.test(`${i.name} ${i.kind}`));
+/** Only something that can really be blown across counts, whatever it is called. */
+const windInstrument = (w: World) => w.items.carried().find((i) => capabilitiesOf(defById(i.defId)).includes("sounds") && i.condition.durability > 0);
 
 export interface Saved { id: number; title: string; spec: ComposeSpec; ts: number; plays: number }
 const rowOf = (r: any): Saved => ({ id: r.id, title: r.title, spec: JSON.parse(r.spec), ts: r.ts, plays: r.plays });

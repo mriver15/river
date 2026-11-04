@@ -9,13 +9,12 @@ import type { Worn } from "../shared/types.ts";
 import type { ItemInstance, ItemRegistry } from "./items.ts";
 import { simSleep } from "./sim.ts";
 import { gate } from "./activities.ts";
+import { recipeById, GARMENT_SPECS } from "../content/recipes.ts";
+import { checkRecipe, craftNow } from "./crafting.ts";
 
 type Slot = Worn["slot"];
 /** what each garment is, where it goes on the body, what it takes, and how much cold it keeps off */
-const GARMENTS: Record<string, { slot: Slot; need: number; warm: number }> = {
-  wrap: { slot: "body", need: 3, warm: 0.18 }, cloak: { slot: "body", need: 5, warm: 0.3 }, tunic: { slot: "body", need: 5, warm: 0.26 }, skirt: { slot: "body", need: 3, warm: 0.12 },
-  hat: { slot: "head", need: 2, warm: 0.1 }, band: { slot: "head", need: 1, warm: 0.02 }, sandals: { slot: "feet", need: 3, warm: 0.08 }, scarf: { slot: "neck", need: 2, warm: 0.07 },
-};
+const GARMENTS = GARMENT_SPECS as Record<string, { slot: Slot; need: number; warm: number }>;
 const FIBRE: Record<string, { hex: string; word: string }> = { bark: { hex: "#7a6246", word: "bark" }, moss: { hex: "#5a8a46", word: "moss" }, hide: { hex: "#7a5c3e", word: "hide" } };
 
 /** What River wears is whatever garments are in its body slots: the registry decides, not a separate list. */
@@ -53,38 +52,40 @@ export const CLOTHE_TOOL: ToolDef = {
     if (act === "make") {
       const spec = GARMENTS[String(a.garment ?? "")];
       if (!spec) throw new ToolError(`Choose what to make: ${Object.keys(GARMENTS).join(", ")}.`);
-      const have = [...w.inventory.values()].filter((i) => FIBRE[i.kind]);
+      const recipe = recipeById(`sew_${a.garment}`)!;
+      const have = w.items.carried().filter((i) => w.items.canDo(i.id, "fibre"));
       const holding = have.length ? have.map((i) => `${i.name}×${i.qty}`).join(", ") : "nothing you could sew with";
       const want: Record<string, number> = a.materials ?? {};
       if (!Object.keys(want).length) throw new ToolError(`A ${a.garment} takes about ${spec.need} pieces of bark, moss or hide. You are carrying ${holding}. Say what to use in \`materials\`.`);
-      const used: { it: NonNullable<ReturnType<World["findItem"]>>; n: number }[] = []; let total = 0;
+      const only: string[] = []; let total = 0;
       for (const [ref, nRaw] of Object.entries(want)) {
         const n = Math.max(1, Math.round(Number(nRaw))), it = w.findItem(ref);
         if (!it) throw new ToolError(`You aren't carrying anything called "${ref}". You have ${holding}.`);
-        if (!FIBRE[it.kind]) throw new ToolError(`${it.name} can't be sewn into clothing. Bark, hide and moss can.`);
+        if (!w.items.canDo(it.id, "fibre")) throw new ToolError(`${it.name} can't be sewn into clothing. Bark, hide and moss can.`);
         if (it.qty < n) throw new ToolError(`You only have ${it.qty} ${it.name}.`);
-        used.push({ it, n }); total += n;
+        only.push(it.id); total += n;
       }
       if (total < spec.need) throw new ToolError(`A ${a.garment} needs about ${spec.need} pieces; you offered ${total}.`);
       if (total > Math.ceil(spec.need * 1.5)) throw new ToolError(`That's more than a ${a.garment} could use (${total}). About ${spec.need} will do.`);
-      let hex = FIBRE[used.sort((x, y) => y.n - x.n)[0].it.kind].hex, dyed = "";
       let dye: ReturnType<typeof w.findItem>;
       if (a.colour) {
         dye = w.findItem(String(a.colour));
         if (!dye || dye.kind !== "pigment" || !dye.props?.hex) throw new ToolError(`You aren't holding a pigment called "${a.colour}".`);
-        hex = dye.props.hex; dyed = ` dyed ${dye.name.replace(/ pigment \(.*\)$/, "")}`;
       }
-      gate(w, 3500, `sewing a ${a.garment}`);
-      const made = [...used.map((u) => u.it.id), ...(dye ? [dye.id] : [])];           // what it is made of, recorded before it is spent
-      if (dye) w.takeItem(dye.id, 1);                              // the dye is spent with the rest, once the work is done
-      for (const u of used) w.takeItem(u.it.id, u.n);
+      checkRecipe(w, recipe, only, only);                          // everything checked, nothing touched
+      gate(w, recipe.durationMs, `sewing a ${a.garment}`);
+      // the recipe uses exactly the pieces a garment takes, from what River offered; the dye is spent with them, once the work is done
+      const made = craftNow(w, recipe, only, { only });
+      let hex = made.item.props.hex as string, dyed = "";
+      if (dye) { hex = dye.props!.hex; dyed = ` dyed ${dye.name.replace(/ pigment \(.*\)$/, "")}`; w.takeItem(dye.id, 1); }
+      const mats = [...new Set(made.used.map((u) => (/moss/i.test(u.name) ? "moss" : /hide/i.test(u.name) ? "hide" : "bark")))];
       const name = String(a.name ?? "").trim().slice(0, 40) || `${describeColour(hex)} ${a.garment}`;
-      const mats = used.map((u) => FIBRE[u.it.kind].word);
-      w.addItem("garment", name, `A ${a.garment}${dyed} (${describeColour(hex)}), sewn from ${[...new Set(mats)].join(" and ")}. It goes on your ${spec.slot}.`, 1, { garment: a.garment, slot: spec.slot, hex, warm: spec.warm }, { sources: made, maker: true });
-      w.bump({ mood: 6, curiosity: -4, energy: -3 });
+      w.items.rename(made.item.id, name);
+      w.items.patch(made.item.id, { props: { hex }, desc: `A ${a.garment}${dyed} (${describeColour(hex)}), sewn from ${mats.join(" and ")}. It goes on your ${spec.slot}.`, sources: dye ? [dye.id] : [] });
+      w.bump({ mood: 6, curiosity: -4 });
       bus.emit("made", { name, tags: [String(a.garment), "clothing", ...mats, describeColour(hex)], kind: "garment" });
       log("world", `River made ${name}.`, { perceived: true });
-      return `You work the ${[...new Set(mats)].join(" and ")} until it holds together. You have made "${name}": ${describeColour(hex)}, for your ${spec.slot}. You are carrying it; \`wear\` it when you like.`;
+      return `You work the ${mats.join(" and ")} until it holds together. You have made "${name}": ${describeColour(hex)}, for your ${spec.slot}. You are carrying it; \`wear\` it when you like.${total > spec.need ? ` (It took ${spec.need} pieces; the rest you keep.)` : ""}`;
     }
     if (act === "wear") {
       const it = w.findItem(String(a.name ?? ""));

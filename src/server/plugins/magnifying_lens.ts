@@ -47,13 +47,13 @@ const magnifyingLens: ToolDef = {
     } else if (a.stone) {
       const s = w.findItem(String(a.stone));
       if (!s) throw new ToolError(`You aren't carrying "${a.stone}". Name a stone from your pack.`);
-      if (!(s.kind === "stone" || /stone|flint|quartz/i.test(s.name)))
+      if (s.kind !== "stone")                                     // a stone, whatever someone has named it
         throw new ToolError(`${s.name} won't grind down clear. You need a stone — something hard and fine-grained.`);
       w.setActivity("grinding a stone lens");
       await wait(8000);
-      w.takeItem(s.id, 1);
+      const from = s.id; w.takeItem(s.id, 1);
       w.bump({ energy: -6, mood: -2 });
-      w.addItem("crafted", "ground lens", "A disc of stone ground thin and wet-polished; light bends through its middle and makes small things large.", 1, { lens: true });
+      w.addItem("crafted", "ground lens", "A disc of stone ground thin and wet-polished; light bends through its middle and makes small things large.", 1, { lens: true }, { sources: [from], maker: true });
       lens = w.findItem("ground lens") ?? null;
       out.push(`You grind the ${s.name} flat against a hard rock, thinner and thinner, wetting it with spit until light bends through the middle of it. Your arms ache. You have a lens.`);
     } else {

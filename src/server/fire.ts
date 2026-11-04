@@ -53,12 +53,12 @@ export class Fire {
 
   burningNear(x: number, z: number, r: number) { return [...this.w.entities.values()].filter((e) => isBurning(e) && Math.hypot(e.x - x, e.z - z) <= r); }
 
-  ignite(e: Entity, cause: "river" | "lightning" | "spread"): boolean {
+  ignite(e: Entity, cause: "river" | "lightning" | "spread" | "ember"): boolean {
     const f = flam(e); if (!f || isBurning(e)) return false;
     const wet = this.w.weather === "rain" ? 0.7 : this.w.weather === "storm" ? 0.5 : 1;
     e.props.burning = { since: simNow(), ends: simNow() + f.dur * 1000 * rand(0.8, 1.25) * wet };
     this.w.putEntity(e);
-    if (cause !== "spread") log("world", cause === "river" ? `${this.w.me.name} set the ${e.name} alight.` : `Lightning struck the ${e.name}; it caught fire.`, { id: e.id });
+    if (cause !== "spread") log("world", cause === "river" ? `${this.w.me.name} set the ${e.name} alight.` : cause === "ember" ? `A glowing coal lying against the ${e.name} set it alight.` : `Lightning struck the ${e.name}; it caught fire.`, { id: e.id });
     return true;
   }
 
@@ -75,6 +75,16 @@ export class Fire {
     const w = this.w, now = simNow(); this.tickN++;
     const burning = [...w.entities.values()].filter(isBurning);
     if (this.tickN % 10 === 0) this.regrow();
+    // A very hot thing lying against dry fuel sets it alight: a glowing coal dropped in the grass is a fire waiting to happen.
+    for (const it of w.items.all()) {
+      if (it.loc.kind !== "world" || it.condition.temperatureC < 200) continue;
+      for (const e of w.entities.values()) {
+        if (e.id === it.id || isBurning(e) || e.kind === "campfire" || !flam(e) || Math.hypot(e.x - it.loc.x, e.z - it.loc.z) > 0.9) continue;
+        const dry = e.kind === "item" ? 1 - wetnessOf(e.id) : w.weather === "rain" || w.weather === "storm" ? 0.3 : 1;
+        if (sr() < 0.12 * dry && this.ignite(e, "ember")) this.say(`A glowing coal sets the ${e.name} alight.`, e, 40);
+      }
+    }
+
     if (!burning.length) return;
 
     const wk = WEATHER_SPREAD[w.weather], wet = w.weather === "rain" || w.weather === "storm";

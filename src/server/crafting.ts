@@ -14,11 +14,14 @@ export const candidates = (w: World): Candidate[] =>
   w.items.carried().map((i) => ({ id: i.id, defId: i.defId, qty: i.qty, durability: i.condition.durability, massKg: w.items.unitMass(i) }));
 
 /** Check a recipe against what is held. Changes nothing. Throws what is missing. */
-export function checkRecipe(w: World, r: Recipe, prefer: string[] = []) {
-  const m = matchRecipe(r, candidates(w), prefer);
+export function checkRecipe(w: World, r: Recipe, prefer: string[] = [], only?: string[]) {
+  if (r.place === "fire" && !nearFire(w)) throw new ToolError(`You can't make ${r.name} here: it has to be done beside a fire.`);
+  const m = matchRecipe(r, candidates(w).filter((c) => !only || only.includes(c.id)), prefer);
   if (!m.ok) throw new ToolError(`You can't make ${r.name} yet: ${m.why}.`);
   return m;
 }
+/** Is River standing at a lit fire? */
+export const nearFire = (w: World) => [...w.entities.values()].some((e) => ((e.kind === "campfire" && e.props.lit !== false) || e.props.burning) && Math.hypot(e.x - w.me.x, e.z - w.me.z) < 4);
 
 export interface Made { item: ItemInstance; quality: number; used: { id: string; name: string; qty: number }[] }
 
@@ -26,8 +29,8 @@ export interface Made { item: ItemInstance; quality: number; used: { id: string;
  * Make it. Revalidates, then uses up exactly the consumed parts, wears the tools, and creates the product.
  * Quality comes from the parts' condition and a small seeded variation; a product's stats scale with it.
  */
-export function craftNow(w: World, r: Recipe, prefer: string[] = []): Made {
-  const m = checkRecipe(w, r, prefer);
+export function craftNow(w: World, r: Recipe, prefer: string[] = [], o: { only?: string[]; name?: string; desc?: string } = {}): Made {
+  const m = checkRecipe(w, r, prefer, o.only);
   const sturdiness = m.picks.reduce((s, p) => s + p.item.durability, 0) / m.picks.length;
   const quality = r.qualityFrom === "parts" ? Math.max(0.5, Math.min(1.15, +(0.55 + 0.5 * sturdiness + (sr() - 0.5) * 0.2).toFixed(3))) : 1;
   const parts = new Map<string, number>(), used: Made["used"] = [], sources: string[] = [];
@@ -42,7 +45,8 @@ export function craftNow(w: World, r: Recipe, prefer: string[] = []): Made {
   }
   const stats = r.output.stats ? Object.fromEntries(Object.entries(r.output.stats).map(([k, v]) => [k, +(v * quality).toFixed(2)])) : {};
   const outParts = [...parts].map(([material, mass]) => ({ material, mass: +mass.toFixed(4) }));
-  const item = w.items.add(r.output.kind, r.output.name, r.output.desc, r.output.qty, { ...stats, crafted: true, quality, recipe: r.id }, {
+  const derived = r.derive ? r.derive(m.picks.filter((p) => p.role.consumed).map((p) => ({ defId: p.item.defId, qty: p.qty }))) : {};
+  const item = w.items.add(r.output.kind, o.name ?? r.output.name, o.desc ?? r.output.desc, r.output.qty, { ...stats, ...derived, crafted: true, quality, recipe: r.id }, {
     sources, maker: true, defId: r.output.def, parts: outParts.length ? outParts : undefined, condition: { durability: Math.min(1, +(0.6 + 0.4 * sturdiness).toFixed(3)) }, note: `made by recipe ${r.id}@${r.version}`,
   });
   w.bump({ energy: -r.energy });

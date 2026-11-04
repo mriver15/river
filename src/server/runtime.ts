@@ -16,6 +16,7 @@ import { Story } from "./story.ts";
 import { Catalog } from "./catalog.ts";
 import { bodyApi } from "./body.ts";
 import { Wildlife } from "./wildlife.ts";
+import { weatherStructures } from "./building.ts";
 import { Knowledge } from "./knowledge.ts";
 import { Activities } from "./activities.ts";
 import { setupDeath } from "./death.ts";
@@ -73,6 +74,7 @@ export function startSystems(rt: Runtime) {
   every(5000, () => {
     const t = world.worldTime(), night = t < 0.23 || t > 0.78, wet = world.weather === "storm" ? 1.5 : world.weather === "rain" ? 1 : world.weather === "fog" ? 0.3 : 0;
     const hot = [...world.entities.values()].filter((e) => (e.kind === "campfire" && e.props.lit !== false) || e.props.burning);
+    weatherStructures(world, 5);
     world.items.tickCondition(5, wet, (night ? 8 : 18) - (wet > 0 ? 3 : 0), (x, z) => hot.reduce((h, e) => { const d = Math.hypot(e.x - x, e.z - z); return d < 4 ? Math.max(h, 1 - d / 4) : h; }, 0));
   }, "items");
   ambient.start();

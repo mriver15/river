@@ -47,6 +47,9 @@ export interface ItemInstance {
 
 export class ItemError extends Error {}
 
+/** Things made before they had definitions keep what they were: a sharpened stick, a flute someone carved. */
+const legacyDef = (kind: string, name: string): string | undefined =>
+  kind === "weapon" && /sharpened/i.test(name) ? "sharpened_stick" : /flute|pipe|whistle|ocarina/i.test(name) && (kind === "crafted" || kind === "flute") ? "flute" : undefined;
 const hash32 = (s: string) => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
 const bucket = (v: number) => Math.min(3, Math.floor(v * 4));            // condition buckets: items in different ones do not share a stack
 
@@ -92,7 +95,7 @@ export class ItemRegistry {
     const legacy = db.prepare("SELECT id, kind, name, desc, qty, props FROM inventory").all() as any[];
     for (const r of legacy) if (!this.items.has(r.id)) {
       const props = r.props ? JSON.parse(r.props) : {};
-      this.make({ id: r.id, defId: r.kind === "weapon" && /sharpened/i.test(r.name) ? "sharpened_stick" : undefined, kind: r.kind, name: r.name, desc: r.desc, qty: r.qty, props, loc: { kind: "inventory" }, provenance: { createdAtTick: simTick(), sourceIds: [], unknown: true, note: "from before items were tracked" } }, "adopted");
+      this.make({ id: r.id, defId: legacyDef(r.kind, r.name), kind: r.kind, name: r.name, desc: r.desc, qty: r.qty, props, loc: { kind: "inventory" }, provenance: { createdAtTick: simTick(), sourceIds: [], unknown: true, note: "from before items were tracked" } }, "adopted");
     }
     if (legacy.length) db.exec("DELETE FROM inventory");
     for (const e of this.w.entities.values()) if (e.kind === "item" && !this.items.has(e.id)) this.adoptEntity(e);
@@ -240,6 +243,16 @@ export class ItemRegistry {
     return child;
   }
 
+  /** Change what an item says or carries (a garment dyed, say). Never its definition: what it can do does not change. */
+  patch(id: string, p: { props?: Record<string, any>; desc?: string; sources?: string[] }) {
+    const i = this.items.get(id); if (!i) return;
+    if (p.props) i.props = { ...i.props, ...p.props };
+    if (p.props?.hex) i.visual.parameters = { ...i.visual.parameters, hex: p.props.hex };
+    if (p.desc !== undefined) i.desc = p.desc;
+    for (const s of p.sources ?? []) if (!i.provenance.sourceIds.includes(s) && i.provenance.sourceIds.length < 8) i.provenance.sourceIds.push(s);
+    this.save(i); this.log(id, "changed", { keys: Object.keys(p.props ?? {}) }); this.refreshView();
+  }
+
   /** Wear or hold something in a body slot; what was there goes back to River's hands. */
   equip(id: string, slot: string): ItemInstance {
     const i = this.items.get(id);
@@ -311,6 +324,12 @@ export class ItemRegistry {
   /** An item entity moved (an animal dropped it, a push): keep the instance's place in step. */
   entityMoved(e: Entity) { const i = this.items.get(e.id); if (i && i.loc.kind === "world") i.loc = { kind: "world", x: e.x, z: e.z }; }
 
+  /** Something that comes loose lands on the ground as its own thing (what falls from a collapsed structure, say). */
+  spawnLoose(o: { kind: string; name: string; desc: string; qty: number; x: number; z: number; note?: string }): ItemInstance {
+    const i = this.make({ kind: o.kind, name: o.name, desc: o.desc, qty: o.qty, loc: { kind: "world", x: o.x, z: o.z }, provenance: { sourceIds: [], note: o.note } });
+    this.toWorld(i, o.x, o.z); return i;
+  }
+
   // ---------- burning ----------
   /**
    * An item on the ground burns. It is consumed, and anything that was made of fuel leaves a little ash, never more than a fifth of
@@ -347,6 +366,10 @@ export class ItemRegistry {
       materials: i.parts, massKg: this.massOf(i), dims: def.dims, capabilities: usable ? capabilitiesOf(def) : [], provenance: i.provenance, lineage: i.lineage, visual: i.visual, named: !!i.named,
       contents: this.contents(i.id).map((c) => ({ id: c.id, name: c.name, qty: c.qty })) };
   }
+  /** Can this carried thing do that, given what it is made of and the state it is in? */
+  canDo(id: string, capability: string): boolean {
+    const i = this.items.get(id); return !!i && i.condition.durability > 0 && capabilitiesOf(defById(i.defId)).includes(capability);
+  }
   /** Rebuild what River's code sees as its inventory. */
   project(i: ItemInstance, qty = i.qty): InventoryItem {
     const props = { ...i.props, ...(i.condition.durability < 0.95 ? { durability: +i.condition.durability.toFixed(2) } : {}), ...(i.condition.wetness > 0.2 ? { wet: +i.condition.wetness.toFixed(2) } : {}) };
@@ -370,7 +393,7 @@ export class ItemRegistry {
       const exposure = i.loc.kind === "world" ? 1 : 0.35, c = i.condition;
       const wetness = +Math.max(0, Math.min(1, c.wetness + (wet > 0 ? wet * exposure * 0.01 : -0.004) * dtSec)).toFixed(4);
       const heat = heatAt(i.loc.kind === "world" ? i.loc.x : me.x, i.loc.kind === "world" ? i.loc.z : me.z);
-      const target = ambientC + heat * (70 - ambientC), keeps = MATERIALS[i.parts[0]?.material ?? "inert"]?.retention ?? 0.3;
+      const target = Math.max(ambientC + heat * (70 - ambientC), i.props.coal ? 320 : -Infinity), keeps = MATERIALS[i.parts[0]?.material ?? "inert"]?.retention ?? 0.3;
       const rate = target > c.temperatureC ? 0.04 : 0.004 + 0.06 * (1 - keeps);                       // warms at one pace, cools at another that depends on what it is
       const temperatureC = +(c.temperatureC + (target - c.temperatureC) * Math.min(1, rate * dtSec)).toFixed(3);
       if (wetness !== c.wetness || temperatureC !== c.temperatureC) { c.wetness = wetness; c.temperatureC = temperatureC; this.save(i); }     // written when it changes, like all state
@@ -379,7 +402,7 @@ export class ItemRegistry {
   /** Warmth per second from hot things River is carrying or wearing, for the body to feel. Capped: a stone is not a fire. */
   carriedHeat(): number {
     let h = 0;
-    for (const i of this.items.values()) if ((i.loc.kind === "inventory" || i.loc.kind === "equipped") && i.condition.temperatureC > 35) h += ((i.condition.temperatureC - 35) / 35) * Math.min(1, this.unitMass(i) * i.qty) * 0.06;
+    for (const i of this.items.values()) if ((i.loc.kind === "inventory" || i.loc.kind === "equipped") && i.condition.temperatureC > 35) h += ((i.condition.temperatureC - 35) / 35) * Math.min(1, this.unitMass(i) * i.qty) * 0.06 * (i.props.coal ? 0.25 : 1);   // a coal in a curl of bark is mostly insulated
     return Math.min(0.12, h);
   }
   wear(id: string, amount: number) {

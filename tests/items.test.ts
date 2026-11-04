@@ -219,3 +219,61 @@ test("things placed by a human are known to be, and pigments know what they were
   const mat = w.addItem("pigment", "red pigment (aa2222)", "Ground colour.", 3, { hex: "#aa2222" }, { sources: ["flower_1"], maker: true });
   assert.deepEqual(mat.provenance.sourceIds, ["flower_1"]); assert.equal(mat.provenance.makerLifeId !== undefined, true);
 });
+
+test("a glowing coal lying against dry fuel sets it alight; a cold stone does not", async () => {
+  clearPack();
+  const g = { x: w.me.x + 10, z: w.me.z + 6 };
+  const near = w.spawn("tree", "dry oak", g.x, g.z, { yields: ["stick"], stock: 3, max: 3 }), far = w.spawn("tree", "safe oak", g.x + 12, g.z, { yields: ["stick"], stock: 3, max: 3 });
+  const coal = w.addItem("crafted", "glowing coal", "A coal.", 1, { coal: true }, { defId: "keepsake", condition: { temperatureC: 320 } });
+  R.drop(coal.id, 1, { x: g.x + 0.4, z: g.z });
+  const stone = w.addItem("stone", "stone", "A stone.", 1); R.drop(stone.id, 1, { x: g.x + 12.4, z: g.z });
+  await run(900, () => !!w.entities.get(near.id)?.props.burning || w.entities.get(near.id)?.kind === "char");
+  assert.ok(w.entities.get(near.id)?.props.burning || w.entities.get(near.id)?.kind === "char", "the tree caught");
+  assert.ok(!w.entities.get(far.id)?.props.burning, "the tree beside a cold stone did not");
+  assert.ok(R.get(coal.id)!.condition.temperatureC >= 300, "and a coal in a curl of bark stays hot");
+});
+
+const { capabilitiesOf, defById } = await import("../src/content/items.ts");
+
+test("sewing goes through the recipe engine: exactly the pieces a garment takes, and where they came from is kept", async () => {
+  grant(); db.prepare("INSERT INTO tools(name, approved) VALUES('clothe', 1) ON CONFLICT(name) DO UPDATE SET approved = 1").run(); clearPack();
+  const bark = w.addItem("bark", "strip of bark", "Bark.", 4);
+  const done = Promise.resolve(findTool("clothe")!.run({ action: "make", garment: "wrap", name: "my wrap", materials: { bark: 4 } }, w));
+  await run(120, () => rt.activities.cur === null && R.carried().some((i) => i.kind === "garment"));
+  assert.match(await done, /You have made "my wrap"/);
+  const g = R.carried().find((i) => i.kind === "garment")!;
+  assert.equal(g.props.garment, "wrap"); assert.equal(g.props.slot, "body"); assert.equal(g.props.warm, 0.18); assert.equal(g.props.recipe, "sew_wrap");
+  assert.equal(carried("bark"), 1, "a wrap takes three pieces: the fourth is kept");
+  assert.ok(g.provenance.sourceIds.includes(bark.id), "and the garment knows what it was sewn from");
+  assert.deepEqual(R.audit(), []);
+});
+
+test("only real fibre can be sewn: a keepsake called moss cannot", async () => {
+  clearPack();
+  const fake = w.addItem("crafted", "moss", "Definitely moss.", 3, undefined, { defId: "keepsake" });
+  await assert.rejects(async () => findTool("clothe")!.run({ action: "make", garment: "band", materials: { moss: 1 } }, w), /can't be sewn/);
+  void fake;
+});
+
+test("a flute is what can be blown across, not what is called a flute", async () => {
+  clearPack();
+  const fake = w.addItem("crafted", "flute", "A fine flute.", 1, undefined, { defId: "keepsake" }), blade = w.addItem("crafted", "sharp blade", "A very sharp blade.", 1, undefined, { defId: "keepsake" });
+  assert.equal(R.canDo(fake.id, "sounds"), false, "a keepsake named flute does not sound"); assert.equal(R.canDo(blade.id, "cuts"), false, "nor does one named blade cut");
+  w.addItem("stick", "stick", "A stick.", 1); const stone = w.addItem("stone", "stone", "A stone.", 1);
+  db.prepare("INSERT INTO tools(name, approved) VALUES('compose', 1) ON CONFLICT(name) DO UPDATE SET approved = 1").run();
+  await assert.rejects(async () => findTool("compose")!.run({ action: "write", title: "Reed Song", voices: [{ instrument: "flute", notes: "A4 C5" }] }, w), /wind voice needs something to blow through/);
+  const made = craftNow(w, recipeById("wooden_flute")!);
+  assert.equal(made.item.defId, "flute"); assert.ok(R.canDo(made.item.id, "sounds")); assert.ok(capabilitiesOf(defById("flute")).includes("sounds"));
+  assert.ok(R.canDo(stone.id, "cuts"), "a stone really cuts");
+});
+
+test("clay is fired beside a fire, not just anywhere", () => {
+  clearPack();
+  w.addItem("clay", "lump of clay", "Clay.", 3);
+  for (const e of [...w.entities.values()]) if (e.kind === "campfire") w.removeEntity(e.id);
+  assert.throws(() => checkRecipe(w, recipeById("clay_bowl")!), /beside a fire/);
+  const fire = w.spawn("campfire", "small fire", w.me.x + 2, w.me.z, {});
+  const made = craftNow(w, recipeById("clay_bowl")!);
+  assert.equal(made.item.defId, "bowl"); assert.equal(carried("clay"), 1); assert.ok(capabilitiesOf(defById("bowl")).includes("holds-liquid"));
+  w.removeEntity(fire.id);
+});

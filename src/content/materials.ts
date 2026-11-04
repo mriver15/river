@@ -55,6 +55,8 @@ export function deriveCapabilities(parts: Part[], tags: string[], dims: { l: num
   if (has("pointed")) caps.add("pierces");
   if (has("edge") && hard) caps.add("cuts");
   if (has("strip") && mats.some((m) => m.flexible)) caps.add("binds");
+  if (has("hollow") && has("wind") && mats.some((m) => m.id === "wood")) caps.add("sounds");        // a hollow wooden pipe can be blown across
+  if (mats.some((m) => m.flexible)) caps.add("fibre");                                                  // can be worked into cloth, cord or weave
   if (has("hollow") && mats.some((m) => m.traits.some((t) => t.startsWith("holds-liquid") || t === "waterproof") || m.id === "clay")) caps.add("holds-liquid");
   if (has("flat") && mats.some((m) => m.flexible)) caps.add("covers");
   if (extra.container) caps.add("holds");

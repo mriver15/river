@@ -24,7 +24,21 @@ export interface Recipe {
   limits?: { massKg: number; connections: number };
   /** how much of the output depends on the parts' condition (0 = not at all) */
   qualityFrom: "parts" | "none";
+  /** where it has to be done: beside a fire, say (clay is fired, not just shaped) */
+  place?: "fire";
+  /** made through another tool (clothes are sewn with `clothe`, not `craft`) */
+  via?: string;
+  /** properties of the product that follow from the parts used (a garment takes the colour of what it is sewn from) */
+  derive?: (parts: { defId: string; qty: number }[]) => Record<string, unknown>;
 }
+
+/** what each garment is, where it goes on the body, how many pieces of fibre it takes, and how much cold it keeps off */
+export const GARMENT_SPECS: Record<string, { slot: string; need: number; warm: number }> = {
+  wrap: { slot: "body", need: 3, warm: 0.18 }, cloak: { slot: "body", need: 5, warm: 0.3 }, tunic: { slot: "body", need: 5, warm: 0.26 }, skirt: { slot: "body", need: 3, warm: 0.12 },
+  hat: { slot: "head", need: 2, warm: 0.1 }, band: { slot: "head", need: 1, warm: 0.02 }, sandals: { slot: "feet", need: 3, warm: 0.08 }, scarf: { slot: "neck", need: 2, warm: 0.07 },
+};
+/** the colour of the fibres themselves */
+const FIBRE_HEX: Record<string, string> = { bark: "#7a6246", moss: "#5a8a46", hide: "#7a5c3e" };
 
 export const RECIPES: Recipe[] = [
   { id: "sharpen_stick", version: "1", name: "sharpened stick", summary: "Scrape a slender wooden rod to a point with something hard that has an edge.", durationMs: 4000, energy: 3, qualityFrom: "parts",
@@ -43,10 +57,27 @@ export const RECIPES: Recipe[] = [
   { id: "hide_pouch", version: "1", name: "hide pouch", summary: "Stitch a hide closed around a drawstring of cord to make a small pouch.", durationMs: 6000, energy: 3, qualityFrom: "none",
     roles: [{ role: "skin", needs: [], def: "hide", qty: 1, consumed: true }, { role: "drawstring", needs: [], def: "cord", qty: 1, consumed: true }],
     output: { def: "pouch", qty: 1, name: "hide pouch", desc: "A small pouch of hide with a drawstring. It holds a kilo or so of small things.", kind: "pouch" } },
+  { id: "wooden_flute", version: "1", name: "wooden flute", summary: "Carve a slender wooden rod hollow and cut finger holes, with something that has an edge.", durationMs: 9000, energy: 4, qualityFrom: "parts",
+    roles: [{ role: "pipe", needs: ["shaft"], qty: 1, consumed: true }, { role: "carver", needs: ["cuts"], qty: 1, consumed: false }],
+    output: { def: "flute", qty: 1, name: "wooden flute", desc: "A length of wood hollowed out and pierced for the fingers. Breath across it makes a note.", kind: "flute" } },
+  { id: "clay_bowl", version: "1", name: "fired clay bowl", summary: "Shape clay into a bowl and fire it beside a fire, so it keeps its shape.", durationMs: 10000, energy: 3, qualityFrom: "none", place: "fire",
+    roles: [{ role: "clay", needs: ["moldable"], qty: 2, consumed: true }],
+    output: { def: "bowl", qty: 1, name: "fired clay bowl", desc: "A small bowl of fired clay. It holds a little, and it is heavy.", kind: "bowl" } },
+  ...Object.entries(GARMENT_SPECS).map(([g, sp]): Recipe => ({
+    id: `sew_${g}`, via: "clothe", version: "1", name: g, summary: `Sew a ${g} (for the ${sp.slot}) from bark, moss or hide: about ${sp.need} pieces.`, durationMs: 3500, energy: 3, qualityFrom: "none",
+    roles: [{ role: "fibre", needs: ["fibre"], qty: sp.need, consumed: true }],
+    output: { def: "garment", qty: 1, name: g, desc: `A ${g}, sewn from fibre. It goes on your ${sp.slot}.`, kind: "garment", stats: {} },
+    derive: (parts) => {
+      const top = [...parts].sort((a, b) => b.qty - a.qty)[0]?.defId ?? "bark";
+      return { garment: g, slot: sp.slot, warm: sp.warm, hex: FIBRE_HEX[top] ?? "#7a6246" };
+    },
+  })),
 ];
 
 export const recipeById = (id: string) => RECIPES.find((r) => r.id === id);
-export const recipeByName = (q: string) => { const s = q.toLowerCase().trim(); return RECIPES.find((r) => r.id === s || r.name.toLowerCase() === s) ?? RECIPES.find((r) => r.name.toLowerCase().includes(s) || r.id.includes(s.replace(/\s+/g, "_"))); };
+/** what `craft` offers: everything not made through some other tool */
+export const craftable = () => RECIPES.filter((r) => !r.via);
+export const recipeByName = (q: string) => { const s = q.toLowerCase().trim(); return craftable().find((r) => r.id === s || r.name.toLowerCase() === s) ?? craftable().find((r) => r.name.toLowerCase().includes(s) || r.id.includes(s.replace(/\s+/g, "_"))); };
 
 /** The part of an item a recipe needs to see. */
 export interface Candidate { id: string; defId: string; qty: number; durability: number; massKg: number }

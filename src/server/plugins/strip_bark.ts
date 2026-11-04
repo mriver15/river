@@ -40,7 +40,7 @@ const stripBark: ToolDef = {
     if (a.with) {
       tool = w.findItem(String(a.with));
       if (!tool) throw new ToolError(`You aren't carrying anything called "${a.with}".`);
-      if (!(tool.kind === "stone" || SHARP.test(tool.name) || SHARP.test(tool.desc ?? "")))
+      if (!w.items.canDo(tool.id, "cuts"))                        // what it can do, not what it is called
         throw new ToolError(`${tool.name} won't bite into bark. Use a sharp stone or a blade — or your hands.`);
     }
 
@@ -67,7 +67,8 @@ const stripBark: ToolDef = {
           ? `A palm-wide ribbon of ${base} bark, damp and green-white inside. Soaked soft and twisted against its own twist, it would twist into cord.`
           : `A short, torn ribbon of ${base} bark, ragged at the edges. Too short for rope, but the fibres are sound.`,
         1,
-        { fibre: "bark", wood: base, length: long ? 60 : 25, wet: true }
+        { fibre: "bark", wood: base, length: long ? 60 : 25, wet: true },
+        { sources: [tree.id], maker: true, note: `stripped from the ${tree.name}` }
       );
       got++;
     }

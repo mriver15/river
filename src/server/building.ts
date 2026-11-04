@@ -99,12 +99,12 @@ const darker = (hex: string, f = 0.65) => { const c = hexToRgb(hex); return rgbT
 export const BUILD_TOOL: ToolDef = {
   name: "build",
   description:
-    "Make something in the world with your hands. `raise`: build it (hut, lean-to, bench, cairn, tower, platform, wall, fence, or bridge). `plan`: ask what a build would take. `paint`: change the colours of something you built. `take_down`: dismantle something you built and get most of the materials back (more from something unfinished, less from something finished, and from something burnt only what the fire left). Building happens in three stages and the materials are used up stage by stage: if you are stopped, what you have built stands unfinished, holding what you put in, and `continue` (with its id as `target`) finishes it when you hold the rest. " +
+    "Make something in the world with your hands. `raise`: build it (hut, lean-to, bench, cairn, tower, platform, wall, fence, or bridge). `plan`: ask what a build would take. `paint`: change the colours of something you built. `take_down`: dismantle something you built and get most of the materials back (more from something unfinished, less from something finished, and from something burnt only what the fire left). Building happens in three stages and the materials are used up stage by stage: if you are stopped, what you have built stands unfinished, holding what you put in, and `continue` (with its id as `target`) finishes it when you hold the rest. Wooden structures weather in rain and storms; `repair` them with sticks or planks before they fall. " +
     "YOU choose the shape, the size (small, medium or large), the materials, the colours and the spot. Where: `where` can be coordinates, something to build beside (with a direction and a distance), or a direction and distance from you; leave it out to build just in front of you. Walls, fences and bridges need both ends (`where` and `to`). " +
     "You must be within about ten paces of where you build. Ground must be level and clear; bridges must cross water, from firm ground to firm ground, and people can walk across them. A closed hut or a lean-to keeps off some of the weather. " +
     "Materials are things you carry: sticks, stones, clay, chalk and driftwood planks give structure (a plank is worth two); moss makes a roof. Say how many of each in `materials`. Without colours, a thing shows the colour of what it is made of; with pigment, you choose.",
   input_schema: obj({
-    action: { type: "string", enum: ["raise", "plan", "paint", "take_down", "continue"], description: "raise (default), plan, paint, take_down, or continue an unfinished build" },
+    action: { type: "string", enum: ["raise", "plan", "paint", "take_down", "continue", "repair"], description: "raise (default), plan, paint, take_down, continue an unfinished build, or repair a weathered one" },
     shape: { type: "string", enum: Object.keys(SHAPES), description: "What to build" },
     name: str("Your name for this particular thing"), description: str("What it is for, or how it feels. Optional."),
     size: { type: "string", enum: ["small", "medium", "large"], description: "Default small" },
@@ -119,6 +119,7 @@ export const BUILD_TOOL: ToolDef = {
     if (act === "paint") return paintIt(a, w);
     if (act === "take_down") return takeDown(a, w);
     if (act === "continue") return continueBuild(a, w);
+    if (act === "repair") return repairIt(a, w);
     const shapeName = String(a.shape ?? "") as Shape, spec = SHAPES[shapeName];
     if (!spec) throw new ToolError(`Choose a shape: ${Object.keys(SHAPES).join(", ")}.`);
     const size = (a.size && a.size in SIZE ? a.size : "small") as keyof typeof SIZE, s = SIZE[size];
@@ -296,6 +297,57 @@ function paintIt(a: any, w: World): string {
   bus.emit("made", { name: e.name, tags: [e.props.shape, ...changes.map((c) => c[2]), ...changes.map((c) => describeColour(c[1]))], kind: "paint" });
   return `You colour ${e.name}: ${changes.map(([p, , n]) => `${p} ${n}`).join(", ")}. Now it is ${e.props.look}.`;
 }
+// ---------- wear ----------
+/** Per second, in rain and storms, how fast a structure's materials give way. Stone and chalk do not; clay a little; wood the most. */
+const WEATHERING: Record<string, number> = { clear: 0, cloudy: 0, windy: 0, fog: 0.00004, rain: 0.00012, storm: 0.0003 };
+const SOFTNESS: Record<string, number> = { stick: 1, plank: 1, clay: 0.3 };
+export const integrityOf = (e: Entity) => Math.max(0, Math.min(1, e.props.integrity ?? 1));
+/** Called every few seconds of world time. Wet weather wears wooden structures; one worn through falls down into part of what it was. */
+export function weatherStructures(w: World, dtSec: number) {
+  const rate = WEATHERING[w.weather] ?? 0; if (rate <= 0) return;
+  for (const e of [...w.entities.values()]) {
+    if (e.kind !== "structure" || !e.props.shape) continue;
+    const kinds = Object.values((e.props.materialKinds ?? {}) as Record<string, string>), mats = e.props.materials as Record<string, number> | undefined;
+    const units = Object.entries(mats ?? {}).reduce((s, [name, n]) => s + n * (SOFTNESS[(e.props.materialKinds ?? {})[name]] ?? 0), 0), total = Object.values(mats ?? {}).reduce((s, n) => s + n, 0) || 1;
+    if (!kinds.length || units <= 0) continue;
+    const next = +(integrityOf(e) - rate * dtSec * (units / total)).toFixed(4);
+    if (next <= 0) { collapse(w, e); continue; }
+    if (next !== integrityOf(e)) { e.props.integrity = next; w.putEntity(e); }              // written whenever it changes, or small steps would never add up
+  }
+}
+/** A structure worn through. A part of what it was made of lies where it stood: never more than 40%, and never the pigment. */
+function collapse(w: World, e: Entity) {
+  const mats = (e.props.materials ?? {}) as Record<string, number>, kinds = (e.props.materialKinds ?? {}) as Record<string, string>;
+  w.removeEntity(e.id);
+  let k = 0;
+  for (const [name, n] of Object.entries(mats)) {
+    const q = Math.floor(n * 0.4), kind = kinds[name]; if (q < 1 || !kind) continue;
+    const a = (k++ / Math.max(1, Object.keys(mats).length)) * Math.PI * 2;
+    w.items.spawnLoose({ kind, name, desc: `${name}, from ${e.name}.`, qty: q, x: e.x + Math.cos(a) * 1.2, z: e.z + Math.sin(a) * 1.2, note: `fell from ${e.name}` });
+  }
+  log("world", `${e.name} has fallen down, worn through by the weather.`, { perceived: Math.hypot(e.x - w.me.x, e.z - w.me.z) < 40 });
+  bus.emit("loss", { name: e.name, kind: "structure", x: e.x, z: e.z, named: true });
+}
+/** Mend a weathered structure with sticks or planks: each unit worth 0.12 of its soundness. */
+function repairIt(a: any, w: World): string {
+  const e = mine(w, String(a.target ?? "")), have = integrityOf(e);
+  if (have >= 0.98) throw new ToolError(`${e.name} is sound; there is nothing to mend.`);
+  const want: Record<string, number> = Array.isArray(a.materials) ? Object.fromEntries(a.materials.map((m: string) => [m, 1])) : (a.materials ?? {});
+  if (!Object.keys(want).length) throw new ToolError(`Say what to mend it with in \`materials\`: sticks or driftwood planks.`);
+  let gain = 0; const used: { id: string; n: number; name: string }[] = [];
+  for (const [ref, nRaw] of Object.entries(want)) {
+    const n = Math.floor(Number(nRaw)), it = w.findItem(ref);
+    if (!it || !(n >= 1)) throw new ToolError(`You aren't carrying "${ref}".`);
+    if (it.qty < n) throw new ToolError(`You only have ${it.qty} of ${it.name}.`);
+    if (it.kind !== "stick" && it.kind !== "plank") throw new ToolError(`${it.name} won't mend a weathered ${e.props.shape}. Sticks and planks will.`);
+    gain += 0.12 * n * (MATERIAL[it.kind]?.units ?? 1); used.push({ id: it.id, n, name: it.name });
+  }
+  const wasted = have + gain > 1.12 ? "That is more than it needed. " : "";
+  for (const u of used) w.takeItem(u.id, u.n);
+  e.props.integrity = Math.min(1, +(have + gain).toFixed(4)); w.putEntity(e); w.bump({ energy: -2, mood: 2 });
+  return `${wasted}You work ${used.map((u) => `${u.n} ${u.name}`).join(" and ")} into ${e.name}. It is ${e.props.integrity >= 0.95 ? "sound again" : `firmer now (${Math.round(e.props.integrity * 100)}%)`}.`;
+}
+
 /**
  * Taking something apart returns part of what is actually there: 85% of the work in an unfinished structure (it was never fixed
  * together), 60% of a finished one, and from one that burnt, the stone and clay that survived at 60% plus a little ash for the wood.
@@ -305,7 +357,7 @@ function takeDown(a: any, w: World): string {
   const e = mine(w, String(a.target ?? ""), true); w.setActivity("taking something down");
   const burnt = e.kind === "char", unfinished = !!e.props.unfinished;
   const mats = (burnt ? e.props.wasMaterials : e.props.materials ?? {}) as Record<string, number>, kinds = (burnt ? e.props.wasKinds : e.props.materialKinds ?? {}) as Record<string, string>;
-  const share = unfinished ? 0.85 : 0.6, back: string[] = [];
+  const share = (unfinished ? 0.85 : 0.6) * Math.max(0, Math.min(1, e.props.integrity ?? 1)), back: string[] = [];          // a weathered structure has less left in it
   let lostFuelKg = 0;
   for (const [name, n] of Object.entries(mats)) {
     const kind = kinds[name]; if (!kind || !(n >= 1)) continue;

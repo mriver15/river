@@ -45,7 +45,7 @@ const dig: ToolDef = {
     } else if (depth < 3) out.push("Just leaf litter and dark soil so far. Digging deeper would show more.");
     if (rand() < (tool ? 0.55 : 0.25)) {
       const f = pickWeighted();
-      w.addItem(f.kind, f.name, f.desc);
+      w.addItem(f.kind, f.name, f.desc, 1, undefined, { note: "dug out of the ground" });
       out.push(`You unearth: ${f.name}.`);
     }
     return out.join("\n");

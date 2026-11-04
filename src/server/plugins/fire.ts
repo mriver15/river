@@ -111,7 +111,7 @@ const fire: ToolDef = {
       await wait(2500);
       (fireEnt.props ??= {}).fuel = fuel - 2;
       w.putEntity(fireEnt);
-      w.addItem("crafted", "glowing coal", "An ember from River's fire, nested in a curl of bark. It glows steadily and will light a new fire without a stone.", 1, { coal: true }, { maker: true, condition: { temperatureC: 120 }, note: "an ember drawn from a fire" });
+      w.addItem("crafted", "glowing coal", "An ember from River's fire, nested in a curl of bark. It glows steadily and will light a new fire without a stone.", 1, { coal: true }, { maker: true, condition: { temperatureC: 320 }, note: "an ember drawn from a fire" });
       w.bump({ energy: -1, curiosity: 2 });
       return `You coax a coal out onto a curl of bark and cup it. It glows stubborn and orange in your hands — carry it carefully and it will light a hearth wherever you stop. (${fireEnt.id}, fuel ${fuel - 2}/${FUEL_MAX}.)`;
     }

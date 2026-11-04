@@ -35,7 +35,7 @@ const pitchRods: ToolDef = {
       w.setActivity("cutting and tuning pitch rods");
       await wait(7000);
       w.bump({ energy: -5, mood: 3, curiosity: -2 });
-      w.addItem("crafted", RODS, "Four seasoned rods filed with twelve sliding marks apiece, and a hard striker. Between them, one octave step by step.", 1, { pitch: true });
+      w.addItem("crafted", RODS, "Four seasoned rods filed with twelve sliding marks apiece, and a hard striker. Between them, one octave step by step.", 1, { pitch: true }, { maker: true });
       return `You cut four straight lengths from the sticks, file each with twelve marks, and tap them against the ${strikerName} until they ring clean. Four rods, one octave, held in two hands. Ring them beside a monolith and the hum becomes a number you can name.`;
     }
     rods = w.findItem(RODS);

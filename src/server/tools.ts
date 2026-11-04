@@ -25,7 +25,7 @@ import { ToolError, obj, num, str, type ToolDef } from "./toolkit.ts";
 import { simNow, simRng } from "./sim.ts";
 import { available, takeLoose, takeOneUnit } from "./gathering.ts";
 import { activitiesOf, runActivity, gate, timed } from "./activities.ts";
-import { RECIPES, recipeByName } from "../content/recipes.ts";
+import { craftable, recipeByName } from "../content/recipes.ts";
 import { checkRecipe, craftNow, describeRecipe } from "./crafting.ts";
 const sr = simRng("tools");
 export { ToolError, type ToolDef };
@@ -137,7 +137,7 @@ export const BASE_TOOLS: ToolDef[] = [
       if (!w.inReach(e)) throw new ToolError(`${e.name} is ${w.dist(e).toFixed(0)}m away. move_to it first.`);
       w.bump({ curiosity: e.props.text ? -10 : -4 });
       if (e.props.beat) ((w as any).story as Story)?.found(e.props.beat);
-      const extra = (e.props.yields ? ` Stock: ${e.props.stock}.` : "") + (e.kind === "animal" ? ((w as any).creatures as Creatures)?.describe(e) ?? "" : "");
+      const extra = (e.props.integrity !== undefined && e.props.integrity < 0.95 ? ` It is ${e.props.integrity < 0.3 ? "close to falling down" : e.props.integrity < 0.65 ? "weathered and loose" : "a little weathered"} (${Math.round(e.props.integrity * 100)}% sound).` : "") + (e.props.yields ? ` Stock: ${e.props.stock}.` : "") + (e.kind === "animal" ? ((w as any).creatures as Creatures)?.describe(e) ?? "" : "");
       return `${e.name}: ${e.props.desc ?? "Nothing special."}${extra}${e.props.text ? `\nYou read: "${e.props.text}"` : ""}`;
     },
   },
@@ -355,10 +355,10 @@ export const GATED_TOOLS: ToolDef[] = [
     }),
     run: (a, w) => {
       const q = String(a.recipe ?? "").trim();
-      if (q.toLowerCase() === "list") return `What you know how to make:\n${RECIPES.map(describeRecipe).join("\n")}\nOr combine up to 3 things into a keepsake: it can be whatever you say it is, but it will not do anything a pile of those things could not.`;
+      if (q.toLowerCase() === "list") return `What you know how to make:\n${craftable().map(describeRecipe).join("\n")}\nOr combine up to 3 things into a keepsake: it can be whatever you say it is, but it will not do anything a pile of those things could not.`;
       if (q) {
         const r = recipeByName(q);
-        if (!r) throw new ToolError(`You don't know a way to make "${q}". You know: ${RECIPES.map((x) => x.name).join(", ")}.`);
+        if (!r) throw new ToolError(`You don't know a way to make "${q}". You know: ${craftable().map((x) => x.name).join(", ")}.`);
         const prefer = (Array.isArray(a.use) ? a.use : []).map((x: unknown) => w.findItem(String(x))?.id).filter(Boolean) as string[];
         checkRecipe(w, r, prefer);                                                    // everything checked, nothing touched
         gate(w, r.durationMs, `making ${r.name}`);

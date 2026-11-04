@@ -132,7 +132,7 @@ const weave: ToolDef = {
       name = "woven basket";
       desc = `A round basket of woven strips — ${tier.note}. It will carry what your hands cannot.`;
     }
-    w.addItem("crafted", name, desc, 1, props);
+    w.addItem("crafted", name, desc, 1, props, { maker: true, ...(what === "basket" ? { defId: "basket" } : {}) });   // a woven basket really is one: it holds things
 
     w.bump({ mood: Math.round(2 + q * 8), curiosity: -4 });
     if (what === "wrap")

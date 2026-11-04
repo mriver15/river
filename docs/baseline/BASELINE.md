@@ -251,3 +251,23 @@ Still not done:
 - A structure does not weather or wear: its recovery depends on its state (unfinished, finished, burnt), not on age or storms.
 - Temperature still only matters for warmth; a hot thing does not ignite what it touches.
 - The visual record (recipe id, seed, colour) is stored and stable, but nothing draws from it until MVP 6.
+
+## MVP 5 leftovers, round 2
+
+Done since the section above:
+
+- **Hot things ignite.** A glowing coal or an ember carried in or dropped next to dry fuel can start a fire; wet fuel does not catch. Fuel value comes from the material and its wetness, not from the name.
+- **Structures weather, can be repaired, and can collapse.** Integrity falls with age and storms (`weatherStructures`, run with item upkeep), `repair` restores it, and a structure that reaches zero collapses into salvage. Dismantling yields scale with integrity.
+- **More recipes on the one recipe engine:** flute, clay bowl, and the eight garments (sewing now goes through `sew_<garment>` and `checkRecipe`/`craftNow`, not its own rules). Recipes can require a fire nearby (`place`), derive properties from inputs (`derive`), and be reached only through another tool (`via`).
+- **Capability honesty.** A flute sounds because it is hollow and wooden, not because it is called one; `strip_bark` needs a tool that cuts by material; the lens plugin takes any stone, not only ones with a stone-like name. A shaft must be a slender wooden rod.
+- **Containers have volume as well as mass**, and rigid long things do not fit in small ones. Bowl, pouch and basket are real containers; a woven basket holds things.
+- **Heat retention by material:** coals stay hot and warm the carrier a little; wet and cold things drift to ambient at their own rate.
+- **Plugin-made items record provenance:** dig, lens, inscribe, pitch rods, strip bark and weave pass `{ sources, maker, note }` to `addItem`, so the item knows what it was made from and by whom. The forged-plugin cheatsheet (`smith.ts`) documents the options.
+
+Checks run (narrow, by request): all unit tests (88 pass), typecheck, replay of `new-life` and `fire` fixtures, a 3-seed 1-day soak (all checkpoints matched, no network). The full 20-seed and real-model regression was not rerun.
+
+Still not done:
+
+- **Building and pigment tools are not recipe-driven.** Structure plans keep their own staged rules and pigments only record provenance.
+- **The visual record** (recipe id, seed, colour) is stored and stable, but nothing draws from it until MVP 6.
+- The earlier items about other timed tools, vertical navigation, inventory capacity, learned routines and in-flight appraisals still stand.

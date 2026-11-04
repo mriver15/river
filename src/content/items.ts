@@ -58,6 +58,8 @@ export const ITEM_DEFS: ItemDef[] = [
   def({ id: "pouch", aliases: ["pouch"], name: "hide pouch", dims: { l: 0.18, w: 0.12, h: 0.1 }, massKg: 0.2, parts: [{ material: "hide", fraction: 1 }], tags: ["hollow"], fungible: false, container: { capacityKg: 1.5, volumeL: 2.5 }, worn: true, visual: "pouch" }),
   def({ id: "cord", aliases: ["cord"], name: "length of cord", dims: { l: 1.2, w: 0.01, h: 0.01 }, massKg: 0.03, parts: [{ material: "bark", fraction: 1 }], tags: ["strip", "long"], fungible: true, visual: "strip" }),
   // anything River makes that has no mechanical meaning: a keepsake, a carving, an arrangement. Honest about doing nothing.
+  def({ id: "flute", aliases: ["flute"], name: "wooden flute", dims: { l: 0.4, w: 0.03, h: 0.03 }, massKg: 0.2, parts: wood, tags: ["hollow", "wind", "long"], fungible: false, worn: true, visual: "flute" }),
+  def({ id: "bowl", aliases: ["bowl"], name: "fired clay bowl", dims: { l: 0.16, w: 0.16, h: 0.07 }, massKg: 0.6, parts: [{ material: "clay", fraction: 1 }], tags: ["hollow"], fungible: false, container: { capacityKg: 1, volumeL: 0.9 }, worn: true, visual: "bowl" }),
   def({ id: "keepsake", aliases: ["crafted", "keepsake"], name: "keepsake", dims: { l: 0.15, w: 0.1, h: 0.1 }, massKg: 0.3, parts: [{ material: "inert", fraction: 1 }], tags: [], fungible: false, visual: "keepsake" }),
   // conservative fallback for anything the game produces that has no definition yet
   def({ id: "generic", aliases: [], name: "thing", dims: { l: 0.15, w: 0.1, h: 0.1 }, massKg: 0.3, parts: [{ material: "inert", fraction: 1 }], tags: [], fungible: false, visual: "keepsake" }),

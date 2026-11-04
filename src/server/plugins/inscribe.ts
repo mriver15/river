@@ -78,7 +78,7 @@ const inscribe: ToolDef = {
     if (!tablet) {
       if (!clay) throw new ToolError("You have no lump of clay for a tablet. Dig for clay, or cut into a rock instead (on: 'stone').");
       w.takeItem(clay.id, 1);
-      w.addItem("crafted", name, HEAD, 1, { lines: [] });
+      w.addItem("crafted", name, HEAD, 1, { lines: [] }, { maker: true });
       tablet = w.findItem(name);
       if (!tablet) throw new ToolError("The clay crumbled before it would hold a shape. Try another lump.");
     }
@@ -93,7 +93,7 @@ const inscribe: ToolDef = {
     const all = [...lines, entry];
     const desc = `${HEAD}\n${all.join("\n")}`;
     w.takeItem(tablet.id, 1);
-    w.addItem("crafted", name, desc, 1, { lines: all });
+    w.addItem("crafted", name, desc, 1, { lines: all }, { maker: true });
 
     let tail = "";
     if (a.leave) {

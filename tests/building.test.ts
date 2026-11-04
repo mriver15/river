@@ -115,3 +115,50 @@ test("a burnt structure gives back what survived the fire, and only a little ash
   assert.match(out, /burnt remains/); assert.ok(!w.entities.has(e.id));
   assert.deepEqual(R.audit(), []);
 });
+
+const { weatherStructures } = await import("../src/server/building.ts");
+const mk = (name: string, mats: Record<string, number>, extra: object = {}) => {
+  const kinds = Object.fromEntries(Object.keys(mats).map((n) => [n, n]));
+  return w.spawn("structure", name, w.me.x + 2, w.me.z, { shape: "bench", size: "small", materials: mats, materialKinds: kinds, builtBy: "River", radius: 0.8, colors: {}, colorNames: {}, ...extra });
+};
+
+test("rain wears wooden structures down; stone and dry weather do not", () => {
+  fresh(0);
+  const wood = mk("wooden bench", { stick: 6 }), rock = mk("stone cairn", { stone: 6 });
+  w.weather = "clear"; for (let n = 0; n < 200; n++) weatherStructures(w, 5);
+  assert.equal(w.entities.get(wood.id)!.props.integrity, undefined, "dry weather does nothing");
+  w.weather = "rain"; for (let n = 0; n < 200; n++) weatherStructures(w, 5);
+  const i = w.entities.get(wood.id)!.props.integrity;
+  assert.ok(i < 0.95 && i > 0.8, `wood after 1000 s of rain: ${i}`); assert.equal(w.entities.get(rock.id)!.props.integrity, undefined, "stone is untouched");
+  w.weather = "storm"; for (let n = 0; n < 200; n++) weatherStructures(w, 5);
+  assert.ok(w.entities.get(wood.id)!.props.integrity < i - 0.1, "a storm wears faster");
+  w.weather = "clear";
+});
+
+test("mending restores soundness by exactly what was put in, and a sound structure needs none", async () => {
+  fresh(5);
+  const e = mk("old bench", { stick: 6 }, { integrity: 0.5 });
+  await build({ action: "repair", target: e.id, materials: { stick: 3 } });
+  assert.equal(w.entities.get(e.id)!.props.integrity, 0.86, "three sticks, 0.12 each"); assert.equal(have("stick"), 2);
+  await assert.rejects(() => build({ action: "repair", target: mk("sound bench", { stick: 6 }).id, materials: { stick: 1 } }), /sound/);
+  await assert.rejects(() => build({ action: "repair", target: e.id, materials: { stone: 1 } }), /aren't carrying|won't mend/);
+});
+
+test("a structure worn through falls down into part of what it was, and no more", () => {
+  fresh(0);
+  const e = mk("tired shelter", { stick: 7, clay: 3 }, { integrity: 0.0002 });
+  const total = (kind: string) => R.all().filter((i) => i.kind === kind && i.loc.kind === "world").reduce((s, i) => s + i.qty, 0);
+  const sticks0 = total("stick"), clay0 = total("clay");
+  w.weather = "storm"; weatherStructures(w, 5); w.weather = "clear";
+  assert.ok(!w.entities.has(e.id), "it fell");
+  assert.ok(total("stick") - sticks0 <= Math.floor(7 * 0.4) && total("stick") - sticks0 >= 1, "some of the sticks lie where it stood");
+  assert.ok(total("clay") - clay0 <= 1, "and no more than 40% of anything");
+  assert.deepEqual(R.audit(), []);
+});
+
+test("what comes back from taking a weathered structure apart is less", async () => {
+  fresh(0);
+  const e = mk("weathered tower", { stick: 10 }, { integrity: 0.5 });
+  await build({ action: "take_down", target: e.id });
+  assert.equal(have("stick"), 3, "60% of 10, halved by the weathering: 3");
+});
