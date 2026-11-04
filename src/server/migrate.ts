@@ -103,6 +103,17 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, "sim_snapshots", "param_set", "TEXT");
     },
   },
+  {
+    id: "0011_plugin_installs", description: "Plugins pinned to the source hash and capabilities they were installed with",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS plugin_installs (
+          name TEXT PRIMARY KEY, hash TEXT NOT NULL, capabilities TEXT NOT NULL, status TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '',
+          shipped INTEGER NOT NULL DEFAULT 0, installed_tick INTEGER NOT NULL DEFAULT 0, sdk INTEGER NOT NULL DEFAULT 1
+        );
+      `);
+    },
+  },
 ];
 
 export interface MigrationReport { applied: string[]; alreadyApplied: string[] }

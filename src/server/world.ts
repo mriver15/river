@@ -21,7 +21,7 @@ export function segDist(px: number, pz: number, x1: number, z1: number, x2: numb
   return Math.hypot(px - (x1 + t * dx), pz - (z1 + t * dz));
 }           // one world day = 24 real minutes
 const WALK_SPEED = 3;                         // units / second
-const REACH = 5;                              // interaction distance
+export const REACH = 5;                              // interaction distance
 const OBSTACLES: EntityKind[] = ["tree", "rock", "shrine", "monolith", "structure"];
 
 

@@ -386,7 +386,10 @@ export class ItemRegistry {
   canDo(id: string, capability: string): boolean {
     const i = this.items.get(id); return !!i && i.condition.durability > 0 && capabilitiesOf(defById(i.defId)).includes(capability);
   }
-  /** Rebuild what River's code sees as its inventory. */
+  /** Everything this carried thing can do now (for a plugin's read-only view). */
+  capabilityList(id: string): string[] {
+    const i = this.items.get(id); return i && i.condition.durability > 0 ? [...capabilitiesOf(defById(i.defId))] : [];
+  }
   /** Everything a client needs to draw this item the same way wherever it is. */
   packet(i: ItemInstance): VisualPacket {
     return { recipeId: i.visual.recipeId, version: i.visual.version, seed: i.visual.seed, parameters: i.visual.parameters, defId: i.defId, mats: [...i.parts].sort((a, b) => b.mass - a.mass).map((p) => p.material), look: lookOf(i.condition, i.props) };
