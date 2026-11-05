@@ -360,3 +360,32 @@ Still not done:
 - **A restart during an advance** simply resumes from the last committed batch; the advance is not resumed.
 - **Experiments** use the mock brain, one preset or parameter set per scenario, and fixed metrics (needs, health, fear, grief, items, works, moments); there is no confidence interval, only means over seeds.
 - **The client panels were built and type-checked but not screenshot-reviewed.**
+
+## MVP 9: extension isolation and release migration
+
+Code: `src/server/sandbox/` (`contract.ts`, `runner.mjs`, `host.ts`, `plugin.ts`), `src/shared/protocol.ts`, `scripts/migrate-legacy.ts`, `scripts/unattended.ts`; docs `PLUGIN_SDK.md`, `RUNBOOK.md`, `RELEASE_CHECKLIST.md`, `parity.json`, `state-writers.json`.
+
+What changed:
+
+- **Plugins cannot touch the world.** They are no longer imported into the engine. Each run is a fresh, permission-restricted process (no file writes, child processes, workers or network; empty environment; 64 MB heap; killed after 3 s) running the plugin in a `vm` context with no host objects, against a copy of what River perceives. The plugin answers with typed proposals; the engine validates every one against the contract and the plugin's pinned capabilities, and applies them atomically at a tick boundary or changes nothing. All eleven built-in plugins were adapted (one call, `w.items.canDo`, became `w.canDo`) and run this way.
+- **Fencing and replay.** A run happens before the action and its result is journaled with the command; replay applies that result and starts no process. Results carry the life generation and the plugin's source hash, so a result for an ended life, or for source that has since changed, is refused. Timeouts, crashes, memory blow-ups and oversized output are typed failures that change nothing; the next run is unaffected.
+- **Installs are pinned.** Installing a generated plugin is a recorded controller command that pins the SHA-256 of its source and the capabilities it declares. A changed file is disabled until installed again, and gets only what its new source declares. A plugin using something the contract does not offer, or one from the old smith with no file or no install, stays disabled with the reason (`/api/plugins`). Existing grants are untouched. The tool smith's smoke test now runs in the same sandbox and checks the result against the contract; the old in-process smoke script is gone.
+- **Protocol.** The first message names the schema version and the sequence; every broadcast carries the next sequence number; a client that sees a gap asks for the whole state; a client on another version is told to reload; a retried command id is acknowledged as a duplicate (`npm run protocol-test`).
+- **Migration.** `scripts/migrate-legacy.ts` backs a database up and proves the backup restores to the same bytes, converts a copy, boots it, checks the invariants (item audit, grants kept and none added, entities kept, all migrations), confirms the original is unchanged and rehearses the rollback, then writes a report. It was run against a database in the real pre-migration schema (taken from commit d320b69, `tests/fixtures/legacy-schema.sql`).
+- **No undocumented dual writers.** `docs/state-writers.json` lists every table and its writers; a test reads the source and fails on any other writer. Tool grants, which had two writers, now go through `grantTool`.
+- **Parity.** `docs/parity.json` assigns every tool and plugin, and every original feature in the specification's table, to its owner and to the tests that show it works; a test checks the files, the tools and the test titles exist, and the matrix says which features rest on the soak alone.
+- **Unattended run.** Three simulated days with the mock brain and nobody watching: 13,000 ticks per second, 213 MB peak, p95 tick 0.09 ms, 1.5 MB of database per day, no sandbox process left. The limits are declared in the runbook and tested.
+
+Checks: typecheck and build clean; 183 unit tests; replays of `new-life`, `fire` and `injury`; the build/items/alive restart scenarios; the crash test; the protocol test; a 6-seed 1-day soak (including presets and an advance); the migration rehearsal. The full 20-seed, 3-day soak was not run.
+
+Still not done:
+
+- **The old in-process plugin path was removed, not kept behind a flag.** If a plugin needs `w.fire` or other engine objects, it is disabled until adapted; no shipped plugin did.
+- **Effects land at the end of a plugin's wait**, so an interrupted run is all or nothing; intermediate effects of a long plugin are not shown while it waits. A restart during a wait still loses the action.
+- **Plugins see known entities within 80 m**, not the whole world (the old direct access could see everything).
+- **Randomness in plugins** is seeded from the tick and arguments rather than a persisted stream.
+- **Network isolation depends on Node's permission model** on this platform; it was checked here (fetch fails), not on other operating systems. A kernel-level sandbox (containers, seccomp) would be the next step for a hostile environment.
+- **Parity evidence for several features is the whole-world soak**, not a dedicated unit test (weather, the Keeper story, catalog and gifts, parts of the body model).
+- **The Tools tab does not yet show why a plugin is disabled**; the reason is in the log and at `/api/plugins`.
+- **The full migration of a live database was rehearsed on a fixture, not on `data/`.** Do that on a copy before cutover.
+- **Optional worker extraction** was not done.
