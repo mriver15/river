@@ -506,6 +506,41 @@ export class Scene3D {
   private focus: { x: number; z: number; t0: number; hold: number } | null = null;
   private userAt = 0;
   private baseDist = 0;
+
+  // ---------- the cinematic camera (TV view) ----------
+  /** A director that never stops: slow orbits, low hero angles, high wide shots, a long lens, cutting between them every so often. */
+  cinema = false;
+  private shot = { t0: 0, dur: 1, a0: 0, a1: 0, d0: 10, d1: 10, h0: 3, h1: 3, name: "" };
+  private shots = 0;
+  private cinemaFov = 55;
+  setCinema(on: boolean) {
+    if (on === this.cinema) return;
+    this.cinema = on;
+    if (on) { this.cinemaFov = this.camera.fov; this.nextShot(true); } else { this.camera.fov = this.cinemaFov; this.camera.updateProjectionMatrix(); }
+  }
+  private nextShot(first = false) {
+    const n = this.shots++, a = this.agent, heading = a ? -a.heading + Math.PI / 2 : 0, now = performance.now() / 1000, sweep = (deg: number) => ((deg * Math.PI) / 180) * (Math.random() < 0.5 ? -1 : 1);
+    const here = Math.atan2(this.camera.position.z - this.controls.target.z, this.camera.position.x - this.controls.target.x);
+    const kinds = ["close orbit", "wide", "low hero", "behind", "high"] as const, kind = a?.sleeping || a?.body?.dead ? "wide" : first ? "close orbit" : kinds[(n * 3 + Math.floor(Math.random() * 2)) % kinds.length]!;
+    const s = this.shot; s.t0 = now; s.name = kind; s.a0 = here;
+    const set = (dur: number, a1: number, d0: number, d1: number, h0: number, h1: number) => Object.assign(s, { dur, a1, d0, d1, h0, h1 });
+    if (kind === "close orbit") set(24, here + sweep(70), 7, 5.5, 2.4, 2.0);
+    else if (kind === "wide") set(30, here + sweep(28), 30, 36, 14, 18);
+    else if (kind === "low hero") set(20, here + sweep(45), 8, 6.5, 0.9, 1.4);
+    else if (kind === "behind") set(22, heading + Math.PI + sweep(18), 8.5, 7, 3.2, 3.6);
+    else set(26, here + sweep(35), 18, 24, 24, 30);
+  }
+  private cinemaStep(dt: number) {
+    if (!this.cinema || Date.now() - this.userAt < 12_000) return;            // a hand on the mouse always wins
+    const now = performance.now() / 1000, s = this.shot, p = Math.min(1, (now - s.t0) / s.dur), e = p * p * (3 - 2 * p);
+    if (p >= 1) return this.nextShot();
+    const ang = s.a0 + (s.a1 - s.a0) * p, d = s.d0 + (s.d1 - s.d0) * e, h = s.h0 + (s.h1 - s.h0) * e, T = this.controls.target;
+    const want = new THREE.Vector3(T.x + Math.cos(ang) * d, T.y + h, T.z + Math.sin(ang) * d);
+    this.camera.position.lerp(want, 1 - Math.pow(0.04, dt));                                  // eased, so a cut is a glide, never a jump
+    const fov = s.name === "wide" || s.name === "high" ? 34 : 42;                               // a longer lens than the everyday view
+    if (Math.abs(this.camera.fov - fov) > 0.05) { this.camera.fov += (fov - this.camera.fov) * (1 - Math.pow(0.1, dt)); this.camera.updateProjectionMatrix(); }
+    this.baseDist = 0;
+  }
   /** Wings beat, tails sway, the snake undulates or coils, the midges swarm. */
   private animateWild(o: THREE.Object3D, t: number, dt: number) {
     const sp = o.userData.wild as string, e = this.entityData.get(o.userData.id), pose = e?.props.pose, speed = Math.hypot((o.userData.tx - o.position.x), (o.userData.tz - o.position.z)) / Math.max(dt, 1e-3);
@@ -649,6 +684,7 @@ export class Scene3D {
       }
       if (o.userData.flame) o.scale.y = 0.9 + Math.sin(t * 14) * 0.15;
     });
+    this.cinemaStep(dt);
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
   }

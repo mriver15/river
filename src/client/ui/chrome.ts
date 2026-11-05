@@ -1,4 +1,5 @@
 import { closeSettings, settingsSection } from "./settings.ts";
+import { toggleTv } from "./tv.ts";
 import { $, el, icon, setIcon, store, type IconName } from "../dom.ts";
 import { S, ctx, TABS, renderers, send, type TabName } from "../state.ts";
 import { EMOTIONS, EMOTION_ORDER, intensityWord } from "../../shared/emotions.ts";
@@ -41,7 +42,7 @@ function initResizer() {
 }
 
 // ---------- HUD ----------
-const NEEDS: { k: keyof AgentView["needs"]; label: string; color: string }[] = [
+export const NEEDS: { k: keyof AgentView["needs"]; label: string; color: string }[] = [
   { k: "energy", label: "Energy", color: "var(--accent)" }, { k: "hunger", label: "Fed", color: "var(--orange)" },
   { k: "mood", label: "Mood", color: "var(--violet)" }, { k: "curiosity", label: "Curious", color: "var(--cyan)" }, { k: "warmth", label: "Warm", color: "#ff9a6b" },
 ];
@@ -95,6 +96,7 @@ function initActions() {
   box.append(el("span", "sep"));
   btn("btn-nextday", "sunrise", "Run the world forward to the next dawn", () => { if (confirm("Run the world forward to the next dawn? It runs every tick, quickly, and stops if something urgent needs River.")) send({ t: "sim_advance", until: "dawn", decision: "stop" }); });
   btn("btn-controls", "sliders", "Controls: budget, new River", openControls);
+  btn("btn-tv", "tv", "TV view: a cinematic, big-screen view for watching from a distance (T)", () => toggleTv());
   btn("btn-panel", "panel", "Hide panel (\\)", () => setSide(document.body.dataset.side !== "open"));
 }
 const toggleFollow = () => { if (!ctx.scene) return; ctx.scene.follow = !ctx.scene.follow; $("btn-follow").classList.toggle("on", ctx.scene.follow); };
@@ -199,7 +201,7 @@ function initKeys() {
     const n = Number(e.key);
     if (n >= 1 && n <= TABS.length) return void showTab(TABS[n - 1]);
     if (e.key === "\\") setSide(document.body.dataset.side !== "open");
-    else if (e.key === "f") toggleFollow(); else if (e.key === "m") toggleSound();
+    else if (e.key === "t") toggleTv(); else if (e.key === "f") toggleFollow(); else if (e.key === "m") toggleSound();
     else if (e.key === "p") send({ t: "pause", paused: !S.stats?.paused });
     else if (e.key === "w") send({ t: "sim_pause", paused: !S.stats?.worldPaused });
     else if (e.key === "/") { e.preventDefault(); showTab("log"); $("logsearch").focus(); }

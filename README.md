@@ -8,6 +8,11 @@ River is an always-live agent that lives its own life on a persistent 3D island.
 - **Tools** – a base set; `web_search`, `web_fetch`, `craft`, `plant`, `build` stay locked until you approve River's request. River can also invent tools that don't exist ("new tool idea"). `tools.ts`, `web.ts`
 - **UI** – three.js world, full action log with filters, mind/needs/desires/interests, inventory, tool requests, memory search, talk to River, leave gifts.
 
+## TV view
+
+Press **T** (or the monitor button, or open the page with `?tv`) for a cinematic, big-screen view meant to be watched from across a room: the panels go away, letterbox bars come in, and a slow camera director orbits River, with low hero angles, long wide shots and cutaways to whatever matters.
+Over the picture, in large type: the day, time and weather; River's needs and strongest feelings; what River is doing (with progress); what it thinks, says, dreams or writes, held long enough to read; big title cards for moments that stir it; a short ticker of what has just happened; and, in the quiet, a rotating card (what it carries and wears, what it wants, what it is curious about, a line from its journal, the places it has named, the Keeper's story, how its body feels). Esc leaves; the mouse hides itself after a few seconds; touching the mouse hands the camera back for a moment. Settings → This browser can make a screen open in TV view by itself.
+
 ## Choosing the AI provider
 
 Settings → **AI provider** (first group) switches River's mind between DeepSeek (hosted, key in `.env`), **Ollama** (local, no key) and any other OpenAI-compatible server, live, with no restart.

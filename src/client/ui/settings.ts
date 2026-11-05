@@ -62,7 +62,10 @@ export function renderSettings() {
   const mine = el("details", "sect-d"); mine.append(el("summary", "", "This browser"));
   const cut = el("div", "setrow"), top = el("div", "row"), sw = el("input"); sw.type = "checkbox"; sw.className = "switch"; sw.checked = store.get("cutaways", true);
   sw.onchange = () => { store.set("cutaways", sw.checked); if (ctx.scene) ctx.scene.cutaways = sw.checked; };
-  top.append(el("span", "", "Camera cutaways"), sw); cut.append(top, el("div", "muted small", "The camera glances at things that matter, then returns to River.")); mine.append(cut); host.append(mine);
+  top.append(el("span", "", "Camera cutaways"), sw); cut.append(top, el("div", "muted small", "The camera glances at things that matter, then returns to River.")); mine.append(cut);
+  const tv = el("div", "setrow"), tvTop = el("div", "row"), tvSw = el("input"); tvSw.type = "checkbox"; tvSw.className = "switch"; tvSw.checked = store.get("tvAuto", false);
+  tvSw.onchange = () => store.set("tvAuto", tvSw.checked);
+  tvTop.append(el("span", "", "Open in TV view"), tvSw); tv.append(tvTop, el("div", "muted small", "Start in the cinematic big-screen view on this browser (for a screen across the room). Press T any time to switch, or open the address with ?tv.")); mine.append(tv); host.append(mine);
   const rs = el("button", "btn sm", "Reset all settings to defaults"); rs.onclick = () => send({ t: "config_reset" }); host.append(rs);
 }
 export function settingsSection(): HTMLElement { const s = el("section", "sect"); s.append(el("h4", "", "Settings")); host = el("div", "settings"); s.append(host); renderSettings(); return s; }

@@ -21,6 +21,7 @@
     "restart-test": "tsx scripts/restart-test.ts",
     "gallery:shots": "tsx scripts/gallery-shots.ts",
     "experiment": "tsx scripts/experiment.ts",
+    "tv:shot": "tsx scripts/tv-shot.ts",
     "replay:serve": "tsx scripts/replay-serve.ts",
     "replay:serve-test": "tsx scripts/replay-serve-test.ts",
     "protocol-test": "tsx scripts/protocol-test.ts",

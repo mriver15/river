@@ -9,6 +9,7 @@ import { drawMap, lastMap } from "./ui/map.ts";
 import { initMemory, loadMemories } from "./ui/memory.ts";
 import { loadBrain } from "./ui/brain.ts";
 import { onAdvance, onReplay } from "./ui/sim.ts";
+import { setTv, tvLog, tvMoment, wantsTvFromUrl } from "./ui/tv.ts";
 import { initMusic, onRiverScore } from "./ui/music.ts";
 import { onMoment } from "./ui/moments.ts";
 import { renderDeath } from "./ui/death.ts";
@@ -38,6 +39,7 @@ function setAgent(a: AgentView) {
 
 // ---------- things worth interrupting you for ----------
 hooks.notable = (e) => {
+  tvLog(e);
   if (e.kind === "request" && /^Requested tool/.test(e.text)) toast({ title: "River is asking for a tool", body: clip(e.text.replace(/^Requested tool /, ""), 160), color: "var(--warn)", action: { label: "Review", fn: () => { openToolsSub("requests"); showTab("tools"); } } });
   else if (e.kind === "system" && /ready for review/.test(e.text)) toast({ title: "A new tool is ready", body: e.text.replace("Tool smith: ", ""), color: "var(--warn)", action: { label: "Review", fn: () => { openToolsSub("smith"); showTab("tools"); } } });
   else if (e.kind === "dream") toast({ title: "River dreamed", body: clip(e.text.replace(/^.*? dreams: /, ""), 170), color: "var(--violet)", ttl: 14000 });
@@ -75,7 +77,7 @@ function handle(m: ServerMsg) {
       S.heat = m.heat; S.scorch = m.scorch; ctx.scene.setHeat(m.heat, m.scorch); ctx.scene.syncEntities(m.entities);
       Object.assign(S, { desires: m.desires, interests: m.interests, inventory: m.inventory, tools: m.tools, requests: m.requests, forged: m.forged, places: m.places, journal: m.journal, moments: m.moments, keeper: m.keeper, catalog: m.catalog, taste: m.taste, stats: m.stats, selfModel: m.selfModel });
       ctx.live = false; resetLog(m.log); ctx.live = true;
-      setAgent(m.agent); renderAll(); break;
+      setAgent(m.agent); renderAll(); if (wantsTvFromUrl() || store.get("tvAuto", false)) setTv(true); break;
     }
     case "agent": setAgent(m.agent); break;
     case "config": S.config = m.config; renderSettings(); break;
@@ -84,7 +86,7 @@ function handle(m: ServerMsg) {
     case "log": addLog(m.entry, ctx.live); break;
     case "fx": ctx.scene?.fx(m.kind); m.kind === "lightning" ? ctx.audio?.thunder() : ctx.audio?.meteor(); break;
     case "notice": if (!handleNotice(m)) toast({ title: m.level === "ok" ? "Done" : "Couldn't do that", body: m.text, color: m.level === "ok" ? "var(--accent)" : "var(--bad)", ttl: 7000 }); break;
-    case "moment": onMoment(m.moment); break;
+    case "moment": onMoment(m.moment); tvMoment(m.moment); break;
     case "score": onRiverScore(m.title, m.score); break;
     case "heat": S.heat = m.cells; S.scorch = m.scorch; ctx.scene?.setHeat(m.cells, m.scorch); if (isTab("map")) drawMap(); break;
     case "entity": if (m.op === "upsert") ctx.scene?.upsert(m.entity); else ctx.scene?.remove(m.id); break;
