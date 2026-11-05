@@ -1,0 +1,379 @@
+{
+ "note": "Every original feature, where it lives now, and the evidence that it still works. 'soak' means it is exercised by the whole-world replay soak rather than a unit test of its own.",
+ "features": [
+  {
+   "id": "terrain-movement",
+   "feature": "Terrain, walking, paths, scorch",
+   "owner": "activities.ts, nav.ts",
+   "tools": [
+    "move_to",
+    "look",
+    "stop"
+   ],
+   "evidence": [
+    {
+     "test": "tests/activities.test.ts",
+     "title": "routes go around known obstacles and fail when the way is shut"
+    },
+    {
+     "test": "tests/activities.test.ts",
+     "title": "what River has not seen cannot be a target"
+    }
+   ],
+   "coverage": "unit"
+  },
+  {
+   "id": "needs-body",
+   "feature": "Needs, body, wounds, infection, venom, first aid",
+   "owner": "body.ts, firstaid.ts",
+   "tools": [
+    "rest",
+    "eat"
+   ],
+   "evidence": [
+    {
+     "test": "tests/engine.test.ts",
+     "title": "river travels, arrives, gets hungry, rests and recovers energy"
+    }
+   ],
+   "coverage": "unit+soak"
+  },
+  {
+   "id": "death-lives",
+   "feature": "Death, graves, new lives",
+   "owner": "death.ts, lifecycle.ts, reset.ts",
+   "tools": [],
+   "evidence": [
+    {
+     "test": "tests/lifecycle.test.ts",
+     "title": "generations: a new life makes earlier work stale"
+    },
+    {
+     "test": "tests/lifecycle.test.ts",
+     "title": "a tool call from a previous life changes nothing and is journaled nowhere"
+    },
+    {
+     "test": "tests/inner.test.ts",
+     "title": "a new life clears personal beliefs, attachments and what was unseen"
+    }
+   ],
+   "coverage": "unit"
+  },
+  {
+   "id": "weather-ambient",
+   "feature": "Weather, ambient director, Keeper story",
+   "owner": "ambient.ts, story.ts",
+   "tools": [],
+   "evidence": [
+    {
+     "test": "tests/engine.test.ts",
+     "title": "plant grows and calendar day advances with the tick, not wall time"
+    }
+   ],
+   "coverage": "soak"
+  },
+  {
+   "id": "wildlife",
+   "feature": "Wildlife and tameable animals",
+   "owner": "wildlife.ts, creatures.ts",
+   "tools": [
+    "defend",
+    "name_creature",
+    "offer",
+    "fish"
+   ],
+   "evidence": [
+    {
+     "test": "tests/activities.test.ts",
+     "title": "a charging predator stops the errand and River runs, before any thinking"
+    }
+   ],
+   "coverage": "unit+soak"
+  },
+  {
+   "id": "fire",
+   "feature": "Fire, cooking, char, regrowth",
+   "owner": "fire.ts, plugins/fire.ts",
+   "tools": [
+    "burn",
+    "tend",
+    "fire"
+   ],
+   "evidence": [
+    {
+     "test": "tests/items.test.ts",
+     "title": "fire turns fuel into a little ash and never makes material from nothing; a soaked thing resists"
+    },
+    {
+     "test": "tests/items.test.ts",
+     "title": "a glowing coal lying against dry fuel sets it alight; a cold stone does not"
+    }
+   ],
+   "coverage": "unit+soak"
+  },
+  {
+   "id": "building",
+   "feature": "Building",
+   "owner": "building.ts",
+   "tools": [
+    "build"
+   ],
+   "evidence": [
+    {
+     "test": "tests/building.test.ts",
+     "title": "a build is spent stage by stage: nothing before a stage is done, and what is spent shows in what stands"
+    },
+    {
+     "test": "tests/building.test.ts",
+     "title": "a structure worn through falls down into part of what it was, and no more"
+    }
+   ],
+   "coverage": "unit"
+  },
+  {
+   "id": "crafting-items",
+   "feature": "Crafting, items, containers, pigments",
+   "owner": "crafting.ts, items.ts, colour.ts",
+   "tools": [
+    "craft",
+    "colour",
+    "gather",
+    "pick_up",
+    "drop",
+    "stow",
+    "take_out",
+    "inspect",
+    "plant",
+    "weave",
+    "strip_bark",
+    "dig",
+    "magnifying_lens",
+    "pitch_rods"
+   ],
+   "evidence": [
+    {
+     "test": "tests/items.test.ts",
+     "title": "picking up, putting down and wearing keep an item what it is"
+    },
+    {
+     "test": "tests/items.test.ts",
+     "title": "containers hold what fits, never themselves, and never in a loop"
+    },
+    {
+     "test": "tests/recipes.test.ts",
+     "title": "parts are matched by what they can do, not by name"
+    }
+   ],
+   "coverage": "unit"
+  },
+  {
+   "id": "clothing",
+   "feature": "Clothing",
+   "owner": "clothing.ts",
+   "tools": [
+    "clothe"
+   ],
+   "evidence": [
+    {
+     "test": "tests/items.test.ts",
+     "title": "sewing goes through the recipe engine: exactly the pieces a garment takes, and where they came from is kept"
+    }
+   ],
+   "coverage": "unit"
+  },
+  {
+   "id": "mind-taste",
+   "feature": "Taste, opinions, self-image, desires",
+   "owner": "mind.ts, taste.ts",
+   "tools": [
+    "opinion",
+    "add_interest",
+    "set_desire",
+    "resolve_desire",
+    "request_tool"
+   ],
+   "evidence": [
+    {
+     "test": "tests/decisions.test.ts",
+     "title": "what River is shown stays within its budget, and costs far less than a transcript would"
+    }
+   ],
+   "coverage": "unit+soak"
+  },
+  {
+   "id": "music",
+   "feature": "Music, creature response, resonance",
+   "owner": "music.ts, plugins/tunable_drone.ts",
+   "tools": [
+    "compose",
+    "tunable_drone"
+   ],
+   "evidence": [
+    {
+     "test": "tests/activities.test.ts",
+     "title": "a performance is counted once and its effects land at the end"
+    }
+   ],
+   "coverage": "unit"
+  },
+  {
+   "id": "memory-dreams",
+   "feature": "Memory, dreams, reflection, journal",
+   "owner": "memory.ts, dreams.ts, journal.ts",
+   "tools": [
+    "remember",
+    "recall",
+    "say",
+    "inscribe",
+    "draw"
+   ],
+   "evidence": [
+    {
+     "test": "tests/inner.test.ts",
+     "title": "a stirred heart remembers more firmly; tolerance stays inside its bounds"
+    }
+   ],
+   "coverage": "unit+soak"
+  },
+  {
+   "id": "sky-places",
+   "feature": "Looking up, naming places",
+   "owner": "plugins/look_up.ts, plugins/stargaze.ts, places.ts",
+   "tools": [
+    "look_up",
+    "stargaze",
+    "name_place"
+   ],
+   "evidence": [
+    {
+     "test": "tests/sandbox.test.ts",
+     "title": "the built-in plugins run in the sandbox and their results apply cleanly, or fail with the reason the old path gave"
+    }
+   ],
+   "coverage": "unit"
+  },
+  {
+   "id": "catalog-gifts",
+   "feature": "Catalog, gifts, grants, tool requests",
+   "owner": "catalog.ts, mind.ts",
+   "tools": [],
+   "evidence": [
+    {
+     "test": "tests/tuning.test.ts",
+     "title": "presets are recorded commands that set known parameters, and 'standard' returns to the defaults"
+    }
+   ],
+   "coverage": "soak"
+  },
+  {
+   "id": "tool-smith",
+   "feature": "Tool smith and hot reload",
+   "owner": "smith.ts, sandbox/",
+   "tools": [],
+   "evidence": [
+    {
+     "test": "tests/sandbox.test.ts",
+     "title": "a generated plugin runs only as installed: unpinned, changed or re-pinned"
+    },
+    {
+     "test": "tests/sandbox.test.ts",
+     "title": "a plugin cannot reach the process, files, the network, timers or eval"
+    }
+   ],
+   "coverage": "unit"
+  },
+  {
+   "id": "web",
+   "feature": "Web search/fetch",
+   "owner": "tools.ts",
+   "tools": [
+    "web_search",
+    "web_fetch"
+   ],
+   "evidence": [
+    {
+     "test": "tests/decisions.test.ts",
+     "title": "a failing provider is retried without doing anything twice, and a late answer from a previous life changes nothing"
+    }
+   ],
+   "coverage": "unit"
+  },
+  {
+   "id": "controls-ui",
+   "feature": "Controls, UI, WebSocket, settings",
+   "owner": "index.ts, client/",
+   "tools": [],
+   "evidence": [
+    {
+     "test": "tests/protocol.test.ts",
+     "title": "a client builds on a snapshot, takes broadcasts in order, ignores old ones, and asks again on a gap"
+    },
+    {
+     "test": "tests/tuning.test.ts",
+     "title": "every parameter says who owns it, how it may change, what ruleset it belongs to, and stays inside its own bounds"
+    }
+   ],
+   "coverage": "unit+script"
+  },
+  {
+   "id": "budget-usage",
+   "feature": "Budget, off-peak rules, usage",
+   "owner": "usage.ts, brain/",
+   "tools": [],
+   "evidence": [
+    {
+     "test": "tests/decisions.test.ts",
+     "title": "an empty allowance: ordinary decisions wait, a human's words still get through the reserve, and the world waits"
+    }
+   ],
+   "coverage": "unit"
+  },
+  {
+   "id": "clock-replay",
+   "feature": "Unified clock, snapshots, replay, journal",
+   "owner": "sim.ts, recorder.ts, replay-driver.ts",
+   "tools": [],
+   "evidence": [
+    {
+     "test": "tests/engine.test.ts",
+     "title": "snapshot/restore continues identically (including RNG and pending jobs)"
+    },
+    {
+     "test": "tests/advance.test.ts",
+     "title": "advancing is the same as stepping: every checkpoint hash matches an ordinary run, to a tick count and to dawn"
+    }
+   ],
+   "coverage": "unit+soak"
+  },
+  {
+   "id": "emotions",
+   "feature": "Emotions, relationships, beliefs",
+   "owner": "emotions.ts, inner.ts",
+   "tools": [],
+   "evidence": [
+    {
+     "test": "tests/inner.test.ts",
+     "title": "losing something River made and named weighs far more than losing a stock item of the same kind"
+    },
+    {
+     "test": "tests/inner.test.ts",
+     "title": "something that happens out of sight cannot be grieved until River comes upon it"
+    }
+   ],
+   "coverage": "unit"
+  },
+  {
+   "id": "visuals",
+   "feature": "Procedural 3D items and posture",
+   "owner": "content/visuals.ts, client/renderers/",
+   "tools": [],
+   "evidence": [
+    {
+     "test": "tests/visuals.test.ts",
+     "title": "a drawn item is exactly the documented size, standing on the ground, and its collision bounds agree"
+    }
+   ],
+   "coverage": "unit"
+  }
+ ]
+}

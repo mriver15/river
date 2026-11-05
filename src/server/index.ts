@@ -33,6 +33,7 @@ import { checkCode, resetRiver } from "./reset.ts";
 import { libraryForUi } from "./music.ts";
 import { recentMoments } from "./moments.ts";
 import { timeline } from "./timeline.ts";
+import { PROTOCOL_VERSION } from "../shared/protocol.ts";
 import { pluginRecords } from "./sandbox/plugin.ts";
 import { sandboxStats } from "./sandbox/host.ts";
 import { catchUp } from "./advance.ts";
@@ -97,9 +98,10 @@ const server = http.createServer(async (req, res) => {
 const wss = new WebSocketServer({ server, path: "/ws" });
 const send = (ws: WebSocket, m: ServerMsg) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(m));
 /** Nothing is announced before it is durable. */
-const broadcast = (m: ServerMsg) => afterCommit(() => wss.clients.forEach((c) => send(c, m)));
+let seq = 0;
+const broadcast = (m: ServerMsg) => afterCommit(() => { const out = { ...m, seq: ++seq } as ServerMsg; wss.clients.forEach((c) => send(c, out)); });
 
-const initMsg = (): ServerMsg => ({ t: "init", moments: recentMoments(30), heat: heatCells(), scorch: scorchCells(), seed: world.seed, entities: [...world.entities.values()], agent: world.view(), log: recentLog(300), ...(() => { const { t, ...s } = stateMsg(); return s; })() });
+const initMsg = (): ServerMsg => ({ t: "init", schema: PROTOCOL_VERSION, seq, moments: recentMoments(30), heat: heatCells(), scorch: scorchCells(), seed: world.seed, entities: [...world.entities.values()], agent: world.view(), log: recentLog(300), ...(() => { const { t, ...s } = stateMsg(); return s; })() });
 let resetting = false;
 
 // ---------- read-only replay ----------
@@ -133,6 +135,7 @@ wss.on("connection", (ws) => {
   send(ws, initMsg()); send(ws, { t: "config", config: configView() }); if (REPLAY) send(ws, replayMsg());
   ws.on("message", (raw) => {
     let m: ClientMsg; try { m = JSON.parse(String(raw)); } catch { return; }
+    if (m.t === "resync") return void send(ws, initMsg());          // a client that missed something asks for the whole state
     if (REPLAY) {                                                    // a replay is only watched: nothing a client sends changes the world
       if (m.t === "replay_speed") player.speed = Math.max(0.5, Math.min(64, Number(m.speed) || 1));
       else if (m.t === "replay_pause") player.paused = !!m.paused;

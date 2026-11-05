@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { bus, log } from "./bus.ts";
 import { db } from "./db.ts";
 import { chat, type ChatMessage } from "./llm.ts";
-import { GATED, syncApprovals } from "./mind.ts";
+import { GATED, grantTool, syncApprovals } from "./mind.ts";
 import { BASE_TOOLS, PLUGIN_TOOLS, registerPlugin } from "./tools.ts";
 import type { ForgedTool, ToolRequest } from "../shared/types.ts";
 import { LIMITS, scanSource, validateResult } from "./sandbox/contract.ts";
@@ -204,7 +204,7 @@ export async function install(name: string): Promise<ForgedTool | null> {
   const pin = installPin(name, f.code + "\n");            // the permissions it is given are the ones this exact source declares
   save(name, f.request_id, "installed", f.code, f.log + `\nInstalled: pinned to ${pin.hash} with ${pin.capabilities.join(", ") || "no capabilities"}.`);
   await registerPlugin(dest, true);
-  db.prepare("INSERT INTO tools(name, approved) VALUES(?,1) ON CONFLICT(name) DO UPDATE SET approved=1").run(name);
+  grantTool(name);
   syncApprovals();
   save(name, f.request_id, "installed", f.code, f.log + "\nInstalled.");
   log("system", `Tool "${name}" installed and live.`);

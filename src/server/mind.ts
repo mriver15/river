@@ -45,6 +45,8 @@ export const interests = (): Interest[] =>
   (db.prepare("SELECT * FROM interests ORDER BY weight DESC LIMIT 30").all() as any[]).map((r) => ({ topic: r.topic, weight: Math.round(r.weight * 10) / 10, why: r.why, updated: r.updated }));
 
 // ---------- tool catalog & requests ----------
+/** The one place a tool is switched on. */
+export function grantTool(name: string) { db.prepare("INSERT INTO tools(name, approved) VALUES(?,1) ON CONFLICT(name) DO UPDATE SET approved=1").run(name); }
 export const GATED: Record<string, string> = {
   web_search: "Search the real web. Lets you find out about anything you're curious about (including things outside this island).",
   web_fetch: "Open a specific web page by URL and read it.",
@@ -56,7 +58,7 @@ export const GATED: Record<string, string> = {
 /** Approved requests whose tool now exists in code (e.g. a plugin you just wrote) become usable. */
 export function syncApprovals() {
   for (const r of db.prepare("SELECT DISTINCT name FROM tool_requests WHERE status='approved'").all() as any[])
-    if (r.name in GATED) db.prepare("INSERT INTO tools(name, approved) VALUES(?,1) ON CONFLICT(name) DO UPDATE SET approved=1").run(r.name);
+    if (r.name in GATED) grantTool(r.name);
 }
 export const isApproved = (name: string) => !!(db.prepare("SELECT approved FROM tools WHERE name=?").get(name) as any)?.approved;
 export function toolInfos(base: { name: string; description: string }[]): ToolInfo[] {
@@ -110,7 +112,7 @@ export function grandfather(names: string[]) {
   for (const n of names) {
     if (isApproved(n)) continue;
     const used = db.prepare("SELECT 1 FROM events WHERE kind = 'action' AND (text LIKE ? OR text LIKE ?) LIMIT 1").get(`${n} {%`, `${n} {}%`);
-    if (used) { db.prepare("INSERT INTO tools(name, approved) VALUES(?,1) ON CONFLICT(name) DO UPDATE SET approved=1").run(n); log("system", `"${n}" is now something River asks for. It already used it, so it keeps it.`); }
+    if (used) { grantTool(n); log("system", `"${n}" is now something River asks for. It already used it, so it keeps it.`); }
   }
 }
 
@@ -119,7 +121,7 @@ export function decideRequest(id: number, approve: boolean, note?: string, built
   if (!row) return null;
   db.prepare("UPDATE tool_requests SET status=?, note=? WHERE id=?").run(approve ? "approved" : "denied", note ?? null, id);
   const grant = approve ? (builtin && builtin in GATED ? builtin : row.name in GATED ? row.name : null) : null;      // which built-in this unlocks, if any
-  if (grant) db.prepare("INSERT INTO tools(name, approved) VALUES(?,1) ON CONFLICT(name) DO UPDATE SET approved=1").run(grant);
+  if (grant) grantTool(grant);
   log("request", `Tool request "${row.name}" ${approve ? `APPROVED${grant && grant !== row.name ? ` (granted the built-in "${grant}")` : ""}` : "DENIED"}${note ? `: ${note}` : ""}`, { id });
   bus.emit("state");
   return rowToReq(db.prepare("SELECT * FROM tool_requests WHERE id=?").get(id));

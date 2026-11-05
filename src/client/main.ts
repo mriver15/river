@@ -1,3 +1,4 @@
+import { PROTOCOL_VERSION, SeqTracker } from "../shared/protocol.ts";
 import { Scene3D } from "./scene.ts";
 import { Ambience } from "./audio.ts";
 import { $, clip, store } from "./dom.ts";
@@ -53,7 +54,16 @@ function connect() {
   ws.onmessage = (ev) => handle(JSON.parse(ev.data) as ServerMsg);
 }
 
+const seqs = new SeqTracker();
 function handle(m: ServerMsg) {
+  if (m.t === "init") {
+    if (m.schema !== PROTOCOL_VERSION) { toast({ title: "Reload this page", body: "The server speaks a newer version of the protocol than this page does.", color: "var(--warn)", ttl: 60000 }); return; }
+    seqs.reset(m.seq ?? 0);
+  } else if (m.seq !== undefined) {                          // a broadcast: in order, or ask for the whole state again
+    const v = seqs.accept(m.seq);
+    if (v === "stale") return;
+    if (v === "gap") { send({ t: "resync" }); return; }
+  }
   switch (m.t) {
     case "init": {
       if (ctx.scene && m.seed !== ctx.seed) return void location.reload();   // a new island: rebuild the terrain from scratch

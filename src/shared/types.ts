@@ -110,8 +110,11 @@ export interface Stats {
   tokensLastHour: number; tokensLast24h: number; maxTokensPerHour: number; cacheHitPct: number; offPeak: boolean;
 }
 
-export type ServerMsg =
-  | { t: "init"; seed: number; entities: Entity[]; agent: AgentView; log: LogEntry[]; desires: Desire[]; interests: Interest[];
+export interface Sequenced { seq?: number }
+/** Every broadcast carries `seq`, one more than the last, so a client can tell it missed one. */
+export type ServerMsg = (
+
+  | { t: "init"; schema: number; seq: number; seed: number; entities: Entity[]; agent: AgentView; log: LogEntry[]; desires: Desire[]; interests: Interest[];
       inventory: InventoryItem[]; tools: ToolInfo[]; requests: ToolRequest[]; forged: ForgedTool[]; places: Place[]; journal: JournalEntry[]; keeper: KeeperView; catalog: CatalogEntry[]; taste: TasteView; moments: Moment[]; heat: number[]; scorch: number[]; stats: Stats; selfModel: string }
   | { t: "agent"; agent: AgentView }
   | { t: "config"; config: ConfigView }
@@ -128,7 +131,8 @@ export type ServerMsg =
   | { t: "entity"; op: "upsert"; entity: Entity }
   | { t: "entity"; op: "remove"; id: string }
   | { t: "state"; desires: Desire[]; interests: Interest[]; inventory: InventoryItem[]; tools: ToolInfo[]; requests: ToolRequest[]; forged: ForgedTool[]; places: Place[]; journal: JournalEntry[]; keeper: KeeperView; catalog: CatalogEntry[]; taste: TasteView;
-      stats: Stats; selfModel: string };
+      stats: Stats; selfModel: string }
+) & Sequenced;
 export const HEAT_N = 60; // heat grid is HEAT_N x HEAT_N cells over the world
 
 /** Every client message may carry `cid`, an id the client makes up. A cid the server has seen is acknowledged as a duplicate and not run again. */
@@ -149,6 +153,7 @@ export type ClientMsg = (
   | { t: "skip_day" }
   | { t: "sim_advance"; until: "dawn" | "ticks" | "minutes"; amount?: number; decision?: "stop" | "wait" | "defer" }
   | { t: "sim_cancel" }
+  | { t: "resync" }
   | { t: "replay_speed"; speed: number }
   | { t: "replay_pause"; paused: boolean }
   | { t: "config_preset"; id: string }
