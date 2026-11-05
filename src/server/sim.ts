@@ -77,7 +77,17 @@ export const resetJobs = () => { jobs = []; };
 let errorHook: (name: string, e: unknown) => void = (n, e) => console.error(`sim: ${n} failed:`, e);
 export const onSimError = (fn: typeof errorHook) => { errorHook = fn; };
 
+/** How long recent ticks took in wall time (a measurement for the dashboard and the resource limits; it never feeds back). */
+const stepMs = new Float64Array(2000); let stepN = 0;
+export function simStepStats() {
+  const n = Math.min(stepN, stepMs.length); if (!n) return { n: 0, p50: 0, p95: 0, max: 0 };
+  const a = Array.from(stepMs.subarray(0, n)).sort((x, y) => x - y);
+  return { n, p50: +a[Math.floor(n * 0.5)]!.toFixed(3), p95: +a[Math.floor(n * 0.95)]!.toFixed(3), max: +a[n - 1]!.toFixed(3) };
+}
 function step() {
+  const t0 = performance.now(); stepOnce(); stepMs[stepN++ % stepMs.length] = performance.now() - t0;
+}
+function stepOnce() {
   clock.tick++;
   const due = timers.findIndex((t) => t.due > clock.tick);
   for (const t of timers.splice(0, due === -1 ? timers.length : due)) { try { t.fn(); } catch (e) { errorHook("timer", e); } }
