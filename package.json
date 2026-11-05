@@ -23,7 +23,9 @@
     "experiment": "tsx scripts/experiment.ts",
     "replay:serve": "tsx scripts/replay-serve.ts",
     "replay:serve-test": "tsx scripts/replay-serve-test.ts",
-    "protocol-test": "tsx scripts/protocol-test.ts"
+    "protocol-test": "tsx scripts/protocol-test.ts",
+    "migrate:legacy": "tsx scripts/migrate-legacy.ts",
+    "make:legacy-db": "tsx scripts/make-legacy-db.ts"
   },
   "dependencies": {
     "three": "^0.187.0",
