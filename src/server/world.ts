@@ -261,6 +261,8 @@ export class World {
     return this.lit() ? Math.max(r, 26) : r;
   }
 
+  /** Can this carried thing do that? (the read-only view plugins get: what it is made of and its state decide, never its name) */
+  canDo(id: string, capability: string) { return this.items.canDo(id, capability); }
   /** How strongly something draws River's attention (1 = ordinary): what it loves, and what surprised it, comes first. Set by the inner life. */
   attention: (id: string) => number = () => 1;
   dist(e: { x: number; z: number }) { return Math.hypot(e.x - this.me.x, e.z - this.me.z); }

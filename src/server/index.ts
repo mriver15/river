@@ -33,6 +33,8 @@ import { checkCode, resetRiver } from "./reset.ts";
 import { libraryForUi } from "./music.ts";
 import { recentMoments } from "./moments.ts";
 import { timeline } from "./timeline.ts";
+import { pluginRecords } from "./sandbox/plugin.ts";
+import { sandboxStats } from "./sandbox/host.ts";
 import { catchUp } from "./advance.ts";
 import { paramHistory, paramSet, RULESET } from "./config.ts";
 import { PRESETS } from "../content/presets.ts";
@@ -79,6 +81,7 @@ const server = http.createServer(async (req, res) => {
     const q = url.searchParams, n = (k: string) => (q.get(k) ? Number(q.get(k)) : undefined);
     return json(timeline({ actor: q.get("actor") ?? undefined, object: q.get("object") ?? undefined, activity: q.get("activity") ?? undefined, chain: q.get("chain") ?? undefined, source: q.get("source") ?? undefined, fromTick: n("from"), toTick: n("to"), limit: n("limit") }));
   }
+  if (url.pathname === "/api/plugins") return json({ plugins: [...pluginRecords.values()].map(({ file: _f, ...p }) => p), sandbox: sandboxStats });
   if (url.pathname === "/api/moments") return json(recentMoments(100));
   if (url.pathname === "/api/log") return json(logBefore(Number(url.searchParams.get("before") ?? 1e12), 200));
   if (fs.existsSync(DIST)) {
@@ -184,7 +187,8 @@ wss.on("connection", (ws) => {
       const r = requests(200).find((x) => x.id === m.id && x.status === "approved");
       if (r) forge(r).then(announce);
     } else if (m.t === "install") {
-      install(m.name).then((f) => { if (f) { agent.notify(`Your new tool "${f.name}" has been built and is now usable. Try it!`); addMemory(`The tool "${f.name}" was built for me and is now available.`, 7, ["tools"]); } });
+      const seq = recordCommand("human", "plugin_install", { t: "plugin_install", name: m.name });      // a controller command: it pins the source hash and capabilities the tool is given
+      install(m.name).then((f) => { finishCommand(seq, f ? "ok" : "error", f ? f.log.split("\n").pop() ?? "" : "nothing staged under that name"); if (f) { agent.notify(`Your new tool "${f.name}" has been built and is now usable. Try it!`); addMemory(`The tool "${f.name}" was built for me and is now available.`, 7, ["tools"]); } });
     } else if (m.t === "reject") reject(m.name);
     else if (m.t === "pause") agent.setPaused(m.paused);
   });

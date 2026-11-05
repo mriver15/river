@@ -12,6 +12,9 @@ import { chat, type ChatMessage } from "./llm.ts";
 import { GATED, syncApprovals } from "./mind.ts";
 import { BASE_TOOLS, PLUGIN_TOOLS, registerPlugin } from "./tools.ts";
 import type { ForgedTool, ToolRequest } from "../shared/types.ts";
+import { LIMITS, scanSource, validateResult } from "./sandbox/contract.ts";
+import { describePlugin, hashOf, runPlugin, type Snapshot } from "./sandbox/host.ts";
+import { installPin } from "./sandbox/plugin.ts";
 
 const ROOT = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const PLUGINS = path.join(ROOT, "src/server/plugins");
@@ -82,6 +85,7 @@ function staticCheck(code: string, name: string): string[] {
   if (bad) problems.push(`forbidden construct: ${bad[0]}`);
   if (!new RegExp(`name:\\s*["']${name}["']`).test(code)) problems.push(`tool name must be exactly "${name}"`);
   if (!/export\s+default/.test(code)) problems.push("missing default export");
+  const scan = scanSource(code); if (scan.unsupported.length) problems.push(`uses what the plugin contract does not offer: ${scan.unsupported.join(", ")}. It may read w.me, w.nearby, w.entities, w.findItem, w.canDo, w.timeLabel, w.spotNearMe, and ask (not do) w.addItem, w.takeItem, w.putEntity, w.spawn, w.removeEntity, w.bump, w.setActivity, log.`);
   return problems;
 }
 
@@ -102,14 +106,23 @@ async function typecheck(file: string): Promise<string[]> {
   return out.split("\n").filter((l) => l.startsWith(rel));
 }
 
+/** Run the staged plugin once in the sandbox against a made-up corner of the island, and check the result against the contract. */
 async function smoke(file: string, argsJson: string): Promise<{ ok: boolean; out: string }> {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "river-smoke-"));
-  // minimal env: generated code never sees API keys
-  const env = { PATH: process.env.PATH, HOME: process.env.HOME, RIVER_DB: path.join(tmp, "smoke.db") };
-  const { out } = await run(BIN("tsx"), [path.join(ROOT, "src/server/smoke.ts"), file, argsJson], env, 45_000);
-  fs.rmSync(tmp, { recursive: true, force: true });
-  const m = out.match(/^RESULT (.*)$/m);
-  return m ? JSON.parse(m[1]) : { ok: false, out: out.slice(-600) };
+  const source = fs.readFileSync(file, "utf8"), scan = scanSource(source);
+  const meta = await describePlugin(source);
+  if ("error" in meta) return { ok: false, out: `The sandbox could not load it: ${meta.error}` };
+  const item = (id: string, kind: string, name: string) => ({ id, kind, name, desc: `A ${name}.`, qty: 3 });
+  let args: unknown = {}; try { args = JSON.parse(argsJson || "{}"); } catch { /* use none */ }
+  const snap: Snapshot = {
+    me: { x: 0, z: 0, heading: 0, needs: { energy: 80, hunger: 70, mood: 60, curiosity: 70, warmth: 70 }, sleeping: false, name: "River" },
+    entities: [{ id: "tree_1", kind: "tree", name: "oak", x: 1.5, z: 0, props: { yields: ["stick"], stock: 4, max: 4 } }, { id: "rock_1", kind: "rock", name: "boulder", x: -3, z: 2, props: {} }],
+    inventory: [item("i1", "stick", "stick"), item("i2", "stone", "stone"), item("i3", "seed", "seed"), item("i4", "berry", "wild berry"), item("i5", "flower", "blue starflower"), item("i6", "mushroom", "brown mushroom")],
+    reach: 5, timeLabel: "noon", spots: Object.fromEntries(Array.from({ length: 16 }, (_, i) => [String((i + 1) / 2), { x: 1 + i / 2, z: 1 }])), caps: { i1: ["cuts"], i2: ["cuts"] },
+    rng: Array.from({ length: LIMITS.rng }, (_, i) => ((i * 0.61803) % 1)), limits: { waitMs: LIMITS.waitMs }, args,
+  };
+  const r = await runPlugin(source, snap, { name: meta.name, hash: hashOf(source), gen: 0, tick: 0 });
+  if (r.ok) { try { validateResult(r, new Set(scan.capabilities)); } catch (e) { return { ok: false, out: `Its result breaks the plugin contract: ${(e as Error).message}` }; } return { ok: true, out: r.text! }; }
+  return r.failure === "tool" ? { ok: true, out: `(ToolError, handled) ${r.message}` } : { ok: false, out: `${r.failure}: ${r.message}` };
 }
 
 /** Pull the file out of a model reply: fenced block (any language tag, closed or not), else the raw text if it looks like code. */
@@ -188,6 +201,8 @@ export async function install(name: string): Promise<ForgedTool | null> {
   const dest = path.join(PLUGINS, `${name}.ts`);
   fs.writeFileSync(dest, f.code + "\n");
   fs.rmSync(stagedFile(name), { force: true });
+  const pin = installPin(name, f.code + "\n");            // the permissions it is given are the ones this exact source declares
+  save(name, f.request_id, "installed", f.code, f.log + `\nInstalled: pinned to ${pin.hash} with ${pin.capabilities.join(", ") || "no capabilities"}.`);
   await registerPlugin(dest, true);
   db.prepare("INSERT INTO tools(name, approved) VALUES(?,1) ON CONFLICT(name) DO UPDATE SET approved=1").run(name);
   syncApprovals();

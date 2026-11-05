@@ -92,7 +92,8 @@ export function validateOp(o: unknown, i: number): asserts o is Op {
       if (!str(o.id, 60) || !str(o.name, 80) || !finite(o.x) || !finite(o.z) || Math.abs(o.x) > WORLD || Math.abs(o.z) > WORLD) throw new ContractError(`${at}: entity changes need an id, a name and a place on the island`);
       props(o.props); break;
     case "spawn":
-      if (!str(o.kind, 20) || !ENTITY_KINDS.has(o.kind) || !str(o.name, 80) || !o.name || !finite(o.x) || !finite(o.z) || Math.abs(o.x) > WORLD || Math.abs(o.z) > WORLD) throw new ContractError(`${at}: ${typeof o.kind === "string" ? `"${o.kind}" cannot be created by a plugin` : "a new thing needs a kind, a name and a place on the island"}`);
+      if (!str(o.kind, 20) || !ENTITY_KINDS.has(o.kind)) throw new ContractError(`${at}: ${typeof o.kind === "string" ? `"${o.kind}" cannot be created by a plugin` : "a new thing needs a kind"}`);
+      if (!str(o.name, 80) || !o.name || !finite(o.x) || !finite(o.z) || Math.abs(o.x) > WORLD || Math.abs(o.z) > WORLD) throw new ContractError(`${at}: a new thing needs a name and a place on the island`);
       props(o.props); if (!str(o.tmp, 40)) throw new ContractError(`${at}: missing handle`); break;
     case "removeEntity": if (!str(o.id, 60)) throw new ContractError(`${at}: removal needs an id`); break;
     case "bump":

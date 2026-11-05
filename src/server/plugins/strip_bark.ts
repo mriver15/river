@@ -40,7 +40,7 @@ const stripBark: ToolDef = {
     if (a.with) {
       tool = w.findItem(String(a.with));
       if (!tool) throw new ToolError(`You aren't carrying anything called "${a.with}".`);
-      if (!w.items.canDo(tool.id, "cuts"))                        // what it can do, not what it is called
+      if (!w.canDo(tool.id, "cuts"))                        // what it can do, not what it is called
         throw new ToolError(`${tool.name} won't bite into bark. Use a sharp stone or a blade — or your hands.`);
     }
 

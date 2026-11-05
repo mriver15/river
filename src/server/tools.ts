@@ -1,3 +1,4 @@
+import { loadPlugin } from "./sandbox/plugin.ts";
 import { TEND_TOOL } from "./firstaid.ts";
 import { DEFEND_TOOL, FISH_TOOL } from "./wildlife.ts";
 import { CLOTHE_TOOL } from "./clothing.ts";
@@ -409,9 +410,9 @@ for (const t of GATED_TOOLS) GATED[t.name] ??= t.description;
 export const PLUGIN_TOOLS: ToolDef[] = [];
 
 /** Load (or hot-reload) one plugin file. `bust` bypasses the module cache for a changed file. */
-export async function registerPlugin(file: string, bust = false) {
-  const tool: ToolDef = (await import(pathToFileURL(file).href + (bust ? `?v=${Date.now()}` : ""))).default;
-  if (!tool?.name || typeof tool.run !== "function") throw new Error(`${file}: no valid default-exported ToolDef`);
+export async function registerPlugin(file: string, _bust = false) {
+  const tool = await loadPlugin(file);              // described and run by the sandbox; the engine never imports plugin source
+  if (!tool) return null;                           // disabled, with its reason recorded (see /api/plugins)
   const i = PLUGIN_TOOLS.findIndex((t) => t.name === tool.name);
   if (i >= 0) PLUGIN_TOOLS[i] = tool; else PLUGIN_TOOLS.push(tool);
   GATED[tool.name] = tool.description;         // shows up in the catalog / Tools tab
