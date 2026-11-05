@@ -58,6 +58,8 @@ function resolve(w: World, spec: any, origin: XZ, fallback?: () => XZ): XZ {
   if (fallback) return fallback(); throw new ToolError("Say where: coordinates, something to build beside, or a direction and distance.");
 }
 
+/** Space left between a new structure and River, so River is outside it, with room to walk. */
+const STAND_CLEAR = 0.8;
 const BLOCKERS = new Set(["tree", "rock", "bush", "structure", "library", "shrine", "monolith", "campfire", "char"]);
 function samples(shape: Spec, a: XZ, b?: XZ): XZ[] {
   if (shape.line && b) { const n = Math.max(2, Math.ceil(dist(a, b))); return Array.from({ length: n + 1 }, (_, i) => ({ x: a.x + ((b.x - a.x) * i) / n, z: a.z + ((b.z - a.z) * i) / n })); }
@@ -75,6 +77,11 @@ function siteProblem(w: World, shapeName: Shape, a: XZ, b: XZ | undefined, spec:
   }
   const hs = pts.map((p) => heightAt(p.x, p.z, w.seed)).filter((_, i) => bridge ? i === 0 || i === pts.length - 1 : true), rise = Math.max(...hs) - Math.min(...hs);
   if (bridge ? rise > 1.8 : rise > 0.9 + spec.radius * 0.35 + (spec.line ? 0.5 : 0)) return `The ground is too ${bridge ? "uneven between the two banks" : "steep there"}: it changes by ${rise.toFixed(1)}m across the spot.`;
+  // Something that blocks the way must not be raised on top of River: it would stand inside its own walls and could not move out of them.
+  if (!spec.walk) {
+    const reach = (spec.line ? spec.radius : spec.radius * 1.15) + STAND_CLEAR;
+    if ((spec.line ? pts : [a]).some((p) => dist(p, w.me) < reach)) return `You are standing where that would be. Step ${spec.line ? "away from its line" : `at least ${reach.toFixed(1)}m from where its middle would be`} first; you build with your hands, so a few paces off is close enough.`;
+  }
   for (const { e, d } of w.nearby(60)) {
     if (!BLOCKERS.has(e.kind) || (e.props.walk && e.kind === "structure")) continue;
     const clear = e.kind === "tree" ? 0.7 : e.kind === "structure" ? (e.props.radius ?? 1) + 0.4 : 0.6;
@@ -123,7 +130,7 @@ export const BUILD_TOOL: ToolDef = {
     const shapeName = String(a.shape ?? "") as Shape, spec = SHAPES[shapeName];
     if (!spec) throw new ToolError(`Choose a shape: ${Object.keys(SHAPES).join(", ")}.`);
     const size = (a.size && a.size in SIZE ? a.size : "small") as keyof typeof SIZE, s = SIZE[size];
-    const A = resolve(w, a.where, w.me, () => ({ x: w.me.x + Math.cos(w.me.heading) * 2.6, z: w.me.z + Math.sin(w.me.heading) * 2.6 }));
+    const A = resolve(w, a.where, w.me, () => { const ahead = spec.walk ? 2.6 : (spec.line ? spec.radius : spec.radius * 1.15) + STAND_CLEAR + 0.4; return { x: w.me.x + Math.cos(w.me.heading) * ahead, z: w.me.z + Math.sin(w.me.heading) * ahead }; });
     let B: XZ | undefined;
     if (spec.line) { if (!a.to) throw new ToolError(`A ${spec.word} has two ends. Say where it ends with \`to\`.`); B = resolve(w, a.to, A); }
     const length = B ? dist(A, B) : 0, need = spec.need(s, length);

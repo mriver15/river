@@ -11,9 +11,10 @@ const { setConfig } = await import("../src/server/config.ts");
 for (const [k, v] of Object.entries({ weather: false, ambientRate: 0, prey: false, smallWild: false, predators: false, needsRate: 0, fallRate: 0 })) setConfig(k, v as number | boolean);
 const { createRuntime, startSystems } = await import("../src/server/runtime.ts");
 const { db } = await import("../src/server/db.ts");
+const { planPath } = await import("../src/server/nav.ts");
 const { findTool } = await import("../src/server/tools.ts");
 const { bodyApi } = await import("../src/server/body.ts");
-const { isLand } = await import("../src/shared/noise.ts");
+const { isLand, heightAt } = await import("../src/shared/noise.ts");
 const rt = await createRuntime();
 startSystems(rt);
 const w = rt.world, R = w.items, A = rt.activities;
@@ -161,4 +162,41 @@ test("what comes back from taking a weathered structure apart is less", async ()
   const e = mk("weathered tower", { stick: 10 }, { integrity: 0.5 });
   await build({ action: "take_down", target: e.id });
   assert.equal(have("stick"), 3, "60% of 10, halved by the weathering: 3");
+});
+
+/** level, open ground with room all round: so the only thing that can refuse a hut is River standing in the way */
+function flatGround() {
+  let best: { x: number; z: number; rise: number } | null = null;
+  for (let x = -60; x < 60; x += 2) for (let z = -60; z < 60; z += 2) {
+    const pts: [number, number][] = []; for (let dx = -4; dx <= 4; dx += 1) for (let dz = -4; dz <= 4; dz += 1) pts.push([x + dx, z + dz]);
+    if (!pts.every(([px, pz]) => isLand(px, pz, w.seed))) continue;
+    const hs = pts.map(([px, pz]) => heightAt(px, pz, w.seed)), rise = Math.max(...hs) - Math.min(...hs);
+    if (!best || rise < best.rise) best = { x, z, rise };
+  }
+  if (!best) throw new Error("no level ground"); return best;
+}
+function freshFlat(sticks: number) { const g = fresh(sticks, 0), f = flatGround(); w.me.x = f.x; w.me.z = f.z; return f; void g; }
+
+test("nothing that blocks the way can be raised on top of River, and the default spot is in front of River, not under it", async () => {
+  const g = freshFlat(20);
+  await assert.rejects(() => build({ shape: "hut", materials: { stick: 8 }, where: { x: g.x, z: g.z } }), /standing where that would be/);
+  await assert.rejects(() => build({ shape: "hut", materials: { stick: 8 }, where: { x: g.x + 1, z: g.z } }), /standing where that would be/, "close enough to overlap is as bad as the same spot");
+  await assert.rejects(() => build({ shape: "bench", materials: { stick: 3 }, where: { x: g.x + 0.3, z: g.z } }), /standing where that would be/);
+  await assert.rejects(() => build({ shape: "wall", materials: { stick: 8 }, where: { x: g.x - 4, z: g.z }, to: { x: g.x + 4, z: g.z } }), /standing where that would be/, "a wall running through River is no better");
+  assert.equal(structures().length, 0, "and nothing was built or spent");
+  assert.equal(have("stick"), 20);
+  // with no place given, it goes in front, clear of River
+  const done = build({ shape: "hut", materials: { stick: 8 }, name: "front hut" }).catch((e) => e);
+  await run(4000, () => structures().length > 0 && !structures()[0]!.props.unfinished);
+  assert.match(String(await done), /You build "front hut"/);
+  const hut = structures()[0]!, d = Math.hypot(hut.x - w.me.x, hut.z - w.me.z);
+  assert.ok(d >= hut.props.radius + 0.7, `River stands ${d.toFixed(1)}m from the middle of a hut ${hut.props.radius.toFixed(1)}m wide: outside it`);
+  assert.ok(planPath(w, { x: w.me.x, z: w.me.z }, { x: w.me.x - 10, z: w.me.z }, () => true), "and can still walk away");
+});
+
+test("something walked on may be raised where River stands: a platform is for standing on", async () => {
+  const g = freshFlat(20);
+  const done = build({ shape: "platform", materials: { stick: 6 }, where: { x: g.x, z: g.z }, name: "stand" }).catch((e) => e);
+  await run(4000, () => structures().length > 0 && !structures()[0]!.props.unfinished);
+  assert.match(String(await done), /You build "stand"/);
 });
