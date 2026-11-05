@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { bus, log } from "./bus.ts";
 import { db } from "./db.ts";
 import { chat, type ChatMessage } from "./llm.ts";
+import { forgeModelName } from "./provider.ts";
 import { GATED, grantTool, syncApprovals } from "./mind.ts";
 import { BASE_TOOLS, PLUGIN_TOOLS, registerPlugin } from "./tools.ts";
 import type { ForgedTool, ToolRequest } from "../shared/types.ts";
@@ -20,7 +21,6 @@ const ROOT = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const PLUGINS = path.join(ROOT, "src/server/plugins");
 // staged files sit next to real plugins (so relative imports resolve and typecheck sees them); the loader skips "_" files
 const stagedFile = (name: string) => path.join(PLUGINS, `_staged_${name}.ts`);
-const FORGE_MODEL = process.env.RIVER_FORGE_MODEL;           // optional stronger model for writing code
 const AUTO_INSTALL = process.env.RIVER_AUTO_INSTALL === "1";  // skip human review (see README caveat)
 const MAX_ATTEMPTS = 3;
 
@@ -151,7 +151,7 @@ export async function forge(req: ToolRequest, onStaged?: (t: ForgedTool) => void
   const file = stagedFile(name);
   try {
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      const r = await chat({ consumer: "forge", reason: name, messages, maxTokens: 12000, model: FORGE_MODEL });
+      const r = await chat({ consumer: "forge", reason: name, messages, maxTokens: 12000, model: forgeModelName() });
       messages.push(r.message);
       code = extractCode(r.text);
       let problems: string[] = [];

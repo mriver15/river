@@ -7,6 +7,8 @@ import { PRESETS, presetById } from "../content/presets.ts";
 import { RULES_VERSION } from "../content/materials.ts";
 import type { ConfigDef, ConfigView } from "../shared/types.ts";
 
+const envBaseUrl = (process.env.LLM_BASE_URL ?? "").replace(/\/$/, "");
+const envProvider = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\]):11434/.test(envBaseUrl) ? "ollama" : envBaseUrl ? "custom" : "deepseek";
 const env = (k: string, d: number) => { const v = Number(process.env[k]); return process.env[k] !== undefined && Number.isFinite(v) ? v : d; };
 
 export const DEFS: ConfigDef[] = [
@@ -16,6 +18,12 @@ export const DEFS: ConfigDef[] = [
   { key: "emotionSpeed", group: "Feelings", label: "How fast feelings fade", help: "Scales every feeling's half-life: 2 means they fade twice as fast, 0.5 half as fast. Loneliness has no half-life and is unaffected.", type: "number", def: 1, min: 0.25, max: 4, step: 0.25, unit: "×" },
   { key: "offlineCatchup", group: "Time & weather", label: "Catch up after an absence", help: "Off: the world waits, frozen, while the server is not running. On: when it starts again, the world runs forward by the time that passed, up to the limit below, and tells you what happened.", type: "toggle", def: false },
   { key: "catchupMaxDays", group: "Time & weather", label: "Longest catch-up", help: "World days, at most, simulated after an absence. Time beyond this is reported as not simulated.", type: "number", def: 1, min: 0.1, max: 7, step: 0.1, unit: "days" },
+  { key: "llmProvider", group: "AI provider", label: "Where River's mind runs", help: "DeepSeek is hosted and needs DEEPSEEK_API_KEY in .env. Ollama runs models on this machine (or one you point it at) and needs no key. The model must support tool calling.", type: "choice", def: envProvider, options: [{ value: "deepseek", label: "DeepSeek (hosted)" }, { value: "ollama", label: "Ollama (local)" }, { value: "custom", label: "Another OpenAI-compatible server" }] },
+  { key: "llmBaseUrl", group: "AI provider", label: "Server address", help: "Leave empty for the usual one: api.deepseek.com, or http://localhost:11434 for Ollama. For another server, its OpenAI-style address (ending in /v1). A key, if it needs one, is LLM_API_KEY in .env: keys are never kept in these settings.", type: "text", def: envBaseUrl, placeholder: "default" },
+  { key: "llmModel", group: "AI provider", label: "Model", help: "For Ollama, the name as `ollama list` shows it (for example `gpt-oss:20b`). It needs tool calling, and a context window of at least 16k: set OLLAMA_CONTEXT_LENGTH=16384 when starting Ollama, or River's prompt is silently cut short. Use Test to check both.", type: "text", def: process.env.RIVER_MODEL ?? "", placeholder: "provider default" },
+  { key: "forgeModel", group: "AI provider", label: "Model for writing tools", help: "Optional: a stronger model used only when the tool smith writes a plugin. Empty means the model above.", type: "text", def: process.env.RIVER_FORGE_MODEL ?? "", placeholder: "same as above" },
+  { key: "llmTimeoutSeconds", group: "AI provider", label: "Longest wait for an answer", help: "A local model on a slow machine may need minutes. After this River gives up on that thought and tries again.", type: "number", def: process.env.LLM_BASE_URL ? 600 : 180, min: 20, max: 1800, step: 10, unit: "s" },
+  { key: "budgetLocal", group: "AI provider", label: "Count a local model against the token budget", help: "Tokens on your own machine cost nothing but time. Off: the hourly token and thought limits apply only to hosted models.", type: "toggle", def: false },
   { key: "weather", group: "Time & weather", label: "Weather", help: "Off means clear skies always.", type: "toggle", def: true },
   { key: "ambientRate", group: "Time & weather", label: "World events", help: "How often strange and beautiful things happen. 0 is none.", type: "number", def: env("AMBIENT_RATE", 1), min: 0, max: 3, step: 0.25, unit: "×" },
 
@@ -49,21 +57,22 @@ export const DEFS: ConfigDef[] = [
   { key: "offpeak", group: "Budget", label: "Off-peak multiplier", help: "Budget stretches by this much when the API is cheap.", type: "number", def: env("OFFPEAK_MULTIPLIER", 2), min: 1, max: 4, step: 0.5, unit: "×" },
 ];
 /** Who owns each parameter, and what it only means when something else is on. Everything here takes effect the next time it is read. */
-const OWNER: Record<string, string> = { "Time & weather": "clock", Wildlife: "wildlife", Survival: "body", Instincts: "activities", "River's mind": "brain", Budget: "brain", Perception: "perception", Feelings: "emotions" };
+const OWNER: Record<string, string> = { "Time & weather": "clock", Wildlife: "wildlife", Survival: "body", Instincts: "activities", "River's mind": "brain", Budget: "brain", "AI provider": "brain", Perception: "perception", Feelings: "emotions" };
 const NEEDS: Record<string, string[]> = { reflexEscapeDistance: ["reflexEscape"], damageScale: ["predators"], catchupMaxDays: ["offlineCatchup"] };
 export const RULESET = `rules-${RULES_VERSION}`;
 for (const d of DEFS) { d.owner ??= OWNER[d.group] ?? "world"; d.applies ??= "immediate"; d.ruleset ??= RULESET; if (NEEDS[d.key]) d.needs ??= NEEDS[d.key]; }
 const byKey = new Map(DEFS.map((d) => [d.key, d]));
-let over: Record<string, number | boolean> = kvGet<Record<string, number | boolean>>("config", {});
-const listeners: ((key: string, value: number | boolean, old: number | boolean) => void)[] = [];
+let over: Record<string, number | boolean | string> = kvGet<Record<string, number | boolean | string>>("config", {});
+const listeners: ((key: string, value: number | boolean | string, old: number | boolean | string) => void)[] = [];
 
 export function cfg(key: "weather" | "prey" | "smallWild" | "predators" | "lethal" | "traceAll" | "offlineCatchup"): boolean;
+export function cfg(key: "llmProvider" | "llmBaseUrl" | "llmModel" | "forgeModel"): string;
 export function cfg(key: string): number;
 export function cfg(key: string): any { const d = byKey.get(key); if (!d) throw new Error(`unknown setting ${key}`); const v = over[key]; return v === undefined ? d.def : v; }
-export const onConfig = (fn: (key: string, value: number | boolean, old: number | boolean) => void) => { listeners.push(fn); };
+export const onConfig = (fn: (key: string, value: number | boolean | string, old: number | boolean | string) => void) => { listeners.push(fn); };
 
 /** The values now in force, as one immutable set identified by its hash. A snapshot or a checkpoint names the set it ran under. */
-export const effective = (): Record<string, number | boolean> => Object.fromEntries(DEFS.map((d) => [d.key, cfg(d.key)]));
+export const effective = (): Record<string, number | boolean | string> => Object.fromEntries(DEFS.map((d) => [d.key, cfg(d.key)]));
 export const paramSet = (): string => canonicalHash({ ruleset: RULESET, values: effective() }).slice(0, 16);
 /** Remember the set in force and when it began, so a past run can be matched to the parameters it ran under. */
 export function recordParams(cause: string) {
@@ -75,11 +84,16 @@ export const paramHistory = () => db.prepare("SELECT l.tick, l.hash, l.cause, s.
 
 export function setConfig(key: string, raw: unknown): boolean {
   const d = byKey.get(key); if (!d) return false;
-  let v: number | boolean;
-  if (d.type === "toggle") v = !!raw; else { const n = Number(raw); if (!Number.isFinite(n)) return false; v = Math.min(d.max!, Math.max(d.min!, Math.round(n / d.step!) * d.step!)); }
+  let v: number | boolean | string;
+  if (d.type === "toggle") v = !!raw;
+  else if (d.type === "choice") { v = String(raw); if (!d.options?.some((o) => o.value === v)) return false; }
+  else if (d.type === "text") {
+    v = String(raw ?? "").trim().slice(0, 200);
+    if (key.endsWith("BaseUrl") && v && !/^https?:\/\/[^\s/]+/i.test(v)) return false;                 // an address, or nothing for the default
+  } else { const n = Number(raw); if (!Number.isFinite(n)) return false; v = Math.min(d.max!, Math.max(d.min!, Math.round(n / d.step!) * d.step!)); }
   const old = cfg(key); if (old === v) return true;
   over = { ...over, [key]: v }; if (v === d.def) delete over[key];
-  kvSet("config", over); recordParams(`${key} = ${v}`); for (const f of listeners) f(key, v, old); return true;
+  kvSet("config", over); recordParams(`${key} = ${d.type === "text" ? JSON.stringify(v) : v}`); for (const f of listeners) f(key, v, old); return true;
 }
 /** Apply a named preset: each value in it, as one change. Returns the keys it changed. */
 export function applyPreset(id: string): string[] | null {

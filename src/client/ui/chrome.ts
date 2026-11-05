@@ -73,9 +73,10 @@ export function renderBudget() {
   const s = S.stats, chip = $("chip-budget"); if (!s) return;
   const pct = Math.min(100, Math.round((s.tokensLastHour / s.maxTokensPerHour) * 100));
   chip.querySelector<HTMLElement>("i")!.style.width = `${pct}%`;
-  chip.querySelector<HTMLElement>(".lbl")!.textContent = s.mock ? "mock brain" : `${pct}%${s.offPeak ? " · ½ price" : ""}`;
+  const unmetered = s.maxTokensPerHour >= 1e8;                      // a local model: the hourly caps do not apply
+  chip.querySelector<HTMLElement>(".lbl")!.textContent = s.mock ? "mock brain" : unmetered ? `local · ${(s.tokensLastHour / 1000).toFixed(0)}k/h` : `${pct}%${s.offPeak ? " · ½ price" : ""}`;
   chip.classList.toggle("high", pct >= 70 && pct < 95); chip.classList.toggle("full", pct >= 95);
-  chip.title = `${s.mock ? "Mock brain" : s.model}\n${(s.tokensLastHour / 1000).toFixed(0)}k of ${(s.maxTokensPerHour / 1000).toFixed(0)}k tokens this hour\n${s.cyclesLastHour} of ${s.maxCyclesPerHour} cycles\n${s.offPeak ? "Off-peak (half price, budget doubled)" : "Peak pricing"}${s.cacheHitPct ? `\n${s.cacheHitPct}% of input cached` : ""}`;
+  chip.title = `${s.mock ? "Mock brain" : s.model}\n${unmetered ? `${(s.tokensLastHour / 1000).toFixed(0)}k tokens this hour (no limit on a local model)` : `${(s.tokensLastHour / 1000).toFixed(0)}k of ${(s.maxTokensPerHour / 1000).toFixed(0)}k tokens this hour`}\n${s.cyclesLastHour} cycles\n${s.offPeak ? "Off-peak (half price, budget doubled)" : "Peak pricing"}${s.cacheHitPct ? `\n${s.cacheHitPct}% of input cached` : ""}`;
   const p = $("btn-pause"); setIcon(p, s.paused ? "play" : "pause"); p.classList.toggle("on", s.paused); p.title = s.paused ? "Resume River (P)" : "Pause River (P)";
   const fz = $("btn-freeze"); fz.classList.toggle("on", s.worldPaused); fz.title = s.worldPaused ? "Thaw the world (W)" : "Freeze the whole world (W)";
 }
@@ -182,8 +183,8 @@ export async function startNewRiver(prev?: { world: boolean; error?: string }): 
 
 export function openControls() {
   const d = el("dialog", "dlg"); d.append(el("h2", "", "Controls"));
-  const s = S.stats, used = s ? `${(s.tokensLastHour / 1000).toFixed(0)}k of ${(s.maxTokensPerHour / 1000).toFixed(0)}k tokens · ${s.cyclesLastHour} of ${s.maxCyclesPerHour} cycles this hour` : "";
-  const b1 = el("section", "sect"); b1.append(el("h4", "", "Budget & cycles"), el("p", "intro", `${used}. Resetting clears the local counters, ends any error backoff, and starts River thinking again right away. It doesn't change what DeepSeek bills.`));
+  const s = S.stats, used = s ? (s.maxTokensPerHour >= 1e8 ? `${(s.tokensLastHour / 1000).toFixed(0)}k tokens · ${s.cyclesLastHour} cycles this hour (no limit on a local model)` : `${(s.tokensLastHour / 1000).toFixed(0)}k of ${(s.maxTokensPerHour / 1000).toFixed(0)}k tokens · ${s.cyclesLastHour} of ${s.maxCyclesPerHour} cycles this hour`) : "";
+  const b1 = el("section", "sect"); b1.append(el("h4", "", "Budget & cycles"), el("p", "intro", `${used}. Resetting clears the local counters, ends any error backoff, and starts River thinking again right away. It doesn't change what a hosted provider bills.`));
   const rb = el("button", "btn", "Reset budget & restart cycles"); rb.onclick = () => { send({ t: "reset_budget" }); d.close(); }; b1.append(rb);
   const b2 = el("section", "sect danger"); b2.append(el("h4", "", "Danger zone"), el("p", "intro", "Begin again with a brand-new River. Needs a confirmation code, and the old life is backed up first."));
   const nr = el("button", "btn no", "Start a new River…"); nr.onclick = () => { d.close(); void startNewRiver(); }; b2.append(nr);

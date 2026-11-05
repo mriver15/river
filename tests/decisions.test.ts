@@ -30,6 +30,7 @@ delete process.env.MOCK_LLM; process.env.EMBED_DISABLED = "1";
 const sim = await import("../src/server/sim.ts");
 const { setConfig } = await import("../src/server/config.ts");
 for (const [k, v] of Object.entries({ weather: false, ambientRate: 0, prey: false, smallWild: false, predators: false, needsRate: 0, fallRate: 0, thinkSeconds: 8 })) setConfig(k, v as number | boolean);
+setConfig("llmModel", "scripted"); setConfig("budgetLocal", true);          // the stand-in model is local, and these tests are about the budget
 const { createRuntime, startSystems } = await import("../src/server/runtime.ts");
 const { db } = await import("../src/server/db.ts");
 const { record, maxTokensNow, usageStats } = await import("../src/server/usage.ts");

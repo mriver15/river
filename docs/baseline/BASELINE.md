@@ -389,3 +389,9 @@ Still not done:
 - **The Tools tab does not yet show why a plugin is disabled**; the reason is in the log and at `/api/plugins`.
 - **The full migration of a live database was rehearsed on a fixture, not on `data/`.** Do that on a copy before cutover.
 - **Optional worker extraction** was not done.
+
+## AI provider settings
+
+`src/server/provider.ts`, `provider-check.ts`, `llm.ts`, `config.ts`, the settings pane. The provider (DeepSeek, Ollama or another OpenAI-compatible server), its address, the model, a separate model for the tool smith and the longest wait are settings, read at every call, so a change applies to River's next thought. Settings gained text and choice types, validated and journaled like the rest. A Test button reaches the server, lists the models it has, asks the chosen one to call a tool, and for Ollama compares its context window with the size of River's prompt. Reasoning inside `<think>` tags is kept apart from what River acts on. Errors say what to do (pull the model, start Ollama, pick a model that supports tools). A local model is not held to the hourly token budget unless turned on. Keys stay in `.env`.
+
+Not done: a model without native tool calling cannot be used (there is no text-based tool-call fallback); embeddings still take their address and model from `EMBED_*` in `.env`; only Ollama's context window is checked; the models list for other servers depends on them offering `/models`; a switch of provider mid-life is allowed and is not noted in River's history.

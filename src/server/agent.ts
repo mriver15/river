@@ -1,7 +1,8 @@
 import { cfg } from "./config.ts";
 import { bodyText } from "./clothing.ts";
 import { feelingsText } from "./body.ts";
-import { chat, MODEL, type ChatMessage } from "./llm.ts";
+import { chat, type ChatMessage } from "./llm.ts";
+import { modelName, provider } from "./provider.ts";
 import { TriggerQueue, Hysteresis, PRIORITY, type Trigger, type TriggerKind } from "../brain/triggers.ts";
 import { assemble, estimateTokens, type Item } from "../brain/packet.ts";
 import { sensesText } from "./ambient.ts";
@@ -96,7 +97,7 @@ export class Agent {
 
   stats() {
     const hourAgo = Date.now() - 3_600_000;
-    return { cyclesLastHour: this.cycleTimes.filter((t) => t > hourAgo).length, maxCyclesPerHour: maxCyclesNow(), paused: this.paused, mock: MOCK, model: MOCK ? "mock" : MODEL, queued: this.queue.size, exhausted: this.exhausted, worldPaused: simPaused(), simTick: simTick(), simSpeed: simSpeed(), ...usageStats() };
+    return { cyclesLastHour: this.cycleTimes.filter((t) => t > hourAgo).length, maxCyclesPerHour: maxCyclesNow(), paused: this.paused, mock: MOCK, model: MOCK ? "mock" : `${modelName() || "no model chosen"}${provider().local ? " (local)" : ""}`, queued: this.queue.size, exhausted: this.exhausted, worldPaused: simPaused(), simTick: simTick(), simSpeed: simSpeed(), ...usageStats() };
   }
   /** Clear the local token and cycle accounting, drop any error backoff, and start thinking again right away. */
   restartCycles() {
@@ -143,7 +144,7 @@ export class Agent {
   async run() {
     if (this.running) return;
     this.running = true;
-    log("system", `${this.w.me.name} is alive.${MOCK ? " (mock brain: no API calls)" : ` Model: ${MODEL}.`}`);
+    log("system", `${this.w.me.name} is alive.${MOCK ? " (mock brain: no API calls)" : ` Model: ${modelName() || "none chosen yet"} via ${provider().label}.`}`);
     for (;;) {
       try {
         if (this.halted || this.paused) { await this.idle(1000); continue; }

@@ -1,12 +1,20 @@
 # River World
 
-River is an always-live agent that lives its own life on a persistent 3D island. The brain is DeepSeek.
+River is an always-live agent that lives its own life on a persistent 3D island. The brain is DeepSeek by default, or any model you run yourself through Ollama (chosen in Settings).
 
-- **Brain** – DeepSeek (OpenAI-compatible API), run in repeated "cycles" (state snapshot → several tool calls → summary). `src/server/agent.ts`, `llm.ts`
+- **Brain** – DeepSeek, Ollama or any OpenAI-compatible server (Settings → AI provider), run in repeated "cycles" (state snapshot → several tool calls → summary). `src/server/agent.ts`, `llm.ts`
 - **Memory** – SQLite + FTS5. Retrieval = relevance + importance + recency. Periodic reflection writes insights, updates a self-image, interests and desires; stale trivia is forgotten. `memory.ts`, `mind.ts`
 - **World** – deterministic island + persistent entities, inventory, needs, day/night, regrowth, growing plants. `world.ts`
 - **Tools** – a base set; `web_search`, `web_fetch`, `craft`, `plant`, `build` stay locked until you approve River's request. River can also invent tools that don't exist ("new tool idea"). `tools.ts`, `web.ts`
 - **UI** – three.js world, full action log with filters, mind/needs/desires/interests, inventory, tool requests, memory search, talk to River, leave gifts.
+
+## Choosing the AI provider
+
+Settings → **AI provider** (first group) switches River's mind between DeepSeek (hosted, key in `.env`), **Ollama** (local, no key) and any other OpenAI-compatible server, live, with no restart.
+For Ollama: pick *Ollama*, leave the address empty (or give a remote machine's), choose a model from the list of what you have pulled, and press **Test this setup**.
+The test reaches the server, checks the model is there, asks it to call a tool (River acts only through tool calls, so a model without tool support cannot play) and checks Ollama's context window.
+Start Ollama with `OLLAMA_CONTEXT_LENGTH=16384` or more: Ollama silently cuts a prompt that does not fit. Local models are not held to the hourly token budget unless you turn that on.
+Keys are never kept in settings; set `LLM_API_KEY` or `DEEPSEEK_API_KEY` in `.env`. A separate model can be set for the tool smith's code writing.
 
 ## Run
 

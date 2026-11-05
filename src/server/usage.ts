@@ -1,5 +1,6 @@
 // Token accounting: every LLM call (agent cycles, reflection, tool smith) is recorded, persisted, and capped.
 import { cfg } from "./config.ts";
+import { budgetApplies } from "./provider.ts";
 import { kvGet, kvSet } from "./db.ts";
 
 interface Rec { ts: number; inp: number; out: number; hit: number; c?: string; r?: string; ms?: number }
@@ -15,8 +16,10 @@ export function isPeak(d = new Date()): boolean {
   const h = d.getUTCHours() + d.getUTCMinutes() / 60;
   return PEAK.some(([a, b]) => h >= a && h < b);
 }
-export const maxTokensNow = () => Math.round(cfg("tokensK") * 1000 * (isPeak() ? 1 : cfg("offpeak")));
-export const maxCyclesNow = () => Math.round(cfg("cycles") * (isPeak() ? 1 : cfg("offpeak")));
+/** What a local model may use is only limited if the human asks: the caps exist to pace spending, and it costs nothing. */
+const UNLIMITED = 1_000_000_000;
+export const maxTokensNow = () => (budgetApplies() ? Math.round(cfg("tokensK") * 1000 * (isPeak() ? 1 : cfg("offpeak"))) : UNLIMITED);
+export const maxCyclesNow = () => (budgetApplies() ? Math.round(cfg("cycles") * (isPeak() ? 1 : cfg("offpeak"))) : UNLIMITED);
 
 export function resetUsage() { recs = []; kvSet("usage", []); }
 

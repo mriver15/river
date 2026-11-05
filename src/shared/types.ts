@@ -98,10 +98,12 @@ export interface MemoryRow { id: number; ts: number; kind: string; text: string;
 
 /** A parameter: what it is, where it lives, how it may change. `applies`: immediate (the next time it is read), new-instance (the next life or creature), restart (after a restart or migration). */
 export interface ConfigDef {
-  key: string; group: string; label: string; help: string; type: "number" | "toggle"; def: number | boolean; min?: number; max?: number; step?: number; unit?: string;
+  key: string; group: string; label: string; help: string; type: "number" | "toggle" | "text" | "choice"; def: number | boolean | string; min?: number; max?: number; step?: number; unit?: string;
+  /** for a choice: what can be picked; for text: what to show when it is empty */
+  options?: { value: string; label: string }[]; placeholder?: string;
   owner?: string; applies?: "immediate" | "new-instance" | "restart"; needs?: string[]; ruleset?: string;
 }
-export interface ConfigView { defs: ConfigDef[]; values: Record<string, number | boolean>; /** the immutable set of values now in force */ paramSet?: string; ruleset?: string; presets?: { id: string; label: string; help: string }[] }
+export interface ConfigView { defs: ConfigDef[]; values: Record<string, number | boolean | string>; /** the immutable set of values now in force */ paramSet?: string; ruleset?: string; presets?: { id: string; label: string; help: string }[] }
 
 export interface Stats {
   cyclesLastHour: number; maxCyclesPerHour: number; paused: boolean; mock: boolean; model: string;
@@ -148,7 +150,7 @@ export type ClientMsg = (
   | { t: "reset_budget" }
   | { t: "reset_river"; code: string; world: boolean }
   | { t: "new_life" }
-  | { t: "config_set"; key: string; value: number | boolean }
+  | { t: "config_set"; key: string; value: number | boolean | string }
   | { t: "config_reset" }
   | { t: "skip_day" }
   | { t: "sim_advance"; until: "dawn" | "ticks" | "minutes"; amount?: number; decision?: "stop" | "wait" | "defer" }
