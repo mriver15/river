@@ -40,3 +40,9 @@ Every broadcast carries a sequence number and the first message names the protoc
 ## Was the run open-ended? (behaviour report)
 
 `npm run behaviour -- <river.db> [more.db ...] [--json]` reads a database read-only and reports what River did: how varied its activities were (0 = one thing, 1 = even), the longest repeat and repeating-loop share, how many days passed with nothing new tried, desires set and finished, what it made, moments and emotions, what woke its mind and the tokens that cost, and its lives and how they ended. It ends with warnings (Narrow, Stuck, Cycling, Struggling, Plateau, Aimless, Unfinished, Passive). `npm run soak` prints a one-line version per seed. The mock brain is narrow by design, so judge a change by comparing two runs of the same kind, not by one run's warnings.
+
+## Save slots and branches
+
+A slot is a complete, named copy of the world in `data/slots/` (a database file and a small description beside it). Save one from **Controls → Save slots**, or `npm run slots -- save data/river.db "before the storm" "a note"`; `npm run slots -- list` shows them. Putting one back needs the server stopped: `npm run slots -- load "before the storm" data/river.db --force`. The copy is taken through a second read-only connection, so saving while River lives is safe.
+
+To branch from an earlier moment of a recorded life: `npm run slots -- branch <recorded.db> <tick> "what if"`. It restores the recording's boot snapshot, replays its commands up to the tick, checks the last checkpoint matches the recording, and saves the result as a slot. Start it on its own with `RIVER_DB=data/slots/what-if.db PORT=8788 npm start`; it begins its own recording and goes its own way. The original is only read.

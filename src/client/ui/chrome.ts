@@ -183,6 +183,27 @@ export async function startNewRiver(prev?: { world: boolean; error?: string }): 
   toast({ title: "A new River", body: n.text, color: "var(--accent)", ttl: 14000 });
 }
 
+/** Save slots: complete named copies of the world. Saving is one click; putting one back needs the server stopped, so the command is shown instead. */
+function slotsSection(): HTMLElement {
+  const sec = el("section", "sect"), list = el("div", "slots"); sec.append(el("h4", "", "Save slots"), el("p", "intro", "A slot is a complete copy of this world as it is now. Put one back, or branch a new world from it, from a terminal; the command is shown beside each."));
+  const name = el("input") as HTMLInputElement; name.placeholder = "Name this moment"; name.maxLength = 48; const note = el("input") as HTMLInputElement; note.placeholder = "A note (optional)"; note.maxLength = 300;
+  const save = el("button", "btn ok", "Save a slot"), msg = el("p", "intro");
+  const fmt = (m: any) => `${m.name} · day ${m.day} · ${m.lives} ${m.lives === 1 ? "life" : "lives"} · ${(m.bytes / 1e6).toFixed(1)} MB · ${new Date(m.savedAt).toLocaleString()}${m.note ? ` · ${m.note}` : ""}`;
+  const load = async () => {
+    try {
+      const r = await (await fetch("/api/slots")).json(); list.replaceChildren();
+      if (!r.slots.length) list.append(el("p", "intro", "No slots yet."));
+      for (const m of r.slots) { const row = el("div", "slot"); row.append(el("div", "", fmt(m)), el("code", "", `npm run slots -- load "${m.name}" ${r.current} --force`)); list.append(row); }
+    } catch { list.replaceChildren(el("p", "intro", "Could not list slots.")); }
+  };
+  save.onclick = async () => {
+    save.disabled = true; msg.textContent = "Saving…";
+    try { const r = await (await fetch("/api/slots", { method: "POST", body: JSON.stringify({ name: name.value, note: note.value }) })).json(); msg.textContent = r.error ? r.error : `Saved "${r.slot.name}".`; if (!r.error) { name.value = note.value = ""; await load(); } }
+    catch { msg.textContent = "Could not save."; } finally { save.disabled = false; }
+  };
+  const form = el("div", "btns"); form.append(name, note, save); sec.append(form, msg, list); void load(); return sec;
+}
+
 export function openControls() {
   const d = el("dialog", "dlg"); d.append(el("h2", "", "Controls"));
   const s = S.stats, used = s ? (s.maxTokensPerHour >= 1e8 ? `${(s.tokensLastHour / 1000).toFixed(0)}k tokens · ${s.cyclesLastHour} cycles this hour (no limit on a local model)` : `${(s.tokensLastHour / 1000).toFixed(0)}k of ${(s.maxTokensPerHour / 1000).toFixed(0)}k tokens · ${s.cyclesLastHour} of ${s.maxCyclesPerHour} cycles this hour`) : "";
@@ -191,7 +212,7 @@ export function openControls() {
   const b2 = el("section", "sect danger"); b2.append(el("h4", "", "Danger zone"), el("p", "intro", "Begin again with a brand-new River. Needs a confirmation code, and the old life is backed up first."));
   const nr = el("button", "btn no", "Start a new River…"); nr.onclick = () => { d.close(); void startNewRiver(); }; b2.append(nr);
   const close = el("button", "btn ghost", "Close"); close.onclick = () => d.close(); const row = el("div", "btns"); row.append(el("span", "grow"), close);
-  d.classList.add("wide"); d.append(settingsSection(), b1, b2, row); document.body.append(d); d.addEventListener("close", () => { closeSettings(); d.remove(); }); d.showModal();
+  d.classList.add("wide"); d.append(settingsSection(), slotsSection(), b1, b2, row); document.body.append(d); d.addEventListener("close", () => { closeSettings(); d.remove(); }); d.showModal();
 }
 
 // ---------- keyboard ----------

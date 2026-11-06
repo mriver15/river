@@ -3,3 +3,6 @@ dist
 .env
 data
 .fixtures
+
+# plugins River's smith stages while it works
+src/server/plugins/_staged_*.ts

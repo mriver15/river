@@ -10,7 +10,8 @@ import { DatabaseSync } from "node:sqlite";
 import { afterCommit } from "./sim.ts";
 import * as sim from "./sim.ts";
 import { every, STEP_MS, speedForDayMinutes } from "./sim.ts";
-import { db, kvGet, kvSet } from "./db.ts";
+import { db, kvGet, kvSet, DB_PATH } from "./db.ts";
+import { saveSlot, listSlots } from "./slots.ts";
 import { cfg, configView, onConfig, resetConfig, setConfig } from "./config.ts";
 import { search, addMemory, embedPending, embeddingCoverage, setLocator } from "./memory.ts";
 import { GATED, activeDesires, decideRequest, interests, requests, toolInfos } from "./mind.ts";
@@ -62,6 +63,7 @@ const stateMsg = (): Extract<ServerMsg, { t: "state" }> => ({
 
 // ---------- HTTP (API + built client) ----------
 const DIST = path.resolve("dist/client");
+const SLOTS_DIR = path.join(path.dirname(DB_PATH), "slots");
 const MIME: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".json": "application/json", ".mp3": "audio/mpeg" };
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://x");
@@ -83,6 +85,14 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === "/api/timeline") {
     const q = url.searchParams, n = (k: string) => (q.get(k) ? Number(q.get(k)) : undefined);
     return json(timeline({ actor: q.get("actor") ?? undefined, object: q.get("object") ?? undefined, activity: q.get("activity") ?? undefined, chain: q.get("chain") ?? undefined, source: q.get("source") ?? undefined, fromTick: n("from"), toTick: n("to"), limit: n("limit") }));
+  }
+  if (url.pathname === "/api/slots") {                              // save slots: list them, or take a copy of the world as it is now (POST)
+    if (req.method === "POST") {
+      let body = ""; for await (const c of req) { body += c; if (body.length > 10_000) break; }
+      try { const o = JSON.parse(body || "{}"); return json({ slot: await saveSlot(DB_PATH, SLOTS_DIR, String(o.name ?? ""), { note: String(o.note ?? "") }) }); }
+      catch (e: any) { res.statusCode = 400; return json({ error: String(e?.message ?? e) }); }
+    }
+    return json({ slots: listSlots(SLOTS_DIR), dir: SLOTS_DIR, current: DB_PATH });
   }
   if (url.pathname === "/api/llm/models") return json(await listModels());                // what the chosen server offers, for the settings pane
   if (url.pathname === "/api/llm/test") return json(await testProvider());                  // can it be reached, does it answer, does it call tools
