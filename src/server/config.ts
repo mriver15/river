@@ -24,6 +24,9 @@ export const DEFS: ConfigDef[] = [
   { key: "forgeModel", group: "AI provider", label: "Model for writing tools", help: "Optional: a stronger model used only when the tool smith writes a plugin. Empty means the model above.", type: "text", def: process.env.RIVER_FORGE_MODEL ?? "", placeholder: "same as above" },
   { key: "llmTimeoutSeconds", group: "AI provider", label: "Longest wait for an answer", help: "A local model on a slow machine may need minutes. After this River gives up on that thought and tries again.", type: "number", def: process.env.LLM_BASE_URL ? 600 : 180, min: 20, max: 1800, step: 10, unit: "s" },
   { key: "budgetLocal", group: "AI provider", label: "Count a local model against the token budget", help: "Tokens on your own machine cost nothing but time. Off: the hourly token and thought limits apply only to hosted models.", type: "toggle", def: false },
+  { key: "autoApprove", group: "Tool requests", label: "Approving River's tool requests", help: "Ask me: every request waits for you. Built-in abilities: requests for abilities that already exist (craft, plant, build, music...) are approved at once. Everything: new tools River invents are approved too, then written by the tool smith and installed without review. Installed tools still run in the sandbox and can only do what they declare, but you will not see the code first.", type: "choice", def: "off", options: [{ value: "off", label: "Ask me every time" }, { value: "catalog", label: "Approve built-in abilities automatically" }, { value: "all", label: "Approve everything, build and install new tools" }] },
+  { key: "autoApproveWeb", group: "Tool requests", label: "Include web search and fetch", help: "The two abilities that reach the real internet. Off means they always wait for you, even when everything else is automatic.", type: "toggle", def: false },
+  { key: "autoApproveMax", group: "Tool requests", label: "Most new tools built automatically per day", help: "Writing a tool costs tokens. Past this many in a world day, further requests wait for you.", type: "number", def: 3, min: 0, max: 20, step: 1 },
   { key: "weather", group: "Time & weather", label: "Weather", help: "Off means clear skies always.", type: "toggle", def: true },
   { key: "ambientRate", group: "Time & weather", label: "World events", help: "How often strange and beautiful things happen. 0 is none.", type: "number", def: env("AMBIENT_RATE", 1), min: 0, max: 3, step: 0.25, unit: "×" },
 
@@ -57,7 +60,7 @@ export const DEFS: ConfigDef[] = [
   { key: "offpeak", group: "Budget", label: "Off-peak multiplier", help: "Budget stretches by this much when the API is cheap.", type: "number", def: env("OFFPEAK_MULTIPLIER", 2), min: 1, max: 4, step: 0.5, unit: "×" },
 ];
 /** Who owns each parameter, and what it only means when something else is on. Everything here takes effect the next time it is read. */
-const OWNER: Record<string, string> = { "Time & weather": "clock", Wildlife: "wildlife", Survival: "body", Instincts: "activities", "River's mind": "brain", Budget: "brain", "AI provider": "brain", Perception: "perception", Feelings: "emotions" };
+const OWNER: Record<string, string> = { "Time & weather": "clock", Wildlife: "wildlife", Survival: "body", Instincts: "activities", "River's mind": "brain", Budget: "brain", "AI provider": "brain", "Tool requests": "brain", Perception: "perception", Feelings: "emotions" };
 const NEEDS: Record<string, string[]> = { reflexEscapeDistance: ["reflexEscape"], damageScale: ["predators"], catchupMaxDays: ["offlineCatchup"] };
 export const RULESET = `rules-${RULES_VERSION}`;
 for (const d of DEFS) { d.owner ??= OWNER[d.group] ?? "world"; d.applies ??= "immediate"; d.ruleset ??= RULESET; if (NEEDS[d.key]) d.needs ??= NEEDS[d.key]; }
@@ -65,8 +68,8 @@ const byKey = new Map(DEFS.map((d) => [d.key, d]));
 let over: Record<string, number | boolean | string> = kvGet<Record<string, number | boolean | string>>("config", {});
 const listeners: ((key: string, value: number | boolean | string, old: number | boolean | string) => void)[] = [];
 
-export function cfg(key: "weather" | "prey" | "smallWild" | "predators" | "lethal" | "traceAll" | "offlineCatchup"): boolean;
-export function cfg(key: "llmProvider" | "llmBaseUrl" | "llmModel" | "forgeModel"): string;
+export function cfg(key: "weather" | "prey" | "smallWild" | "predators" | "lethal" | "traceAll" | "offlineCatchup" | "autoApproveWeb"): boolean;
+export function cfg(key: "llmProvider" | "llmBaseUrl" | "llmModel" | "forgeModel" | "autoApprove"): string;
 export function cfg(key: string): number;
 export function cfg(key: string): any { const d = byKey.get(key); if (!d) throw new Error(`unknown setting ${key}`); const v = over[key]; return v === undefined ? d.def : v; }
 export const onConfig = (fn: (key: string, value: number | boolean | string, old: number | boolean | string) => void) => { listeners.push(fn); };

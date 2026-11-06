@@ -198,7 +198,7 @@ wss.on("connection", (ws) => {
       if (r) forge(r).then(announce);
     } else if (m.t === "install") {
       const seq = recordCommand("human", "plugin_install", { t: "plugin_install", name: m.name });      // a controller command: it pins the source hash and capabilities the tool is given
-      install(m.name).then((f) => { finishCommand(seq, f ? "ok" : "error", f ? f.log.split("\n").pop() ?? "" : "nothing staged under that name"); if (f) { agent.notify(`Your new tool "${f.name}" has been built and is now usable. Try it!`); addMemory(`The tool "${f.name}" was built for me and is now available.`, 7, ["tools"]); } });
+      install(m.name).then((f) => { finishCommand(seq, f ? "ok" : "error", f ? f.log.split("\n").pop() ?? "" : "nothing staged under that name"); });      // (River is told by the "tool-installed" event, whoever installed it)
     } else if (m.t === "reject") reject(m.name);
     else if (m.t === "pause") agent.setPaused(m.paused);
   });

@@ -26,9 +26,10 @@ import { setupDeath } from "./death.ts";
 import { startDreams } from "./dreams.ts";
 import { startJournal } from "./journal.ts";
 import { every, STEP_MS, setSimPaused, setSimSpeed, speedForDayMinutes, inject } from "./sim.ts";
-import { CHECKPOINT_EVERY, checkpoint, registerState, recordCommand, finishCommand } from "./recorder.ts";
+import { CHECKPOINT_EVERY, checkpoint, registerState, recordCommand, finishCommand, isReplaying } from "./recorder.ts";
 import { simTick } from "./sim.ts";
-import { decideRequest, GATED } from "./mind.ts";
+import { autoDecision, decideRequest, GATED, pendingRequests } from "./mind.ts";
+import { forge } from "./smith.ts";
 import type { ClientMsg, ToolRequest } from "../shared/types.ts";
 
 export async function createRuntime() {
@@ -57,7 +58,10 @@ export async function createRuntime() {
   agent.setWorldPaused = (p, why) => void inject(() => { const m = { t: "sim_pause" as const, paused: p }; const seq = recordCommand("human", "sim_pause", m); humanCommand({ world, agent, emotions, ambient, creatures, story, catalog, wildlife, fire, knowledge, activities } as Runtime, m); finishCommand(seq, "ok", why); });
   activities.resume();
   const advancer = new Advancer({ world, agent });
-  return { world, emotions, inner, advancer, agent, ambient, creatures, story, catalog, wildlife, fire, knowledge, activities };
+  const made = { world, emotions, inner, advancer, agent, ambient, creatures, story, catalog, wildlife, fire, knowledge, activities };
+  bus.on("tool-request", (req: ToolRequest) => autoHandle(made, req));
+  bus.on("tool-installed", (f: { name: string }) => { agent.notify(`Your new tool "${f.name}" has been built and is now usable. Try it!`); addMemory(`The tool "${f.name}" was built for me and is now available.`, 7, ["tools"]); });
+  return made;
 }
 export type Runtime = Awaited<ReturnType<typeof createRuntime>>;
 
@@ -74,6 +78,7 @@ export function startSystems(rt: Runtime) {
   rt.activities.start();
   setSimSpeed(speedForDayMinutes(cfg("dayMinutes")));
   onConfig((key, v) => {
+    if (key === "autoApprove" || key === "autoApproveWeb" || key === "autoApproveMax") sweepPending(rt);                 // switching it on answers what is already waiting
     if (key === "dayMinutes") setSimSpeed(speedForDayMinutes(Number(v)));   // day length is the clock speed; the calendar never moves
     if (key === "weather" && !cfg("weather")) { world.weather = "clear"; kvSet("weather", { w: "clear", until: 0 }); }
     if (key === "predators" || key === "smallWild") wildlife.refresh();
@@ -94,6 +99,33 @@ export function startSystems(rt: Runtime) {
   startJournal(world);
   every(STEP_MS, () => { if (simTick() % CHECKPOINT_EVERY === 0) checkpoint(world); }, "checkpoint");
 }
+
+/**
+ * A tool request is decided (by a human, or automatically), River is told, and, if it was a new tool that was approved, the smith is to build it.
+ * One path for both, so what River hears and remembers is the same whoever decided.
+ */
+function decideAndTell(rt: { agent: Agent }, id: number, approve: boolean, note?: string, builtin?: string): { forge?: ToolRequest } {
+  const r = decideRequest(id, approve, note, approve ? builtin : undefined);
+  if (!r) return {};
+  const granted = approve && builtin && builtin in GATED ? builtin : null;
+  const verdict = approve
+    ? (granted ? `Your request "${r.name}" was APPROVED. You can now do it with the ability called "${granted}": ${GATED[granted]}`
+      : r.name in GATED ? `Your request for "${r.name}" was APPROVED. You can now use it: ${GATED[r.name]}` : `Your idea for a new tool "${r.name}" was approved in principle — the human may build it; it isn't usable yet.`)
+    : `Your request for "${r.name}" was DENIED.`;
+  rt.agent.notify(`${verdict}${note && !note.startsWith("auto-approved") ? ` The human added: "${note}"` : ""}`, true, "contact");
+  addMemory(verdict, 6, ["tools"]);
+  // Building a new tool calls a model and writes a file: not replayed.
+  return approve && !granted && !(r.name in GATED) ? { forge: r } : {};
+}
+/** Automatic approval, when the human has turned it on: answer a request at once, from the settings alone, so a replay answers the same way. */
+function autoHandle(rt: { agent: Agent }, req: ToolRequest) {
+  const v = autoDecision(req); if (!v) return;
+  log("request", `Auto-approved "${req.name}": ${v.why}.`, { id: req.id });
+  const out = decideAndTell(rt, req.id, true, `auto-approved: ${v.why}`, v.builtin);
+  if (out.forge && !isReplaying()) void forge(out.forge);
+}
+/** Whatever is already waiting when automatic approval is switched on. */
+function sweepPending(rt: { agent: Agent }) { for (const r of pendingRequests()) autoHandle(rt, r); }
 
 /** Human commands that change the world. Live and replay both run them through here. */
 export const REPLAYABLE = new Set(["say", "skip_day", "config_preset", "config_set", "config_reset", "sim_pause", "sim_speed", "gift", "catalog_add", "catalog_place", "catalog_retrieve", "catalog_delete", "approve", "deny", "activity_cancel"]);
@@ -126,17 +158,8 @@ export function humanCommand(rt: Runtime, m: ClientMsg): HumanResult {
       case "sim_pause": setSimPaused(!!m.paused); log("system", m.paused ? "The world was frozen." : "The world was thawed."); bus.emit("state"); return {};
       case "sim_speed": setSimSpeed(Number(m.speed)); log("system", `World speed set to ${Number(m.speed)}x.`); return {};
       case "approve": case "deny": {
-        const approve = m.t === "approve", r = decideRequest(m.id, approve, m.note, approve ? (m as any).builtin : undefined);
-        if (!r) return {};
-        const builtin = approve ? (m as any).builtin as string | undefined : undefined, granted = approve && builtin && builtin in GATED ? builtin : null;
-        const verdict = approve
-          ? (granted ? `Your request "${r.name}" was APPROVED. You can now do it with the ability called "${granted}": ${GATED[granted]}`
-            : r.name in GATED ? `Your request for "${r.name}" was APPROVED. You can now use it: ${GATED[r.name]}` : `Your idea for a new tool "${r.name}" was approved in principle — the human may build it; it isn't usable yet.`)
-          : `Your request for "${r.name}" was DENIED.`;
-        agent.notify(`${verdict}${m.note ? ` The human added: "${m.note}"` : ""}`, true, "contact");
-        addMemory(verdict, 6, ["tools"]);
-        // Building a new tool calls a model and writes a file: not replayed.
-        return approve && !granted && !(r.name in GATED) ? { forge: r } : {};
+        const out = decideAndTell(rt, m.id, m.t === "approve", m.note, m.t === "approve" ? (m as any).builtin : undefined);
+        return out.forge ? { forge: out.forge } : {};
       }
       case "activity_cancel": rt.activities.cancel("a human told you to stop"); return {};
       case "gift": {

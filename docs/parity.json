@@ -261,6 +261,10 @@
     {
      "test": "tests/tuning.test.ts",
      "title": "presets are recorded commands that set known parameters, and 'standard' returns to the defaults"
+    },
+    {
+     "test": "tests/autoapprove.test.ts",
+     "title": "built-in abilities: approved at once, granted, noted as automatic, and the web still waits"
     }
    ],
    "coverage": "soak"

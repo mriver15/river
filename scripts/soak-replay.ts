@@ -36,6 +36,8 @@ async function one(seed: number, port: number) {
     if (n % 5 === 0) send({ t: "say", text: `hello ${n}` });
     if (n === 7) send({ t: "config_set", key: "predators", value: false });
     if (n === 12) send({ t: "config_set", key: "predators", value: true });
+    if (n === 2) send({ t: "config_set", key: "autoApprove", value: "catalog" });                 // automatic approval of built-in abilities: its decisions must replay too
+    if (n === 9) send({ t: "config_set", key: "autoApprove", value: "off" });
     if (n === 6) send({ t: "config_preset", id: "gentle" });                                    // parameters change as recorded commands
     if (n === 14) send({ t: "config_preset", id: "default" });
     if (n === 10) send({ t: "sim_advance", until: "minutes", amount: 20, decision: "defer" });   // and so does running the world forward: the replay steps the same ticks

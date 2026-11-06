@@ -3,6 +3,7 @@ import { dot, embed, relevance } from "./embed.ts";
 import { bus, log } from "./bus.ts";
 import type { Desire, Interest, ToolInfo, ToolRequest } from "../shared/types.ts";
 import { simNow } from "./sim.ts";
+import { cfg } from "./config.ts";
 
 // ---------- desires ----------
 export function addDesire(text: string, priority = 5): Desire {
@@ -81,6 +82,7 @@ export function requestTool(name: string, reason: string): { req: ToolRequest; m
   const req = rowToReq(db.prepare("SELECT * FROM tool_requests WHERE id=?").get(r.lastInsertRowid));
   log("request", `Requested tool "${key}"${req.custom ? " (new, not in catalog)" : ""}: ${reason}`, { id: req.id });
   if (req.custom) void matchBuiltin(`${key.replace(/_/g, " ")}. ${reason}`).then((m) => { if (m.length) { db.prepare("UPDATE tool_requests SET matches=? WHERE id=?").run(JSON.stringify(m), req.id); bus.emit("state"); } }).catch(() => {});
+  bus.emit("tool-request", req);                                               // lets automatic approval, if it is on, answer at once
   bus.emit("state");
   return { req, message: `Request sent. A human will decide; you'll be told the outcome. Keep living meanwhile.` };
 }
@@ -99,8 +101,12 @@ export async function matchScores(request: string): Promise<{ name: string; scor
   if (fresh.length) { const vs = await embed(fresh.map(([k, d]) => `${k.replace(/_/g, " ")}: ${gist(d)}`), "document"); if (vs) fresh.forEach(([k], i) => docVecs.set(k, vs[i])); }
   const q = (await embed([request.slice(0, 600)], "query"))?.[0];
   if (q) return cands.flatMap(([k]) => { const v = docVecs.get(k); return v ? [{ name: k, score: relevance(dot(q, v)) }] : []; }).sort((a, b) => b.score - a.score);
-  const qw = words(request);                                                      // no embeddings: fall back to shared vocabulary
-  return cands.map(([k, d]) => { const shared = [...words(`${k} ${gist(d)}`)].filter((w) => qw.has(w)).length; return { name: k, score: shared >= 2 ? Math.min(0.9, 0.5 + shared / 10) : 0 }; }).sort((a, b) => b.score - a.score);
+  return lexicalScores(request);                                                  // no embeddings: fall back to shared vocabulary
+}
+/** The same, by shared words alone: no outside service, so the answer is always the same for the same request (replay can repeat it). */
+export function lexicalScores(request: string): { name: string; score: number }[] {
+  const qw = words(request);
+  return Object.entries(GATED).filter(([k]) => !isApproved(k)).map(([k, d]) => { const shared = [...words(`${k} ${gist(d)}`)].filter((w) => qw.has(w)).length; return { name: k, score: shared >= 2 ? Math.min(0.9, 0.5 + shared / 10) : 0 }; }).sort((a, b) => b.score - a.score);
 }
 /** Built-ins that clearly fit this request: a short list (up to 3) for the human to choose from, or nothing. */
 export async function matchBuiltin(request: string): Promise<{ name: string; score: number }[]> {
@@ -115,6 +121,28 @@ export function grandfather(names: string[]) {
     if (used) { grantTool(n); log("system", `"${n}" is now something River asks for. It already used it, so it keeps it.`); }
   }
 }
+
+/** What automatic approval would do with a request: nothing (it waits for a human), or approve, perhaps granting a built-in ability instead of building a new one. */
+export interface AutoVerdict { builtin?: string; why: string }
+const WEB = new Set(["web_search", "web_fetch"]);
+export function autoVerdict(req: { name: string; reason: string; custom: boolean }, o: { mode: string; web: boolean; builtToday: number; max: number }): AutoVerdict | null {
+  if (o.mode === "off") return null;
+  if (!req.custom) {                                                            // an ability that already exists
+    if (WEB.has(req.name) && !o.web) return null;                               // the internet always waits unless the human said otherwise
+    return { why: "a built-in ability" };
+  }
+  if (o.mode !== "all") return null;
+  const near = lexicalScores(`${req.name.replace(/_/g, " ")}. ${req.reason}`)[0];
+  if (near && near.score >= 0.8 && !(WEB.has(near.name) && !o.web)) return { builtin: near.name, why: `it already exists as "${near.name}"` };
+  if (o.builtToday >= o.max) return null;                                       // enough new tools for one day
+  return { why: "a new tool, built and installed automatically" };
+}
+/** How many new tools automatic approval has set going in the last world day. */
+const builtToday = () => (db.prepare("SELECT COUNT(*) n FROM tool_requests WHERE status = 'approved' AND custom = 1 AND note LIKE 'auto-approved%' AND ts > ?").get(simNow() - 1_440_000) as { n: number }).n;
+/** The automatic decision for this request under the current settings, if any. */
+export const autoDecision = (req: { name: string; reason: string; custom: boolean }): AutoVerdict | null => autoVerdict(req, { mode: cfg("autoApprove"), web: cfg("autoApproveWeb"), builtToday: builtToday(), max: cfg("autoApproveMax") });
+/** Pending requests, oldest first. */
+export const pendingRequests = (): ToolRequest[] => (db.prepare("SELECT * FROM tool_requests WHERE status = 'pending' ORDER BY id").all() as any[]).map(rowToReq);
 
 export function decideRequest(id: number, approve: boolean, note?: string, builtin?: string): ToolRequest | null {
   const row = db.prepare("SELECT * FROM tool_requests WHERE id=? AND status='pending'").get(id) as any;

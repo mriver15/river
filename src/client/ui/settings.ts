@@ -33,7 +33,11 @@ function row(d: ConfigDef): HTMLElement {
   if (d.type === "choice") {
     const sel = el("select") as HTMLSelectElement; sel.setAttribute("aria-label", d.label);
     for (const o of d.options ?? []) { const op = el("option") as HTMLOptionElement; op.value = o.value; op.textContent = o.label; sel.append(op); }
-    sel.value = String(val); sel.onchange = () => { send({ t: "config_set", key: d.key, value: sel.value }); models = []; }; top.append(sel); r.append(top);
+    sel.value = String(val);
+    sel.onchange = () => {
+      if (d.key === "autoApprove" && sel.value === "all" && !confirm("Approve everything automatically?\n\nWhen River asks for a tool that does not exist, the tool smith will write it and install it without you reading the code. It runs in the sandbox and can only do what it declares (change items, entities, needs, the log), but you will not have reviewed it.\n\nThere is a daily limit on how many are built this way.")) { sel.value = String(S.config?.values[d.key] ?? d.def); return; }
+      send({ t: "config_set", key: d.key, value: sel.value }); models = [];
+    }; top.append(sel); r.append(top);
   } else if (d.type === "text") {
     const inp = el("input") as HTMLInputElement; inp.type = "text"; inp.value = String(val); inp.placeholder = d.placeholder ?? ""; inp.setAttribute("aria-label", d.label); inp.style.minWidth = "55%";
     if (d.key === "llmModel" || d.key === "forgeModel") { inp.setAttribute("list", "llm-models"); inp.onfocus = () => void loadModels(); }

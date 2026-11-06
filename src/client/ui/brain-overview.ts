@@ -14,6 +14,8 @@ export function alerts(): Alert[] {
   if (s.worldPaused) out.push({ tone: "warn", text: "The world is frozen: nothing moves until you thaw it.", action: { label: "Thaw", run: () => send({ t: "sim_pause", paused: false }) } });
   if (!unmetered && pct >= 100) out.push({ tone: "bad", text: "The hourly token budget is spent. River waits for tokens to free up." });
   else if (!unmetered && pct >= 85) out.push({ tone: "warn", text: `The token budget is ${Math.round(pct)}% used; River will slow down.` });
+  const auto = String(S.config?.values.autoApprove ?? "off");
+  if (auto !== "off") out.push({ tone: "info", text: auto === "all" ? "Tool requests are approved automatically, and new tools are built and installed without review (Settings → Tool requests)." : "Requests for built-in abilities are approved automatically (Settings → Tool requests)." });
   const pending = S.requests.filter((r) => r.status === "pending").length;
   if (pending) out.push({ tone: "info", text: `${pending} tool request${pending === 1 ? " is" : "s are"} waiting for your decision.`, action: { label: "Review", run: () => showTab("tools") } });
   if (S.agent?.body?.dead) out.push({ tone: "bad", text: "River has died." });

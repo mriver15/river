@@ -16,6 +16,8 @@ import type { ForgedTool, ToolRequest } from "../shared/types.ts";
 import { LIMITS, scanSource, validateResult } from "./sandbox/contract.ts";
 import { describePlugin, hashOf, runPlugin, type Snapshot } from "./sandbox/host.ts";
 import { installPin } from "./sandbox/plugin.ts";
+import { cfg } from "./config.ts";
+import { recordCommand } from "./recorder.ts";
 
 const ROOT = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const PLUGINS = path.join(ROOT, "src/server/plugins");
@@ -176,7 +178,7 @@ export async function forge(req: ToolRequest, onStaged?: (t: ForgedTool) => void
         const t: ForgedTool = { name, request_id: req.id, status: "staged", code, log: trail.join("\n"), ts: Date.now() };
         save(name, req.id, "staged", code, t.log);
         log("system", `Tool smith: "${name}" is ready for review.`);
-        if (AUTO_INSTALL) await install(name); else onStaged?.(t);
+        if (AUTO_INSTALL || cfg("autoApprove") === "all") await install(name, true); else onStaged?.(t);
         return;
       }
       trail.push(`Attempt ${attempt} failed (model finish=${r.finish}, reply ${r.text.length} chars, code ${code.length} chars):\n${problems.join("\n")}`);
@@ -195,9 +197,10 @@ export async function forge(req: ToolRequest, onStaged?: (t: ForgedTool) => void
 }
 
 /** Move a staged plugin into plugins/, hot-load it and switch it on. */
-export async function install(name: string): Promise<ForgedTool | null> {
+export async function install(name: string, auto = false): Promise<ForgedTool | null> {
   const f = get(name);
   if (!f || f.status !== "staged") return null;
+  if (auto) recordCommand("human", "plugin_install", { t: "plugin_install", name, auto: true });          // an automatic install is a recorded command too
   const dest = path.join(PLUGINS, `${name}.ts`);
   fs.writeFileSync(dest, f.code + "\n");
   fs.rmSync(stagedFile(name), { force: true });
@@ -208,6 +211,7 @@ export async function install(name: string): Promise<ForgedTool | null> {
   syncApprovals();
   save(name, f.request_id, "installed", f.code, f.log + "\nInstalled.");
   log("system", `Tool "${name}" installed and live.`);
+  bus.emit("tool-installed", { name, auto });
   return get(name);
 }
 
