@@ -222,3 +222,7 @@ The sliders button (Controls) now opens a settings panel. Every value is live, s
 - **Next day:** the sunrise button in the top bar (and a button in the settings) skips ahead to the next dawn. It moves only the clock and the light, so plants, wounds, healing and animals don't age with it.
 
 Code: `src/server/config.ts` (add a setting by adding a line to `DEFS` and reading it with `cfg("key")`), `src/client/ui/settings.ts`.
+
+## The Brain tab
+
+Five views, kept where you left them: **Overview** (the world, River's mind, tokens and engine at a glance; what needs you, such as a paused mind, a nearly spent budget or a tool request waiting; the controls for running the world forward), **Mind** (the token budget with its reserve marked, what is waiting to be decided, where the tokens went, and each recent decision with its causes, actions, cost and what was left out), **Heart** (how River feels now, why each feeling moved with the factors that changed it, who and what it is attached to, and what it believes with its evidence), **World** (the clock, the last advance and any absence, parameter presets and history, where the engine's time goes, and which plugins run or are disabled and why) and **Timeline** (filter by kind, actor, thing or event; click a chip to narrow, "follow" to see what came from it). Views refresh in place every few seconds while shown; the timeline refreshes on request or when "Live" is ticked. `?tab=brain&view=heart` opens a view directly.

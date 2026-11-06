@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 
 process.env.RIVER_DB = path.join(fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "river-paritytest-")), "t.db");
 const { BASE_TOOLS, GATED_TOOLS } = await import("../src/server/tools.ts");
@@ -9,7 +10,10 @@ type Feature = { id: string; feature: string; owner: string; tools: string[]; ev
 const matrix = JSON.parse(fs.readFileSync("docs/parity.json", "utf8")).features as Feature[];
 
 test("every tool River can use, built in or plugin, is assigned to a feature", () => {
-  const plugins = fs.readdirSync("src/server/plugins").filter((f) => f.endsWith(".ts")).map((f) => f.replace(/\.ts$/, ""));
+  // the plugins that ship with the release: a tool River's own smith wrote and installed in this checkout is its own, not part of what the release must account for
+  let shipped: string[] | null = null;
+  try { shipped = execFileSync("git", ["ls-files", "src/server/plugins"], { encoding: "utf8" }).split("\n").filter((f) => f.endsWith(".ts")).map((f) => path.basename(f, ".ts")); } catch { /* not a git checkout: use the directory */ }
+  const plugins = shipped?.length ? shipped : fs.readdirSync("src/server/plugins").filter((f) => f.endsWith(".ts")).map((f) => f.replace(/\.ts$/, ""));
   const all = [...BASE_TOOLS.map((t) => t.name), ...GATED_TOOLS.map((t) => t.name), ...plugins];
   const assigned = new Set(matrix.flatMap((f) => f.tools));
   const orphan = all.filter((t) => !assigned.has(t));

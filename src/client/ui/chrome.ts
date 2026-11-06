@@ -221,5 +221,6 @@ export function initChrome() {
   setIcon($("logfilter"), "filter"); $("logsearch-ico").append(icon("search", 15)); $("memsearch-ico").append(icon("search", 15));
   if (!store.get("sideOpen", true)) setSide(false);
   addEventListener("resize", applyInset);
-  showTab(store.get<TabName>("tab", "log"));
+  const want = new URLSearchParams(location.search).get("tab");                       // ?tab=brain opens that tab
+  showTab((TABS as readonly string[]).includes(want ?? "") ? (want as TabName) : store.get<TabName>("tab", "log"));
 }
