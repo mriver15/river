@@ -18,6 +18,7 @@
     "replay": "tsx scripts/replay.ts",
     "crash-test": "tsx scripts/crash-test.ts",
     "soak": "tsx scripts/soak-replay.ts",
+    "behaviour": "tsx scripts/behaviour-report.ts",
     "restart-test": "tsx scripts/restart-test.ts",
     "gallery:shots": "tsx scripts/gallery-shots.ts",
     "experiment": "tsx scripts/experiment.ts",

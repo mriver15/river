@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { WebSocket } from "ws";
+import { behaviourReport } from "../src/server/behaviour.ts";
 
 const seeds = Number(process.argv[2] ?? 20), days = Number(process.argv[3] ?? 3), parallel = Number(process.argv[4] ?? 4);
 const targetTick = days * 14_400;                          // 1,440,000 ms canonical day / 100 ms ticks
@@ -51,6 +52,7 @@ async function one(seed: number, port: number) {
   let out: any = {}; try { out = JSON.parse(r.stdout.slice(r.stdout.indexOf("{"))); } catch { /* reported */ }
   const ok = r.status === 0 && out.matched === out.checkpoints && out.checkpoints > 0 && recorded >= targetTick;
   console.log(`${ok ? "PASS" : "FAIL"} seed=${String(seed).padEnd(3)} ticks=${recorded} commands=${out.commandsReplayed ?? "?"} resets=${cnt.resets} approvals=${cnt.approvals} checkpoints=${out.matched ?? "?"}/${out.checkpoints ?? "?"} network=${out.networkAttempts ?? "?"} wall=${wall}s${ok ? "" : " " + JSON.stringify(out.firstDivergence ?? r.stderr.slice(-300))}`);
+  try { const d = new DatabaseSync(file, { readOnly: true }), b = behaviourReport(d); d.close(); console.log(`     behaviour seed=${seed}: ${b.activities.total} activities, ${b.activities.distinct} kinds, variety ${b.activities.variety}, loop ${b.activities.loopShare}, ${b.goals.total} desires, ${b.lives.count} lives${b.warnings.length ? ", warnings: " + b.warnings.map((x) => x.split(":")[0]).join("/") : ""}`); } catch { /* the report is extra */ }
   if (ok) for (const e of ["", "-wal", "-shm"]) fs.rmSync(file + e, { force: true });
   return ok;
 }

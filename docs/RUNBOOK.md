@@ -36,3 +36,7 @@ To check that a recording still reproduces: `npm run replay -- <recorded.db>`.
 ## The client and server disagree
 Every broadcast carries a sequence number and the first message names the protocol version. A client that sees a gap asks for the whole state (`resync`); a client on an older protocol is told to reload.
 `npm run protocol-test` checks this against the real server.
+
+## Was the run open-ended? (behaviour report)
+
+`npm run behaviour -- <river.db> [more.db ...] [--json]` reads a database read-only and reports what River did: how varied its activities were (0 = one thing, 1 = even), the longest repeat and repeating-loop share, how many days passed with nothing new tried, desires set and finished, what it made, moments and emotions, what woke its mind and the tokens that cost, and its lives and how they ended. It ends with warnings (Narrow, Stuck, Cycling, Struggling, Plateau, Aimless, Unfinished, Passive). `npm run soak` prints a one-line version per seed. The mock brain is narrow by design, so judge a change by comparing two runs of the same kind, not by one run's warnings.
