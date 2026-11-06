@@ -7,6 +7,7 @@ import type { CatalogEntry, Entity } from "../shared/types.ts";
 import type { Story } from "./story.ts";
 import type { World } from "./world.ts";
 import { simNow } from "./sim.ts";
+import { ITEM_DEFS, type ItemDef } from "../content/items.ts";
 
 export const BOOKS: [string, string, string][] = [
   ["On Tides", "tides", "The sea breathes in and out twice a day, pulled by a moon that never touches it. Fishers say the best things wash up an hour after the lowest ebb."],
@@ -18,7 +19,7 @@ export const BOOKS: [string, string, string][] = [
 ];
 
 type Kind = "structure" | "item" | "pack";
-interface Spec { key?: string; desc: string; text?: string; glow?: boolean; fixed?: boolean; usual?: { x: number; z: number } | null; needs?: string[] }
+interface Spec { key?: string; /** a real kind of thing (stone, cord, lamp…) so the gift works as one */ item?: string; desc: string; text?: string; glow?: boolean; fixed?: boolean; usual?: { x: number; z: number } | null; needs?: string[] }
 interface Row { id: string; name: string; kind: Kind; builtin: boolean; spec: Spec; status: "available" | "in_world"; x: number | null; z: number | null; ids: string[]; ts: number }
 
 const BUILTINS: { key: string; name: string; kind: Kind; desc: string; needs?: string[] }[] = [
@@ -89,10 +90,17 @@ export class Catalog {
     });
   }
 
-  add(o: { name: string; desc: string; text?: string; glow?: boolean; fixed?: boolean }): string {
-    const name = o.name.trim().slice(0, 60); if (!name) throw new Error("Give it a name.");
+  nameOf(id: string): string { return this.rows.get(id)?.name ?? ""; }
+  /** What a human typed ("a stone", "cord") as one of the game's real kinds, or nothing if it is not one (or is one a gift cannot be: they need made-in-the-world stats). */
+  static realKind(s?: string): ItemDef | undefined {
+    const k = (s ?? "").trim().toLowerCase().replace(/^(a|an|the|some)\s+/, ""); if (!k) return undefined;
+    const d = ITEM_DEFS.find((x) => x.id === k || x.aliases.includes(k) || x.name.toLowerCase() === k);
+    return d && !["generic", "keepsake", "garment", "weapon"].includes(d.id) ? d : undefined;
+  }
+  add(o: { name: string; desc: string; text?: string; glow?: boolean; fixed?: boolean; item?: string }): string {
+    const real = Catalog.realKind(o.item), name = (o.name.trim() || real?.name || "").slice(0, 60); if (!name) throw new Error("Give it a name.");
     const id = `c_${slug(name)}_${simNow().toString(36)}`;
-    const r: Row = { id, name, kind: o.fixed || o.glow ? "structure" : "item", builtin: false, spec: { desc: o.desc.trim().slice(0, 400) || "Something that wasn't here before.", text: o.text?.trim().slice(0, 1200) || undefined, glow: !!o.glow, fixed: !!o.fixed }, status: "available", x: null, z: null, ids: [], ts: simNow() };
+    const r: Row = { id, name, kind: o.fixed || o.glow ? "structure" : "item", builtin: false, spec: { item: real && !o.fixed && !o.glow ? real.id : undefined, desc: o.desc.trim().slice(0, 400) || "Something that wasn't here before.", text: o.text?.trim().slice(0, 1200) || undefined, glow: !!o.glow, fixed: !!o.fixed }, status: "available", x: null, z: null, ids: [], ts: simNow() };
     this.rows.set(id, r); this.save(r); bus.emit("state"); return id;
   }
 
@@ -113,7 +121,7 @@ export class Catalog {
       case "lookout1": case "lookout2": mk("rock", "lookout stone", p.x, p.z, { desc: "A flat stone set on a rise, worn smooth by someone sitting. The view is wide.", vista: true }); break;
       default:
         if (s.fixed || s.glow || r.kind === "structure") mk("structure", r.name, p.x, p.z, { desc: s.desc, glow: !!s.glow, text: s.text });
-        else mk("item", r.name, p.x, p.z, { takeable: true, item: slug(r.name), itemName: r.name, desc: s.desc, text: s.text });
+        else mk("item", r.name, p.x, p.z, { takeable: true, item: s.item ?? slug(r.name), itemName: r.name, desc: s.desc, text: s.text });
     }
     r.status = "in_world"; r.x = p.x; r.z = p.z; r.ids = ids; this.save(r); bus.emit("state"); return p;
   }

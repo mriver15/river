@@ -164,9 +164,9 @@ export type ClientMsg = (
   | { t: "forge"; id: number }
   | { t: "install"; name: string }
   | { t: "reject"; name: string }
-  | { t: "gift"; name: string; desc: string }
+  | { t: "gift"; name: string; desc: string; item?: string }
   | { t: "catalog_place"; id: string; x?: number; z?: number }
   | { t: "catalog_retrieve"; id: string }
-  | { t: "catalog_add"; name: string; desc: string; text?: string; glow?: boolean; fixed?: boolean; place: boolean }
+  | { t: "catalog_add"; name: string; desc: string; text?: string; glow?: boolean; fixed?: boolean; item?: string; place: boolean }
   | { t: "catalog_delete"; id: string }
 ) & { cid?: string };

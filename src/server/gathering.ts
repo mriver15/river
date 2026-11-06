@@ -2,6 +2,8 @@
 import { simNow, simRng } from "./sim.ts";
 import type { World } from "./world.ts";
 import type { Entity } from "../shared/types.ts";
+import { bus } from "./bus.ts";
+import { kvGet, kvSet } from "./db.ts";
 
 const sr = simRng("gathering");
 export const ITEM_NAMES: Record<string, [string, string]> = {
@@ -30,5 +32,10 @@ export function takeOneUnit(w: World, e: Entity, prefer?: string): { kind: strin
 export function takeLoose(w: World, e: Entity): string {
   const name = e.name;
   w.items.pickUp(e.id);                                               // the same object, now in River's hands
+  const gift = String(e.props.catalog ?? "");
+  if (gift.startsWith("c_")) {                                        // something a person left for it (not one of the island's own landmarks): the first time it is taken up is a moment
+    const taken = kvGet<string[]>("giftsTaken", []);
+    if (!taken.includes(gift)) { kvSet("giftsTaken", [...taken, gift].slice(-200)); bus.emit("gift_taken", { id: gift, name }); }
+  }
   return name;
 }

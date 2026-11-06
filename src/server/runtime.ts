@@ -93,6 +93,10 @@ export function startSystems(rt: Runtime) {
   }, "items");
   ambient.start();
   fire.start();
+  bus.on("gift_taken", (e: { id: string; name: string }) => {             // River took up something left for it: that it came from someone is part of what it holds
+    addMemory(`I picked up ${e.name}. Someone I cannot see left it where I would find it.`, 6, ["gift", "human"]);
+    emotions.contact(0.3); emotions.bump("wonder", 0.25, "something was left for me"); bus.emit("deed", { kind: "gift", name: e.name });
+  });
   setLocator(() => ({ x: world.me.x, z: world.me.z }));
   emotions.start(); bodyApi.start(); wildlife.start(); creatures.start(); story.start();
   startDreams(world, (msg) => agent.notify(msg, false), { feelings: () => emotions.describe(), after: () => emotions.afterDream() });
@@ -164,15 +168,15 @@ export function humanCommand(rt: Runtime, m: ClientMsg): HumanResult {
       }
       case "activity_cancel": rt.activities.cancel("a human told you to stop"); return {};
       case "gift": {
-        if (!m.name?.trim()) return {};
-        const id = catalog.add({ name: m.name, desc: m.desc || "A gift left by the human." }), at = catalog.place(id);
-        log("human", `Human left a gift nearby: ${m.name}`); emotions.contact(0.5); emotions.bump("wonder", 0.3, "a gift appeared"); arrived(m.name, at);
+        if (!m.name?.trim() && !m.item?.trim()) return {};
+        const id = catalog.add({ name: m.name, desc: m.desc || "A gift left by the human.", item: m.item }), at = catalog.place(id), given = catalog.nameOf(id);
+        log("human", `Human left a gift nearby: ${given}`); emotions.contact(0.5); emotions.bump("wonder", 0.3, "a gift appeared"); arrived(given, at);
         return {};
       }
       case "catalog_add": {
-        if (!m.name?.trim()) return {};
-        const id = catalog.add({ name: m.name, desc: m.desc ?? "", text: m.text, glow: m.glow, fixed: m.fixed });
-        if (m.place) { const at = catalog.place(id); log("human", `Human placed "${m.name}" in the world.`); arrived(m.name, at); }
+        if (!m.name?.trim() && !m.item?.trim()) return {};
+        const id = catalog.add({ name: m.name, desc: m.desc ?? "", text: m.text, glow: m.glow, fixed: m.fixed, item: m.item }), given = catalog.nameOf(id);
+        if (m.place) { const at = catalog.place(id); log("human", `Human placed "${given}" in the world.`); arrived(given, at); }
         return {};
       }
       case "catalog_place": {

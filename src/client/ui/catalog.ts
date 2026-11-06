@@ -11,14 +11,15 @@ let picking: { id: string; name: string } | null = null;
 export async function addGift(placeNow: boolean) {
   const v = await ask(placeNow ? "Leave something for River" : "Add to the catalog", [
     { key: "name", label: "What is it?", placeholder: "a brass key" },
+    { key: "item", label: "Or a real thing River can use (optional)", placeholder: "stone, cord, lamp, bowl, berry…" },
     { key: "desc", label: "What River sees when it looks closely", placeholder: "Warm, as if recently held.", multiline: true },
     { key: "text", label: "Words on it, if it can be read (optional)", placeholder: "Engraved: for the door that isn't here.", multiline: true },
     { key: "fixed", type: "checkbox", label: "Fixed in place (a structure; it can't be picked up)" },
     { key: "glow", type: "checkbox", label: "It glows (gives light and warmth)" },
   ], placeNow ? "Leave it near River" : "Add");
-  if (!v?.name) return;
-  send({ t: "catalog_add", name: v.name, desc: v.desc || "", text: v.text || undefined, fixed: v.fixed === "true", glow: v.glow === "true", place: placeNow });
-  toast({ title: placeNow ? "Left for River" : "Added", body: placeNow ? `"${v.name}" appears a few paces from River.` : `"${v.name}" is in the catalog, available to place.`, ttl: 5000 });
+  if (!v?.name && !v?.item) return;
+  send({ t: "catalog_add", name: v.name || "", item: v.item || undefined, desc: v.desc || "", text: v.text || undefined, fixed: v.fixed === "true", glow: v.glow === "true", place: placeNow });
+  toast({ title: placeNow ? "Left for River" : "Added", body: placeNow ? `"${v.name || v.item}" appears a few paces from River.` : `"${v.name || v.item}" is in the catalog, available to place.`, ttl: 5000 });
 }
 
 /** Choosing a spot happens on the map, so bring the map into view first. */
