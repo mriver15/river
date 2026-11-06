@@ -1,5 +1,5 @@
-import { el } from "../dom.ts";
-import { send } from "../state.ts";
+import { el, setIcon } from "../dom.ts";
+import { ctx, send } from "../state.ts";
 import type { AdvanceProgress, AdvanceResult } from "../../shared/advance.ts";
 
 const num = (v: number) => v.toLocaleString();
@@ -22,17 +22,27 @@ export function onAdvance(p: AdvanceProgress | null, done?: AdvanceResult) {
   } else if (done) progressBox.append(el("div", "bt-note", `${why[done.reason] ?? done.reason}: ${mins(done.summary.simSeconds)} of world time in ${(done.wallMs / 1000).toFixed(1)} s.`));
 }
 
-/** The banner for a read-only replay. */
-let bar: HTMLElement | null = null;
+/** The banner for a read-only replay: play/pause, speed up to a day in a few seconds, a scrubber that jumps ahead (a replay cannot run backwards), and the route walked. Built once and updated in place so dragging works. */
+let bar: { root: HTMLElement; title: HTMLElement; status: HTMLElement; pause: HTMLButtonElement; speed: HTMLSelectElement; seek: HTMLInputElement; paused: boolean; dragging: boolean } | null = null;
 export function onReplay(m: { tick: number; startTick: number; endTick: number; speed: number; paused: boolean; done: boolean; checked: number; diverged: number; source: string }) {
   if (!bar) {
-    bar = el("div", ""); bar.setAttribute("style", "position:fixed;left:50%;transform:translateX(-50%);top:8px;z-index:50;background:var(--s2,#222);border:1px solid var(--line2,#555);border-radius:10px;padding:6px 12px;display:flex;gap:10px;align-items:center;font-size:12px");
-    document.body.append(bar);
+    const root = el("div", ""); root.setAttribute("style", "position:fixed;left:50%;transform:translateX(-50%);top:8px;z-index:50;background:var(--s2,#222);border:1px solid var(--line2,#555);border-radius:10px;padding:6px 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:center;max-width:94vw;font-size:12px");
+    const title = el("b", "", "Replay"), status = el("span", "muted"), pause = el("button", "btn sm") as HTMLButtonElement, speed = el("select") as HTMLSelectElement;
+    for (const v of [1, 4, 16, 64, 256, 512]) { const o = el("option") as HTMLOptionElement; o.value = String(v); o.textContent = `${v}×`; speed.append(o); }
+    const seek = el("input") as HTMLInputElement; seek.type = "range"; seek.min = "0"; seek.max = "1000"; seek.style.width = "min(320px, 60vw)"; seek.title = "Jump ahead (a replay cannot run backwards)";
+    const trail = el("button", "btn sm", "Route") as HTMLButtonElement; trail.title = "Show the route River has walked, shaded by the hour"; setIcon(trail, "route");
+    trail.onclick = () => { const on = !ctx.scene?.trailShown; ctx.scene?.showTrail(on); trail.classList.toggle("on", on); };
+    const state = { root, title, status, pause, speed, seek, paused: false, dragging: false }; bar = state;
+    pause.onclick = () => send({ t: "replay_pause", paused: !state.paused });
+    speed.onchange = () => send({ t: "replay_speed", speed: Number(speed.value) });
+    seek.onpointerdown = () => { state.dragging = true; };
+    seek.onchange = () => { state.dragging = false; const span = Number(seek.dataset.span ?? 0), start = Number(seek.dataset.start ?? 0); send({ t: "replay_seek", tick: Math.round(start + (Number(seek.value) / 1000) * span) }); };
+    root.append(title, status, pause, speed, seek, trail); document.body.append(root);
+    ctx.scene?.showTrail(true); trail.classList.add("on");
   }
-  bar.replaceChildren();
-  const pct = Math.round(((m.tick - m.startTick) / Math.max(1, m.endTick - m.startTick)) * 100);
-  const pause = el("button", "btn sm", m.paused ? "Play" : "Pause"); pause.onclick = () => send({ t: "replay_pause", paused: !m.paused });
-  const sp = el("select") as HTMLSelectElement; for (const v of [1, 4, 16, 64]) { const o = el("option") as HTMLOptionElement; o.value = String(v); o.textContent = `${v}×`; if (v === m.speed) o.selected = true; sp.append(o); }
-  sp.onchange = () => send({ t: "replay_speed", speed: Number(sp.value) });
-  bar.append(el("b", "", "Replay"), el("span", "muted", `${m.source} · ${pct}%${m.done ? " · finished" : ""}`), pause, sp, el("span", m.diverged ? "" : "muted", m.diverged ? `⚠ ${m.diverged} of ${m.checked} checkpoints differ` : `${m.checked} checkpoints match`));
+  const b = bar, span = Math.max(1, m.endTick - m.startTick), pct = Math.round(((m.tick - m.startTick) / span) * 100);
+  b.paused = m.paused; b.pause.textContent = m.paused ? "Play" : "Pause"; b.speed.value = String(m.speed);
+  b.seek.dataset.span = String(span); b.seek.dataset.start = String(m.startTick); if (!b.dragging) b.seek.value = String(Math.round(((m.tick - m.startTick) / span) * 1000));
+  b.status.textContent = `${m.source} · ${pct}%${m.done ? " · finished" : ""} · ${m.diverged ? `⚠ ${m.diverged} of ${m.checked} checkpoints differ` : `${m.checked} checkpoints match`}`;
+  b.status.className = m.diverged ? "" : "muted";
 }

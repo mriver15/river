@@ -305,6 +305,9 @@ export class Scene3D {
   entityObjs = new Map<string, THREE.Object3D>();
   entityData = new Map<string, Entity>();
   follow = true;
+  /** The route River has walked since the page opened (or since cleared), drawn as a line that shifts from night-blue to day-gold with the hour. */
+  private trail?: { line: THREE.LineSegments; pos: THREE.BufferAttribute; col: THREE.BufferAttribute; n: number; last: { x: number; z: number } | null };
+  private static TRAIL_MAX = 12000;
   cutaways = true;
   onPick: (e: Entity | null) => void = () => {};
 
@@ -470,7 +473,30 @@ export class Scene3D {
     if (o) { this.scene.remove(o); o.traverse((c) => { if (c.userData.matKeys) disposeItem(c); }); this.entityObjs.delete(id); this.entityData.delete(id); }
   }
 
+  private growTrail(a: AgentView) {
+    const M = Scene3D.TRAIL_MAX;
+    if (!this.trail) {
+      const g = new THREE.BufferGeometry(), pos = new THREE.BufferAttribute(new Float32Array(M * 6), 3), col = new THREE.BufferAttribute(new Float32Array(M * 6), 3);
+      g.setAttribute("position", pos); g.setAttribute("color", col); g.setDrawRange(0, 0);
+      const line = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.85, fog: false, depthTest: false }));
+      line.frustumCulled = false; line.visible = false; line.renderOrder = 5; this.scene.add(line); this.trail = { line, pos, col, n: 0, last: null };
+    }
+    const t = this.trail, l = t.last, d = l ? Math.hypot(a.x - l.x, a.z - l.z) : 0;
+    if (l && d < 0.6) return;
+    if (l && d < 30) {                                                // a jump (a new life, a long fall) is a gap, not a line
+      if (t.n >= M) { t.pos.array.copyWithin(0, 6); t.col.array.copyWithin(0, 6); t.n = M - 1; }
+      const day = Math.cos((a.worldTime - 0.5) * Math.PI * 2) * 0.5 + 0.5, c = [0.25 + 0.75 * day, 0.35 + 0.6 * day, 0.9 - 0.55 * day], i = t.n * 6;
+      t.pos.array.set([l.x, heightAt(l.x, l.z, this.seed) + 0.25, l.z, a.x, heightAt(a.x, a.z, this.seed) + 0.25, a.z], i); t.col.array.set([...c, ...c], i);
+      t.n++; t.pos.needsUpdate = t.col.needsUpdate = true; t.line.geometry.setDrawRange(0, t.n * 2);
+    }
+    t.last = { x: a.x, z: a.z };
+  }
+  showTrail(on: boolean) { if (!this.trail) this.growTrail(this.agent ?? ({ x: 0, z: 0, worldTime: 0.5 } as AgentView)); if (this.trail) this.trail.line.visible = on; }
+  get trailShown() { return !!this.trail?.line.visible; }
+  clearTrail() { if (this.trail) { this.trail.n = 0; this.trail.last = null; this.trail.line.geometry.setDrawRange(0, 0); } }
+
   setAgent(a: AgentView) {
+    this.growTrail(a);
     this.dress(a.worn ?? []); this.mark(a.body?.marks ?? []);
     const first = !this.agent;
     this.agent = a;

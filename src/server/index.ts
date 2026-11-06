@@ -122,7 +122,7 @@ const initMsg = (): ServerMsg => ({ t: "init", schema: PROTOCOL_VERSION, seq, mo
 let resetting = false;
 
 // ---------- read-only replay ----------
-const player = { speed: 4, paused: false, done: false, checked: 0, diverged: 0, tick: 0, startTick: 0, endTick: 0, source: "", lastCheck: 0 };
+const player = { seekTo: 0, speed: Number(process.env.REPLAY_SPEED) || 4, paused: false, done: false, checked: 0, diverged: 0, tick: 0, startTick: 0, endTick: 0, source: "", lastCheck: 0 };
 const replayMsg = (): ServerMsg => ({ t: "replay", tick: sim.simTick(), startTick: player.startTick, endTick: player.endTick, speed: player.speed, paused: player.paused, done: player.done, checked: player.checked, diverged: player.diverged, source: player.source });
 async function playReplay() {
   const src = new DatabaseSync(REPLAY!.recorded, { readOnly: true });
@@ -138,7 +138,9 @@ async function playReplay() {
     const now = performance.now(), dt = now - last; last = now;
     if (!player.paused && !player.done) {
       carry += (dt / 1000) * player.speed * 10;                                  // ten ticks to a world second
-      const n = Math.min(Math.floor(carry), 400); carry -= n;
+      const seeking = player.seekTo > sim.simTick();                              // jumping ahead: run flat out until the tick is reached, still showing progress
+      if (!seeking) player.seekTo = 0;
+      const n = seeking ? Math.min(player.seekTo - sim.simTick(), 3000) : Math.min(Math.floor(carry), 400); carry = seeking ? 0 : carry - n;
       for (let i = 0; i < n; i++) if (!(await driver.step())) { player.done = true; await driver.settle(); break; }
       for (const r of db.prepare("SELECT tick, hash FROM sim_checkpoints WHERE tick > ? ORDER BY tick").all(player.lastCheck) as { tick: number; hash: string }[]) {
         player.lastCheck = r.tick; if (live.has(r.tick)) { player.checked++; if (live.get(r.tick) !== r.hash) player.diverged++; }
@@ -155,7 +157,8 @@ wss.on("connection", (ws) => {
     if (m.t === "resync") return void send(ws, initMsg());          // a client that missed something asks for the whole state
     if (REPLAY && m.t === "presence") return;                        // looking in on a recording changes nothing
     if (REPLAY) {                                                    // a replay is only watched: nothing a client sends changes the world
-      if (m.t === "replay_speed") player.speed = Math.max(0.5, Math.min(64, Number(m.speed) || 1));
+      if (m.t === "replay_speed") player.speed = Math.max(0.5, Math.min(512, Number(m.speed) || 1));
+      else if (m.t === "replay_seek") player.seekTo = Math.max(0, Math.min(player.endTick, Math.floor(Number(m.tick) || 0)));       // forward only: a replay cannot run backwards
       else if (m.t === "replay_pause") player.paused = !!m.paused;
       else send(ws, { t: "notice", level: "error", text: "This is a replay of a recorded life. It can be watched, not changed." });
       return;

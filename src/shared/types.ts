@@ -159,6 +159,7 @@ export type ClientMsg = (
   | { t: "resync" }
   | { t: "replay_speed"; speed: number }
   | { t: "replay_pause"; paused: boolean }
+  | { t: "replay_seek"; tick: number }
   | { t: "config_preset"; id: string }
   | { t: "forge"; id: number }
   | { t: "install"; name: string }

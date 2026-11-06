@@ -33,16 +33,22 @@ ws.on("message", (raw) => { const m = JSON.parse(String(raw)); if (m.t === "repl
 await sleep(800);
 if (!last) fail("the replay server never reported its state");
 const start = last.tick;
+ws.send(JSON.stringify({ t: "replay_speed", speed: 1 }));
+const mid = Math.floor((last.startTick + last.endTick) / 2);
+ws.send(JSON.stringify({ t: "replay_seek", tick: mid }));            // jumping ahead runs the same ticks, flat out
+for (let i = 0; i < 20 && last.tick < mid; i++) await sleep(500);
+if (last.tick < mid) fail(`seeking to ${mid} stopped at ${last.tick}`);
+ws.send(JSON.stringify({ t: "presence" }));                         // looking in on a recording changes nothing and is not an error
 ws.send(JSON.stringify({ t: "replay_speed", speed: 64 }));
 ws.send(JSON.stringify({ t: "say", text: "I should not be able to change anything" }));     // read-only
 ws.send(JSON.stringify({ t: "config_set", key: "needsRate", value: 3 }));
 for (let i = 0; i < 80 && !last.done; i++) await sleep(500);
 ws.close(); viewer.kill("SIGTERM");
-if (!notices.some((t) => /watched, not changed/.test(t))) fail("a command was accepted by a read-only replay");
+if (notices.length !== 2 || !notices.every((t) => /watched, not changed/.test(t))) fail("a command was accepted by a read-only replay");
 if (!last.done) fail(`the replay did not finish (tick ${last.tick} of ${last.endTick})`);
 if (last.tick <= start) fail("the replay did not advance");
 if (last.checked < 5) fail(`only ${last.checked} checkpoints were compared`);
 if (last.diverged !== 0) fail(`${last.diverged} of ${last.checked} checkpoints differ from the recording`);
-console.log(`PASS replayed ${last.endTick - last.startTick} ticks; ${last.checked} checkpoints matched; commands from the client were refused`);
+console.log(`PASS replayed ${last.endTick - last.startTick} ticks; ${last.checked} checkpoints matched; commands from the client were refused; a jump ahead to tick ${mid} landed`);
 for (const e of ["", "-wal", "-shm"]) fs.rmSync(rec + e, { force: true });
 process.exit(0);

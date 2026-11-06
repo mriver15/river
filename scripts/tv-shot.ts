@@ -17,7 +17,9 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), "river-tvshot-")), db = path.j
 const hold = http.createServer((_, res) => setTimeout(() => { res.statusCode = 204; res.end(); }, seconds * 1000)); await new Promise<void>((r) => hold.listen(8871, r));
 const page = path.resolve("dist/client", "tv-shot.html");
 fs.writeFileSync(page, fs.readFileSync(dist, "utf8").replace("</body>", `<img src="http://localhost:8871/hold" width="1" height="1" style="position:fixed;opacity:0"></body>`));
-const server = spawn(process.execPath, ["--import", "tsx", "src/server/index.ts"], { env: { ...process.env, RIVER_DB: db, PORT: "8872", MOCK_LLM: "1", EMBED_DISABLED: "1" }, stdio: "ignore" });
+const server = process.env.SHOT_REPLAY      // SHOT_REPLAY=<recorded.db> pictures the replay viewer instead of a live world
+  ? spawn(process.execPath, ["--import", "tsx", "scripts/replay-serve.ts", process.env.SHOT_REPLAY, "", "8872"], { env: { ...process.env, REPLAY_SPEED: process.env.REPLAY_SPEED ?? "64" }, stdio: "ignore" })
+  : spawn(process.execPath, ["--import", "tsx", "src/server/index.ts"], { env: { ...process.env, RIVER_DB: db, PORT: "8872", MOCK_LLM: "1", EMBED_DISABLED: "1" }, stdio: "ignore" });
 await new Promise((r) => setTimeout(r, 5000));
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), "river-ff-"));
 const ff = spawn(firefox, ["--headless", "--no-remote", "--profile", profile, `--window-size=${W},${H}`, "--screenshot", out, `http://localhost:8872/tv-shot.html${process.env.SHOT_QUERY ?? "?tv"}`], { stdio: "ignore" });     // not spawnSync: this process serves the hold request

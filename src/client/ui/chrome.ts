@@ -96,9 +96,11 @@ function initActions() {
   box.append(el("span", "sep"));
   btn("btn-nextday", "sunrise", "Run the world forward to the next dawn", () => { if (confirm("Run the world forward to the next dawn? It runs every tick, quickly, and stops if something urgent needs River.")) send({ t: "sim_advance", until: "dawn", decision: "stop" }); });
   btn("btn-controls", "sliders", "Controls: budget, new River", openControls);
+  btn("btn-route", "route", "Show the route River has walked, shaded by the hour (R)", toggleRoute);
   btn("btn-tv", "tv", "TV view: a cinematic, big-screen view for watching from a distance (T)", () => toggleTv());
   btn("btn-panel", "panel", "Hide panel (\\)", () => setSide(document.body.dataset.side !== "open"));
 }
+const toggleRoute = () => { if (!ctx.scene) return; const on = !ctx.scene.trailShown; ctx.scene.showTrail(on); $("btn-route").classList.toggle("on", on); };
 const toggleFollow = () => { if (!ctx.scene) return; ctx.scene.follow = !ctx.scene.follow; $("btn-follow").classList.toggle("on", ctx.scene.follow); };
 /** Turn sound on if it isn't (call from a click: browsers only allow audio after a gesture). */
 export function ensureSound(): boolean { if (!ctx.audio) return false; if (!ctx.audio.on) toggleSound(); return ctx.audio.on; }
@@ -222,7 +224,7 @@ function initKeys() {
     const n = Number(e.key);
     if (n >= 1 && n <= TABS.length) return void showTab(TABS[n - 1]);
     if (e.key === "\\") setSide(document.body.dataset.side !== "open");
-    else if (e.key === "t") toggleTv(); else if (e.key === "f") toggleFollow(); else if (e.key === "m") toggleSound();
+    else if (e.key === "t") toggleTv(); else if (e.key === "f") toggleFollow(); else if (e.key === "r") toggleRoute(); else if (e.key === "m") toggleSound();
     else if (e.key === "p") send({ t: "pause", paused: !S.stats?.paused });
     else if (e.key === "w") send({ t: "sim_pause", paused: !S.stats?.worldPaused });
     else if (e.key === "/") { e.preventDefault(); showTab("log"); $("logsearch").focus(); }
