@@ -25,6 +25,8 @@ export const isFreshClock = !saved;
 export const lastCommit = { wall: saved?.wallSaved ?? 0, speed: saved?.speed ?? 1, tick: saved?.tick ?? 0, paused: saved?.paused ?? false };
 
 export const simNow = () => base + clock.tick * STEP_MS;
+/** Simulation ms at tick 0 of this world's clock. */
+export const simBase = base;
 export const simTick = () => clock.tick;
 export const simPaused = () => clock.paused;
 export const simSpeed = () => clock.speed;

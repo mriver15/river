@@ -60,7 +60,7 @@ export function resetApply(opts: { world: boolean }, d: Deps): void {
   try {
     for (const t of tables) db.exec(`DELETE FROM ${t}`);
     db.exec(`DELETE FROM sqlite_sequence WHERE name IN (${tables.map((t) => `'${t}'`).join(",")})`);  // ids start again at 1
-    const keep = opts.world ? [] : ["seed", "epoch", "nextId", "heat", "scorch", "weather", "config"];
+    const keep = opts.world ? ["sim", "epochOnSim"] : ["sim", "epochOnSim", "seed", "epoch", "nextId", "heat", "scorch", "weather", "config"];      // the clock is never wiped: a new life or a new world goes on from the same moment
     db.exec(keep.length ? `DELETE FROM kv WHERE k NOT IN (${keep.map((k) => `'${k}'`).join(",")})` : "DELETE FROM kv");
     db.exec("COMMIT");
   } catch (e) { db.exec("ROLLBACK"); d.agent.resume(false); throw e; }

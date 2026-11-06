@@ -15,6 +15,15 @@ export const elapsedMs = (c: SimulationClock) => c.tick * STEP_MS;
 export const calendarMs = (c: SimulationClock) => c.calendarOriginMs + elapsedMs(c);
 export const dayIndex = (c: SimulationClock) => Math.floor(calendarMs(c) / DAY_MS) + 1;
 export const dayFraction = (c: SimulationClock) => (calendarMs(c) % DAY_MS) / DAY_MS;
+/**
+ * A calendar origin that lies after the clock's own time would make the day count negative (it happens if the clock was set back while the
+ * calendar was not). Move the origin back so the time of day stays exactly what it was and the day number counts the days the clock has run.
+ */
+export function healEpoch(epoch: number, now: number, clockStart: number): number {
+  const phase = (((now - epoch) / DAY_MS) % 1 + 1) % 1;                        // how far into the day it is, 0..1
+  const days = Math.max(0, Math.floor((now - clockStart) / DAY_MS));
+  return now - (days + phase) * DAY_MS;
+}
 /** Round a duration up to whole ticks. */
 export const ticksFor = (ms: number) => Math.ceil(ms / STEP_MS);
 

@@ -7,7 +7,8 @@ import { DEFAULT_SEED, HALF, WORLD_SIZE, groveness, heightAt, isLand, mulberry32
 import { HEAT_N } from "../shared/types.ts";
 import type { EmotionName } from "../shared/emotions.ts";
 import type { AgentView, Entity, EntityKind, InventoryItem, Needs, Weather } from "../shared/types.ts";
-import { simNow, simRng, after, DAY_MS, legacyWallBoot } from "./sim.ts";
+import { simNow, simBase, simRng, after, DAY_MS, legacyWallBoot } from "./sim.ts";
+import { healEpoch } from "../sim/clock.ts";
 import { planPath } from "./nav.ts";
 import { ItemRegistry } from "./items.ts";
 import { persisted, persistedBlob, onFlush } from "./persist.ts";
@@ -80,6 +81,10 @@ export class World {
       kvSet("epochOnSim", true); if (this.epoch) kvSet("epoch", this.epoch);
     }
     if (!this.epoch) { this.epoch = simNow() - 0.3 * dayMs(); kvSet("epoch", this.epoch); }
+    else if (this.epoch > simNow()) {                       // the calendar began after the clock's time: days would count backwards from there
+      const was = this.day(); this.epoch = healEpoch(this.epoch, simNow(), simBase); kvSet("epoch", this.epoch);
+      log("system", `The calendar was ahead of the clock (it showed day ${was}); it has been realigned, keeping the time of day. It is day ${this.day()}.`);
+    }
     this.nextId = kvGet<number>("nextId", 1);
     this.weather = kvGet<{ w: Weather }>("weather", { w: "clear" }).w;
     const rows = db.prepare("SELECT * FROM entities").all() as any[];
@@ -300,7 +305,7 @@ export class World {
     this.epoch -= adv; kvSet("epoch", this.epoch); return this.day();
   }
   worldTime() { return (((simNow() - this.epoch) / dayMs()) % 1 + 1) % 1; }
-  day() { return Math.floor((simNow() - this.epoch) / dayMs()) + 1; }
+  day() { return Math.max(1, Math.floor((simNow() - this.epoch) / dayMs()) + 1); }
   timeLabel() {
     const t = this.worldTime() * 24, h = Math.floor(t), m = Math.floor((t - h) * 60);
     const part = h < 5 ? "deep night" : h < 8 ? "dawn" : h < 12 ? "morning" : h < 17 ? "afternoon" : h < 20 ? "evening" : "night";
