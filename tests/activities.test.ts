@@ -207,3 +207,36 @@ test("a sudden noise or a human voice wakes someone resting, but not someone wal
   await run(5); humanCommand(rt, { t: "say", text: "hello again" }); await run(5);
   assert.equal(A.cur?.def, "gather", "walking is not interrupted by being spoken to");
 });
+
+test("with a lit fire close by, the instinct to run goes toward the fire, not just away", async () => {
+  const g = reset();
+  await run(250);                                                     // the last escape is long enough ago for the instinct to act again
+  w.spawn("campfire", "campfire", g.x + 12, g.z, { lit: true });
+  known(w.spawn("tree", "oak", g.x - 8, g.z, { yields: ["stick"], stock: 5, max: 5 }));
+  const p = A.completion(A.begin("gather", { what: "stick", quantity: 3 }, { intent: "gather", source: "brain" }).id);
+  await run(5);
+  const wolf = { name: "wolf", d: 5, x: w.me.x - 5, z: w.me.z };                     // behind River; the fire is ahead
+  const real = rt.wildlife.threat; rt.wildlife.threat = () => wolf;
+  await run(2); await p;
+  assert.equal(A.cur?.source, "reflex");
+  assert.match(A.cur?.intent ?? "", /run to the fire/);
+  rt.wildlife.threat = () => null;
+  await run(120);
+  assert.ok(Math.hypot(w.me.x - (g.x + 12), w.me.z - g.z) < 5, "River ends up beside the fire");
+  rt.wildlife.threat = real;
+});
+
+test("a fire back toward the animal is not run to", async () => {
+  const g = reset();
+  await run(250);                                                     // the last escape is long enough ago for the instinct to act again
+  w.spawn("campfire", "campfire", g.x - 12, g.z, { lit: true });                     // behind River, where the wolf is
+  known(w.spawn("tree", "oak", g.x + 10, g.z, { yields: ["stick"], stock: 5, max: 5 }));
+  const p = A.completion(A.begin("gather", { what: "stick", quantity: 3 }, { intent: "gather", source: "brain" }).id);
+  await run(5);
+  const wolf = { name: "wolf", d: 5, x: w.me.x - 5, z: w.me.z };
+  const real = rt.wildlife.threat; rt.wildlife.threat = () => wolf;
+  await run(2); await p;
+  assert.equal(A.cur?.source, "reflex");
+  assert.doesNotMatch(A.cur?.intent ?? "", /run to the fire/);
+  rt.wildlife.threat = real;
+});

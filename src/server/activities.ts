@@ -348,6 +348,8 @@ export class Activities {
     if ((danger.kind === "predator" || danger.kind === "injury") && danger.from && cfg("reflexEscape") && simTick() - this.lastEscape > 200) {
       this.lastEscape = simTick();
       const me = this.w.me, base = Math.atan2(me.z - danger.from.z, me.x - danger.from.x);
+      const cover = danger.kind === "predator" ? this.cover(danger.from) : null;       // animals flee toward firelight and shelter when they have it in view; wolves, boars and bears keep clear of both
+      if (cover) { try { this.begin("travel", { x: cover.x, z: cover.z, label: cover.label }, { intent: `run to ${cover.label} away from the ${danger.from.name}`, source: "reflex" }); return; } catch { /* no way there: run the other way */ } }
       for (const off of [0, 0.6, -0.6, 1.2, -1.2, 1.8, -1.8]) {
         const x = me.x + Math.cos(base + off) * cfg("reflexEscapeDistance"), z = me.z + Math.sin(base + off) * cfg("reflexEscapeDistance");
         if (!this.w.walkable(x, z)) continue;
@@ -355,6 +357,23 @@ export class Activities {
         break;
       }
     }
+  }
+
+  /** A lit fire or a shelter in view, close enough to reach and not in the predator's direction: where an instinctive run should go (a spot just inside its protection). */
+  private cover(from: { x: number; z: number }): { x: number; z: number; label: string } | null {
+    const w = this.w, me = w.me, away = Math.atan2(me.z - from.z, me.x - from.x);
+    let best: { x: number; z: number; label: string; d: number } | null = null;
+    for (const e of w.entities.values()) {
+      const fire = e.kind === "campfire" && e.props.lit !== false, shelter = e.kind === "structure" && (e.props.shelter ?? !e.props.shape);
+      if (!fire && !shelter) continue;
+      const d = Math.hypot(e.x - me.x, e.z - me.z); if (d < 2 || d > 25 || (best && d >= best.d)) continue;
+      const ang = Math.atan2(e.z - me.z, e.x - me.x), off = Math.abs(((ang - away + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+      if (off > Math.PI * 0.6) continue;                                         // it lies back toward the animal: running there is running at it
+      const k = Math.min(1, (fire ? 3 : 1.2) / d), x = e.x + (me.x - e.x) * k, z = e.z + (me.z - e.z) * k;
+      if (!w.walkable(x, z)) continue;
+      best = { x, z, label: fire ? "the fire" : "shelter", d };
+    }
+    return best;
   }
 
   private finish(a: Activity, status: Status, outcome: Outcome, announce = true) {
