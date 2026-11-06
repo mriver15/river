@@ -3,6 +3,7 @@ import { simNow, simRng } from "./sim.ts";
 import type { World } from "./world.ts";
 import type { Entity } from "../shared/types.ts";
 import { bus } from "./bus.ts";
+import { defById } from "../content/items.ts";
 import { kvGet, kvSet } from "./db.ts";
 
 const sr = simRng("gathering");
@@ -23,7 +24,7 @@ export const available = (e: Entity, except?: string): number => (e.props.stock 
 /** Take one unit from a yielding source. `prefer` picks that kind when the source offers it. */
 export function takeOneUnit(w: World, e: Entity, prefer?: string): { kind: string; name: string } {
   const kind: string = prefer && e.props.yields.includes(prefer) ? prefer : e.props.yields[Math.floor(sr() * e.props.yields.length)];
-  const [name, desc] = ITEM_NAMES[kind];
+  const [name, desc] = ITEM_NAMES[kind] ?? [defById(kind).name, defById(kind).desc ?? ""];                 // kinds from content packs name themselves
   e.props.stock--; e.props.lastTake = simNow(); w.putEntity(e);
   w.addItem(kind, name, desc, 1, undefined, { sources: [e.id] });         // where it came from is part of what it is
   return { kind, name };

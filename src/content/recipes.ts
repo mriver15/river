@@ -74,6 +74,11 @@ export const RECIPES: Recipe[] = [
   })),
 ];
 
+/** Add recipes from a content pack. A pack cannot replace one that exists. */
+export function registerRecipes(rs: Recipe[]) {
+  for (const r of rs) { if (RECIPES.some((x) => x.id === r.id)) throw new Error(`content pack recipe "${r.id}" already exists`); RECIPES.push(r); }
+}
+
 export const recipeById = (id: string) => RECIPES.find((r) => r.id === id);
 /** what `craft` offers: everything not made through some other tool */
 export const craftable = () => RECIPES.filter((r) => !r.via);
@@ -104,3 +109,6 @@ export function matchRecipe(r: Recipe, have: Candidate[], prefer: string[] = [])
   if (r.limits && picks.length > r.limits.connections + 1) return { ok: false, why: `too many parts to join (${picks.length})` };
   return { ok: true, picks, massKg };
 }
+
+import { CONTENT_PACKS } from "./packs/index.ts";
+for (const p of CONTENT_PACKS) registerRecipes(p.recipes ?? []);

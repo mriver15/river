@@ -38,6 +38,11 @@ export const MATERIALS: Record<string, Material> = {
   inert: { id: "inert", density: 800, retention: 0.3, traits: [], flammability: 0 },
 };
 
+/** Add materials from a content pack. A pack cannot replace one that exists. */
+export function registerMaterials(ms: Record<string, Omit<Material, "id">>) {
+  for (const [id, m] of Object.entries(ms)) { if (MATERIALS[id]) throw new Error(`content pack material "${id}" already exists`); MATERIALS[id] = { id, ...m }; }
+}
+
 export interface Part { material: string; fraction: number }
 
 /**
@@ -72,3 +77,6 @@ export function massOf(parts: Part[], dims: { l: number; w: number; h: number },
   const d = parts.reduce((s, p) => s + (MATERIALS[p.material]?.density ?? 800) * p.fraction, 0);
   return +(vol * d).toFixed(3);
 }
+
+import { CONTENT_PACKS } from "./packs/index.ts";
+for (const p of CONTENT_PACKS) registerMaterials(p.materials ?? {});

@@ -1,3 +1,4 @@
+import { CONTENT_PACKS } from "../content/packs/index.ts";
 import { cfg } from "./config.ts";
 import { warmthFactor, worn, attachItems } from "./clothing.ts";
 import { bodyView } from "./body.ts";
@@ -117,14 +118,15 @@ export class World {
    */
   ensureMaterials() {
     const rng = mulberry32(this.seed ^ 0x51ab), have = (n: string) => [...this.entities.values()].some((e) => e.name === n);
-    const put = (name: string, count: number, accept: (h: number) => boolean, props: Record<string, any>) => {
+    const put = (name: string, count: number, accept: (h: number) => boolean, props: Record<string, any>, kind: "rock" | "bush" = "rock") => {
       if (have(name)) return;
       for (let tries = 0, placed = 0; tries < count * 300 && placed < count; tries++) {
         const x = (rng() * 2 - 1) * (HALF - 6), z = (rng() * 2 - 1) * (HALF - 6), h = heightAt(x, z, this.seed);
         if (!isLand(x, z, this.seed) || !accept(h) || [...this.entities.values()].some((e) => Math.hypot(e.x - x, e.z - z) < 2.5)) continue;
-        this.spawn("rock", name, x, z, { ...props }); placed++;
+        this.spawn(kind, name, x, z, { ...props }); placed++;
       }
     };
+    for (const p of CONTENT_PACKS) for (const d of p.deposits ?? []) put(d.name, d.count, (h) => h >= d.height[0] && h <= d.height[1], d.props, d.kind);
     put("clay bank", 5, (h) => h > 0.3 && h < 1.4, { stock: 3, max: 5, yields: ["clay"], desc: "A bank of fine, cool clay, red-brown where the water has cut into it." });
     put("chalk outcrop", 4, (h) => h > 3.4, { stock: 3, max: 4, yields: ["chalk"], desc: "A pale outcrop of soft chalk that leaves a white mark on whatever it touches." });
     for (const e of this.entities.values()) if (e.kind === "tree" && e.props.yields && !e.props.noRegrow && !e.props.yields.includes("bark")) { e.props.yields.push("bark"); this.putEntity(e); }

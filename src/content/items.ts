@@ -16,6 +16,8 @@ export interface ItemDef {
   /** durability 1 = new; wears with use */
   worn?: boolean;
   nutrition?: number;
+  /** what it looks like to the touch when it is first picked up, for kinds River can gather */
+  desc?: string;
   container?: { capacityKg: number; volumeL: number };
   wearable?: { slot: string };
   /** which procedural look draws it (see the client's visual registry) */
@@ -24,7 +26,8 @@ export interface ItemDef {
   stats?: Record<string, number>;
 }
 
-type Spec = Omit<ItemDef, "version" | "massKg"> & { massKg?: number };
+export type ItemSpec = Omit<ItemDef, "version" | "massKg"> & { massKg?: number };
+type Spec = ItemSpec;
 const def = (s: Spec): ItemDef => ({ version: RULES_VERSION, ...s, massKg: s.massKg ?? massOf(s.parts, s.dims) });
 const wood = [{ material: "wood", fraction: 1 }], stone = [{ material: "stone", fraction: 1 }];
 
@@ -67,7 +70,12 @@ export const ITEM_DEFS: ItemDef[] = [
 
 const BY_ID = new Map(ITEM_DEFS.map((d) => [d.id, d] as const));
 const BY_ALIAS = new Map<string, ItemDef>();
-for (const d of ITEM_DEFS) for (const a of [d.id, ...d.aliases]) if (!BY_ALIAS.has(a)) BY_ALIAS.set(a, d);
+const index = (d: ItemDef) => { BY_ID.set(d.id, d); for (const a of [d.id, ...d.aliases]) if (!BY_ALIAS.has(a)) BY_ALIAS.set(a, d); };
+for (const d of ITEM_DEFS) index(d);
+/** Add kinds of thing from a content pack. A pack cannot replace a kind that already exists. */
+export function registerItems(specs: ItemSpec[]) {
+  for (const s of specs) { if (BY_ID.has(s.id)) throw new Error(`content pack item "${s.id}" already exists`); const d = def(s); ITEM_DEFS.splice(ITEM_DEFS.length - 1, 0, d); index(d); }       // before the generic fallback
+}
 
 export const defById = (id: string): ItemDef => BY_ID.get(id) ?? BY_ID.get("generic")!;
 /** The definition for a kind the game already uses; unknown kinds get the inert fallback. */
@@ -81,3 +89,6 @@ export function capabilitiesOf(d: ItemDef): string[] {
   if (!c) { c = deriveCapabilities(d.parts, d.tags, d.dims, { container: !!d.container, wearable: !!d.wearable, edible: d.nutrition !== undefined }); capCache.set(k, c); }
   return c;
 }
+
+import { CONTENT_PACKS } from "./packs/index.ts";
+for (const p of CONTENT_PACKS) registerItems(p.items ?? []);
