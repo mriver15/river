@@ -341,3 +341,23 @@ details.bt-sec > summary { cursor: pointer; padding: 6px 0; list-style: none; di
 #tv .tv-caption .tv-said { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 @media (max-height: 760px) { #tv .tv-ticker { display: none; } #tv .tv-need { font-size: clamp(13px, 1.3vw, 24px); } #tv .tv-needs { gap: 6px; } #tv .tv-clock .tv-time { font-size: clamp(44px, 6vw, 120px); } }
 @media (max-width: 1000px) { #tv .tv-frame { grid-template-columns: minmax(0, 1fr); } #tv .tv-vitals { grid-area: 1 / 1; justify-self: end; margin-top: -1px; } #tv .tv-right { display: none; } }
+
+/* ---------- TV pagination: a region too small for what it has to say shows it in pages ---------- */
+#tv .tv-pg { overflow: hidden; transition: opacity .38s ease; } #tv .tv-pg.tv-out { opacity: 0; }
+#tv .tv-dots { display: flex; gap: max(7px, .55vw); justify-content: flex-end; margin-top: max(8px, .7vw); } #tv .tv-dots i { width: max(8px, .6vw); height: max(8px, .6vw); border-radius: 50%; background: rgba(255, 255, 255, .28); } #tv .tv-dots i.on { background: #fff; box-shadow: 0 0 8px rgba(255, 255, 255, .6); }
+#tv .tv-vbody { max-height: 31vh; display: flex; flex-wrap: wrap; align-content: flex-start; gap: clamp(8px, 1vw, 20px) .7vw; font-family: ui-sans-serif, system-ui, sans-serif; }
+#tv .tv-vbody .tv-need { flex: 1 0 100%; } #tv .tv-vbody .tv-line { flex: 1 0 100%; font-size: clamp(15px, 1.4vw, 30px); line-height: 1.3; opacity: .92; border-left: 3px solid rgba(255, 255, 255, .35); padding-left: .8vw; }
+#tv .tv-vbody .tv-feel { margin: 0; }
+#tv .tv-cbody { max-height: 19vh; } #tv .tv-cbody .tv-l { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+#tv .tv-said { max-height: 23vh; } #tv .tv-moment .tv-x { max-height: 11vh; } #tv .tv-tbody { max-height: 10vh; }
+#tv .tv-caption .tv-said, #tv .tv-moment .tv-x, #tv .tv-ticker .tv-tk { display: block; -webkit-line-clamp: unset; }
+#tv .tv-moment .tv-t { -webkit-line-clamp: 3; }
+#tv .tv-caption .tv-dots, #tv .tv-moment .tv-dots { justify-content: flex-start; }
+@media (max-height: 760px) { #tv .tv-vbody { max-height: 27vh; } }
+/* while a title card is up it is the lower third: River's own line steps aside, so the card has room for every page of its text */
+#tv.tv-moment-on .tv-who, #tv.tv-moment-on .tv-doing, #tv.tv-moment-on .tv-progress { display: none; }
+#tv .tv-moment .tv-t { font-size: clamp(28px, 3.5vw, 80px); -webkit-line-clamp: 3; }
+#tv .tv-moment .tv-t { font-size: clamp(26px, 3vw, 68px); margin: .15em 0; } #tv .tv-moment .tv-x { max-height: 10vh; } #tv .tv-lower { max-height: 47vh; }
+/* the information column must hold its card, its ticker and both rows of dots inside its own height, or the ticker's last line is cut */
+#tv .tv-right { gap: 1vw; } #tv .tv-cbody { max-height: 16vh; } #tv .tv-tbody { max-height: 8vh; } #tv .tv-card { padding: 1.3vw 1.7vw; }
+#tv .tv-cbody .tv-l { font-size: clamp(16px, 1.5vw, 33px); line-height: 1.22; margin-top: .25vw; }
