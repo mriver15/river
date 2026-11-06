@@ -128,7 +128,7 @@ function autoHandle(rt: { agent: Agent }, req: ToolRequest) {
 function sweepPending(rt: { agent: Agent }) { for (const r of pendingRequests()) autoHandle(rt, r); }
 
 /** Human commands that change the world. Live and replay both run them through here. */
-export const REPLAYABLE = new Set(["say", "skip_day", "config_preset", "config_set", "config_reset", "sim_pause", "sim_speed", "gift", "catalog_add", "catalog_place", "catalog_retrieve", "catalog_delete", "approve", "deny", "activity_cancel"]);
+export const REPLAYABLE = new Set(["say", "presence", "skip_day", "config_preset", "config_set", "config_reset", "sim_pause", "sim_speed", "gift", "catalog_add", "catalog_place", "catalog_retrieve", "catalog_delete", "approve", "deny", "activity_cancel"]);
 export interface HumanResult { notice?: { level: "ok" | "error"; text: string }; toAll?: boolean; forge?: ToolRequest }
 
 export function humanCommand(rt: Runtime, m: ClientMsg): HumanResult {
@@ -144,6 +144,7 @@ export function humanCommand(rt: Runtime, m: ClientMsg): HumanResult {
         agent.notify(`## Voice from outside\nA human speaks to you: "${text}"`, true, "contact");
         return {};
       }
+      case "presence": bodyApi.watched(); return {};
       case "skip_day": {
         const day = world.skipToDawn(); log("system", `A human moved time forward: it is now dawn on day ${day}.`); bus.emit("state");
         return { notice: { level: "ok", text: `Skipped ahead to dawn on day ${day}.` }, toAll: true };

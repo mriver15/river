@@ -26,6 +26,14 @@ let lastAudio = 0;
 renderers.log = () => {}; renderers.mind = renderMind; renderers.story = renderStory; renderers.map = () => { drawMap(); renderCatalog(); };
 renderers.items = renderItems; renderers.tools = renderTools; renderers.memory = () => void loadMemories(($("memq") as HTMLInputElement).value);
 renderers.brain = () => void loadBrain();
+/** Someone is looking in: tell the server (it makes River faintly aware, a few times a day at most). Only while the tab is actually in view. */
+let seenAt = 0;
+function announcePresence() {
+  if (document.visibilityState !== "visible" || Date.now() - seenAt < 60_000) return;
+  seenAt = Date.now(); send({ t: "presence" });
+}
+document.addEventListener("visibilitychange", announcePresence);
+
 function renderAll() {
   renderBudget(); renderTools();                       // tools always runs: it keeps the tab badge fresh
   for (const t of ["mind", "story", "map", "items"] as const) if (isTab(t)) renderers[t]();
@@ -78,7 +86,7 @@ function handle(m: ServerMsg) {
       S.heat = m.heat; S.scorch = m.scorch; ctx.scene.setHeat(m.heat, m.scorch); ctx.scene.syncEntities(m.entities);
       Object.assign(S, { desires: m.desires, interests: m.interests, inventory: m.inventory, tools: m.tools, requests: m.requests, forged: m.forged, places: m.places, journal: m.journal, moments: m.moments, keeper: m.keeper, catalog: m.catalog, taste: m.taste, stats: m.stats, selfModel: m.selfModel });
       ctx.live = false; resetLog(m.log); ctx.live = true;
-      setAgent(m.agent); renderAll(); if (wantsTvFromUrl() || store.get("tvAuto", false)) setTv(true); if (/[?&]life\b/.test(location.search)) void fetchLife("now").then((l) => l && openLife(l)); break;
+      setAgent(m.agent); renderAll(); announcePresence(); if (wantsTvFromUrl() || store.get("tvAuto", false)) setTv(true); if (/[?&]life\b/.test(location.search)) void fetchLife("now").then((l) => l && openLife(l)); break;
     }
     case "agent": setAgent(m.agent); break;
     case "config": S.config = m.config; renderSettings(); break;

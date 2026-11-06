@@ -10,7 +10,7 @@ const sim = await import("../src/server/sim.ts");
 const { setConfig } = await import("../src/server/config.ts");
 for (const [k, v] of Object.entries({ weather: false, ambientRate: 0, prey: false, smallWild: false, predators: false, fallRate: 0, lethal: true })) setConfig(k, v as number | boolean);
 const { createRuntime, startSystems } = await import("../src/server/runtime.ts");
-const { bodyApi } = await import("../src/server/body.ts");
+const { bodyApi, bodyView } = await import("../src/server/body.ts");
 const { bus } = await import("../src/server/bus.ts");
 const { db } = await import("../src/server/db.ts");
 const { lifeSoFar, obituary, obituaries, livedText } = await import("../src/server/life.ts");
@@ -72,4 +72,13 @@ test("a new life starts blank, but the old life's summary is kept", async () => 
   const fresh = lifeSoFar(w, bodyApi.born());
   assert.equal(fresh.life, 2); assert.deepEqual(fresh.achievements, []); assert.equal(fresh.numbers.find((n) => n.label === "Animals hunted")!.value, 0, "the new River has done none of it");
   assert.equal(obituaries().length, 1);
+});
+
+test("being looked in on gives River a faint, brief sense of being watched, a few times a day at most", async () => {
+  const feel = () => bodyView().sensations.some((s) => /being watched/.test(s));
+  assert.equal(feel(), false);
+  assert.equal(bodyApi.watched(), true);
+  await run(10);
+  assert.equal(feel(), true, "felt while the sensation lasts");
+  assert.equal(bodyApi.watched(), false, "not again straight away");
 });

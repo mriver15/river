@@ -140,6 +140,7 @@ export const HEAT_N = 60; // heat grid is HEAT_N x HEAT_N cells over the world
 /** Every client message may carry `cid`, an id the client makes up. A cid the server has seen is acknowledged as a duplicate and not run again. */
 export type ClientMsg = (
   | { t: "say"; text: string }
+  | { t: "presence" }
   | { t: "approve"; id: number; note?: string; builtin?: string }
   | { t: "deny"; id: number; note?: string }
   | { t: "pause"; paused: boolean }

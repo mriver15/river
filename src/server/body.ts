@@ -11,16 +11,16 @@ import { worn } from "./clothing.ts";
 import type { Emotions } from "./emotions.ts";
 import type { World } from "./world.ts";
 import type { BodyView, Mark } from "../shared/types.ts";
-import { simNow, simRng, every } from "./sim.ts";
+import { simNow, simRng, every, DAY_MS } from "./sim.ts";
 const sr = simRng("body");
 
 type Kind = "bruise" | "scrape" | "burn" | "sprain" | "blister" | "bite" | "claw" | "gore" | "welt";
 interface Injury { bleed: number; dressed?: boolean; cleaned?: boolean; id: number; kind: Kind; part: string; side: "left" | "right"; sev: number; born: number; heal: number; cause: string }
-interface Saved { health: number; infection: number; born: number; dead: { cause: string; at: number } | null; injuries: Injury[]; strain: number; ailment: { name: string; until: number; venom?: boolean } | null; walked: number; next: number }
+interface Saved { health: number; infection: number; born: number; dead: { cause: string; at: number } | null; injuries: Injury[]; strain: number; ailment: { name: string; until: number; venom?: boolean } | null; walked: number; next: number; /** until when River has the sense of being watched, and when it last did */ watchedUntil: number; lastWatched: number }
 
 const MIN = 60_000, LEGS = new Set(["knee", "shin", "ankle", "foot", "hip"]);
 let w: World, emo: Emotions, notify: (msg: string) => void = () => {};
-const fresh = (): Saved => ({ health: 100, infection: 0, born: simNow(), dead: null, injuries: [], strain: 0, ailment: null, walked: 0, next: 1 });
+const fresh = (): Saved => ({ health: 100, infection: 0, born: simNow(), dead: null, injuries: [], strain: 0, ailment: null, walked: 0, next: 1, watchedUntil: 0, lastWatched: 0 });
 let st: Saved = fresh();
 let lastFaint = 0;
 let prev: { x: number; z: number } | null = null, lastBurn = 0, sensations: { text: string; p: number }[] = [], shaking = 0;
@@ -109,6 +109,7 @@ function feel(dt: number) {
   add(n.warmth < 15, "your fingers and toes are numb and clumsy", 1.1); add(n.warmth >= 15 && n.warmth < 35, "you shiver, and your skin is all goosebumps", 0.8);
   add(n.hunger < 25, "your stomach cramps and growls", 0.9);
   add(n.energy < 25, "your limbs are heavy and your eyelids drag", 0.9);
+  add(simNow() < st.watchedUntil, "you have the faint, odd sense of being watched", 0.4);
   const shoes = worn().some((g) => g.slot === "feet");
   add(st.walked > 700, shoes ? "your feet ache from the walking" : "the soles of your bare feet are sore and tender", 0.7);
   for (const i of st.injuries) { const p = pain(i), text = `your ${i.side} ${i.part} aches`; if (p > 0.25 && !s.some((x) => x.text === text)) s.push({ text, p: p + 0.3 }); }
@@ -188,6 +189,11 @@ export const bodyApi = {
     const i = hurt(kind, part, clamp(sev, 0.1, 1), healMin * MIN, cause, bleed); damage(dmg, cause);
     if (venom) { st.ailment = { name: "a sick, swimming head and a burning limb from the venom", until: simNow() + rnd(10, 16) * MIN, venom: true }; }
     bus.emit("state"); return say(i);
+  },
+  /** Someone is looking in. River gets a faint sense of being watched, for a little while, and not more than a few times a day. It is a sensation and carries no meaning. */
+  watched(): boolean {
+    const now = simNow(); if (st.dead || now - st.lastWatched < DAY_MS / 4) return false;
+    st.lastWatched = now; st.watchedUntil = now + 2 * MIN; return true;
   },
   /** How much River hurts right now, summed over its wounds. */
   pain: () => clamp(st.injuries.reduce((a, i) => a + pain(i), 0), 0, 3),

@@ -143,6 +143,7 @@ wss.on("connection", (ws) => {
   ws.on("message", (raw) => {
     let m: ClientMsg; try { m = JSON.parse(String(raw)); } catch { return; }
     if (m.t === "resync") return void send(ws, initMsg());          // a client that missed something asks for the whole state
+    if (REPLAY && m.t === "presence") return;                        // looking in on a recording changes nothing
     if (REPLAY) {                                                    // a replay is only watched: nothing a client sends changes the world
       if (m.t === "replay_speed") player.speed = Math.max(0.5, Math.min(64, Number(m.speed) || 1));
       else if (m.t === "replay_pause") player.paused = !!m.paused;
