@@ -13,6 +13,7 @@ import { BUILD_TOOL } from "./building.ts";
 import { COLOUR_TOOL } from "./colour.ts";
 import { OPINION_TOOL } from "./taste.ts";
 import { NAME_CREATURE_TOOL, OFFER_TOOL, type Creatures } from "./creatures.ts";
+import { SPEAK_TO_TOOL, TRADE_TOOL } from "./visitors.ts";
 import type { Story } from "./story.ts";
 import { addPlace, findPlace, listPlaces, placeNear } from "./places.ts";
 import type { World } from "./world.ts";
@@ -314,6 +315,8 @@ export const GATED_TOOLS: ToolDef[] = [
   timed(COLOUR_TOOL),
   NAME_CREATURE_TOOL,
   OFFER_TOOL,
+  SPEAK_TO_TOOL,
+  TRADE_TOOL,
   {
     name: "name_place",
     description: "Give a name to the spot where you are standing, so you can find your way back and remember what happened here. Places must be at least 8m apart.",

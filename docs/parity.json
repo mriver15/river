@@ -395,6 +395,26 @@
     }
    ],
    "coverage": "unit"
+  },
+  {
+   "id": "visitors",
+   "feature": "Visitors: strangers who come ashore, can be spoken to and traded with",
+   "owner": "visitors.ts",
+   "tools": [
+    "speak_to",
+    "trade"
+   ],
+   "evidence": [
+    {
+     "test": "tests/visitors.test.ts",
+     "title": "a trade is fair: what they do not value is handed back, too little is refused, enough is exchanged"
+    },
+    {
+     "test": "tests/visitors.test.ts",
+     "title": "someone comes ashore on a day, stays, and goes"
+    }
+   ],
+   "coverage": "unit"
   }
  ]
 }

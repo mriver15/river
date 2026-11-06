@@ -6,7 +6,7 @@ import type { AdvanceProgress, AdvanceResult } from "./advance.ts";
 export type EntityKind =
   | "tree" | "rock" | "bush" | "flower" | "mushroom" | "shell"
   | "library" | "shrine" | "monolith" | "campfire" | "pond_stone"
-  | "book" | "item" | "sprout" | "structure" | "pit" | "animal" | "trace" | "char" | "grave" | "carcass";
+  | "book" | "item" | "sprout" | "structure" | "pit" | "animal" | "trace" | "char" | "grave" | "carcass" | "person";
 
 export interface Entity {
   id: string;

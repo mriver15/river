@@ -30,6 +30,8 @@ export const DEFS: ConfigDef[] = [
   { key: "autoApproveMax", group: "Tool requests", label: "Most new tools built automatically per day", help: "Writing a tool costs tokens. Past this many in a world day, further requests wait for you.", type: "number", def: 3, min: 0, max: 20, step: 1 },
   { key: "weather", group: "Time & weather", label: "Weather", help: "Off means clear skies always.", type: "toggle", def: true },
   { key: "contentPacks", group: "Time & weather", label: "Content packs", help: "Which sets of strange happenings are in play: names separated by commas, `all`, or `none`. Packs: zone (places that do not belong), mind (perception gone slightly wrong).", type: "text", def: "all", placeholder: "all" },
+  { key: "visitorDays", group: "Time & weather", label: "Visitors", help: "About how many world days pass between visits from a stranger who comes ashore, stays a while and goes. 0 means none.", type: "number", def: 2.5, min: 0, max: 20, step: 0.5, unit: "days" },
+  { key: "visitorVoice", group: "River's mind", label: "Visitor voices per day", help: "How many times a day, at most, a visitor's reply is written by the model (small and capped; the cheaper routine model if one is set). 0 means they only speak their own lines.", type: "number", def: 12, min: 0, max: 100, step: 1 },
   { key: "ambientRate", group: "Time & weather", label: "World events", help: "How often strange and beautiful things happen. 0 is none.", type: "number", def: env("AMBIENT_RATE", 1), min: 0, max: 3, step: 0.25, unit: "×" },
 
   { key: "prey", group: "Wildlife", label: "Deer, rabbits, crows, foxes", help: "The gentle, tameable animals.", type: "toggle", def: true },

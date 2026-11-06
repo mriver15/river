@@ -264,6 +264,15 @@ function buildEntity(e: Entity): THREE.Object3D {
       for (const [x, z] of [[-0.3, -0.3], [-0.3, 0.3], [0.3, -0.3], [0.3, 0.3]]) { const l = mesh(new THREE.CylinderGeometry(0.05, 0.04, 0.4, 5), mat(0x2a2018), x, 0.15, z); l.rotation.z = 1.4; g.add(l); }
       break;
     }
+    case "person": {                                                                          // a visitor: a small, plain figure in their own colour
+      const col = Number(e.props.hue ?? 0x888888), skin = 0xd2a679, cloth = (c: number) => mat(c, { flatShading: true });
+      g.add(mesh(new THREE.CylinderGeometry(0.26, 0.34, 0.95, 7), cloth(col), 0, 0.95, 0));
+      g.add(mesh(new THREE.SphereGeometry(0.22, 8, 6), cloth(skin), 0, 1.62, 0));
+      for (const x of [-0.12, 0.12]) g.add(mesh(new THREE.CylinderGeometry(0.07, 0.06, 0.5, 5), cloth(0x3a3026), x, 0.25, 0));
+      g.add(mesh(new THREE.BoxGeometry(0.5, 0.45, 0.2), cloth(0x6a5236), 0, 1.1, -0.28));      // a pack
+      const lb = label(String(e.props.who ?? e.name), { size: 24 }); lb.position.y = 2.2; g.add(lb);
+      break;
+    }
     case "char": {
       const k = e.props.wasKind, tall = k === "tree" ? 1.3 + r * 1.1 : k === "structure" ? 0.5 : 0.3;
       const dark = (c: number) => mat(c, { roughness: 1 });
