@@ -40,5 +40,13 @@ export const provider = (): Provider => resolveProvider({ provider: cfg("llmProv
 export const modelName = () => provider().model;
 /** The model the tool smith writes plugins with: its own setting, then the environment, then River's. */
 export const forgeModelName = () => cfg("forgeModel").trim() || process.env.RIVER_FORGE_MODEL || undefined;
+/** Wake-ups that need no special care: nothing is wrong and nobody is waiting. Anything else (danger, a need, a person, a failure) goes to the main model. */
+export const ROUTINE_KINDS: ReadonlySet<string> = new Set(["idle", "completion", "novelty", "emotion"]);
+/** Pure: the model for a decision woken by these kinds. The routine model only when every reason is routine and one is chosen. */
+export function modelFor(kinds: string[], routine: string, main: string): string {
+  const r = routine.trim();
+  return r && kinds.length > 0 && kinds.every((k) => ROUTINE_KINDS.has(k)) ? r : main;
+}
+export const decisionModel = (kinds: string[]) => modelFor(kinds, cfg("routineModel"), provider().model);
 /** Does the hourly token budget apply? Hosted models, always; local ones only if the human says so. */
 export const budgetApplies = () => !provider().local || cfg("budgetLocal");

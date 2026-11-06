@@ -40,7 +40,7 @@ function row(d: ConfigDef): HTMLElement {
     }; top.append(sel); r.append(top);
   } else if (d.type === "text") {
     const inp = el("input") as HTMLInputElement; inp.type = "text"; inp.value = String(val); inp.placeholder = d.placeholder ?? ""; inp.setAttribute("aria-label", d.label); inp.style.minWidth = "55%";
-    if (d.key === "llmModel" || d.key === "forgeModel") { inp.setAttribute("list", "llm-models"); inp.onfocus = () => void loadModels(); }
+    if (d.key === "llmModel" || d.key === "forgeModel" || d.key === "routineModel") { inp.setAttribute("list", "llm-models"); inp.onfocus = () => void loadModels(); }
     inp.onchange = () => send({ t: "config_set", key: d.key, value: inp.value }); top.append(inp); r.append(top);
   } else if (d.type === "toggle") {
     const sw = el("input"); sw.type = "checkbox"; sw.className = "switch"; sw.checked = !!val; sw.setAttribute("aria-label", d.label);

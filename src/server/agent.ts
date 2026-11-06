@@ -2,7 +2,7 @@ import { cfg } from "./config.ts";
 import { bodyText } from "./clothing.ts";
 import { feelingsText } from "./body.ts";
 import { chat, type ChatMessage } from "./llm.ts";
-import { modelName, provider } from "./provider.ts";
+import { modelName, provider, decisionModel } from "./provider.ts";
 import { TriggerQueue, Hysteresis, PRIORITY, type Trigger, type TriggerKind } from "../brain/triggers.ts";
 import { assemble, estimateTokens, type Item } from "../brain/packet.ts";
 import { sensesText } from "./ambient.ts";
@@ -290,7 +290,7 @@ export class Agent {
     const limit = cfg("maxSteps") || Infinity;
     for (let step = 0; step < limit; step++) {
       if (this.halted) return;
-      const r = await chat({ messages, tools, maxTokens: 3000, temperature: this.emo.temperature(cfg("temperature")), consumer: "decision", reason: triggers[0]!.kind, signal: ac.signal });
+      const r = await chat({ messages, tools, maxTokens: 3000, temperature: this.emo.temperature(cfg("temperature")), consumer: "decision", reason: triggers[0]!.kind, model: decisionModel(triggers.map((t) => t.kind)), signal: ac.signal });
       u.calls++; u.inp += r.usage?.inp ?? 0; u.out += r.usage?.out ?? 0; u.hit += r.usage?.hit ?? 0;
       if (isStale(gen)) { discarded("model reply"); return; }
       if (r.truncated) { log("system", "Model spent its whole token allowance thinking and gave no answer; moving on."); return; }

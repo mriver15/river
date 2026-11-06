@@ -135,3 +135,13 @@ test("the model the tool smith writes with can differ from River's", () => {
   setConfig("forgeModel", "qwen3-coder:30b"); assert.equal(forgeModelName(), "qwen3-coder:30b");
   setConfig("forgeModel", ""); void provider;
 });
+
+test("routine wake-ups use the routine model, anything that matters uses the main one", async () => {
+  const { modelFor } = await import("../src/server/provider.ts");
+  assert.equal(modelFor(["idle"], "small", "big"), "small");
+  assert.equal(modelFor(["idle", "novelty", "completion"], "small", "big"), "small");
+  assert.equal(modelFor(["idle", "danger"], "small", "big"), "big");
+  assert.equal(modelFor(["need"], "small", "big"), "big");
+  assert.equal(modelFor(["idle"], "  ", "big"), "big", "none chosen: the main model");
+  assert.equal(modelFor([], "small", "big"), "big");
+});
