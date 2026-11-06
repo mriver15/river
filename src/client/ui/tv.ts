@@ -37,7 +37,7 @@ export function tvMoment(m: Moment) {
   const d = dominant(m), card = root.querySelector<HTMLElement>(".tv-moment")!;
   card.style.setProperty("--c", d ? EMOTIONS[d].color : "var(--accent)");
   card.replaceChildren(el("div", "tv-k", m.kind === "first" ? "A first" : d ? EMOTIONS[d].noun : "A moment"), el("div", "tv-t", m.title), el("div", "tv-x", m.kind === "first" ? "Something River has never done before." : m.text));
-  card.classList.add("on"); momentUntil = Date.now() + 11_000;
+  card.classList.add("on"); root.classList.add("tv-moment-on"); momentUntil = Date.now() + 11_000;
 }
 
 // ---------- the rotating information card ----------
@@ -59,7 +59,7 @@ function nextCard() {
   for (let tries = 0; tries < CARDS.length; tries++) {
     const c = CARDS[cardIdx++ % CARDS.length]!(); if (!c) continue;
     card.classList.remove("on");
-    setTimeout(() => { card.replaceChildren(el("div", "tv-k", c.title), ...c.lines.map((l) => el("div", "tv-l", l))); card.classList.add("on"); }, 700);
+    setTimeout(() => { card.replaceChildren(el("div", "tv-k", c.title), ...c.lines.slice(0, 3).map((l) => el("div", "tv-l", l))); card.classList.add("on"); }, 700);
     return;
   }
 }
@@ -72,11 +72,12 @@ function build() {
   root = el("div", ""); root.id = "tv";
   root.innerHTML = `
     <div class="tv-bar top"></div><div class="tv-bar bottom"></div><div class="tv-vignette"></div>
-    <div class="tv-clock"><div class="tv-day"></div><div class="tv-time"></div><div class="tv-sub"></div></div>
-    <div class="tv-vitals"><div class="tv-needs"></div><div class="tv-feels"></div></div>
-    <div class="tv-moment"></div>
-    <div class="tv-lower"><div class="tv-who"></div><div class="tv-doing"></div><div class="tv-progress"><i></i></div><div class="tv-caption"><span class="tv-by"></span><span class="tv-said"></span></div></div>
-    <div class="tv-right"><div class="tv-card"></div><div class="tv-ticker"></div></div>
+    <div class="tv-frame">
+      <div class="tv-clock"><div class="tv-day"></div><div class="tv-time"></div><div class="tv-sub"></div></div>
+      <div class="tv-vitals"><div class="tv-needs"></div><div class="tv-feels"></div></div>
+      <div class="tv-lower"><div class="tv-who"></div><div class="tv-doing"></div><div class="tv-progress"><i></i></div><div class="tv-moment"></div><div class="tv-caption"><span class="tv-by"></span><span class="tv-said"></span></div></div>
+      <div class="tv-right"><div class="tv-card"></div><div class="tv-ticker"></div></div>
+    </div>
     <div class="tv-hint">Esc to leave the TV view</div>`;
   document.body.append(root);
   const needs = root.querySelector(".tv-needs")!;
@@ -105,7 +106,7 @@ function render() {
   } else if (!showing && a.speech) {                                                       // what River is saying aloud right now, if no caption is waiting
     cap.querySelector(".tv-by")!.textContent = "River says"; cap.querySelector(".tv-said")!.textContent = `“${a.speech}”`; cap.classList.add("on");
   }
-  const mom = q(".tv-moment"); if (momentUntil && now > momentUntil) { momentUntil = 0; mom.classList.remove("on"); }
+  const mom = q(".tv-moment"); if (momentUntil && now > momentUntil) { momentUntil = 0; mom.classList.remove("on"); root.classList.remove("tv-moment-on"); }
   q(".tv-ticker").replaceChildren(...ticker.filter((t) => now - t.at < 60_000).slice(0, 2).map((t) => el("div", "tv-tk", t.text)));
 }
 
@@ -118,7 +119,7 @@ export function setTv(next: boolean, opts: { fullscreen?: boolean } = {}) {
   if (on) {
     if (!root) build(); root!.hidden = false;
     ctx.scene?.setInset(0); ctx.scene?.setCinema(true); if (ctx.scene) { ctx.scene.follow = true; ctx.scene.cutaways = true; }
-    render(); timer = window.setInterval(render, 400); nextCard(); cardTimer = window.setInterval(nextCard, 16_000);
+    render(); if (/[?&]demo\b/.test(location.search)) demo(); timer = window.setInterval(render, 400); nextCard(); cardTimer = window.setInterval(nextCard, 16_000);
     addEventListener("mousemove", wake); addEventListener("keydown", wake); wake();
     if (opts.fullscreen && document.fullscreenEnabled && !document.fullscreenElement) void document.documentElement.requestFullscreen().catch(() => {});
     store.set("tv", true);
@@ -129,6 +130,16 @@ export function setTv(next: boolean, opts: { fullscreen?: boolean } = {}) {
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
     store.set("tv", false);
   }
+}
+/** `?tv&demo` fills every region with the longest things it can hold, to check that nothing lands on anything else. */
+function demo() {
+  const long = "I keep thinking about the sound the stone made when I struck it, and whether the thing I felt was fear or only wonder dressed up as fear, because my hands would not stop shaking.";
+  tvLog({ id: 1, ts: Date.now(), kind: "thought", text: long });
+  for (const t of ["A deer steps out of cover and lifts its head, thirteen metres to the north-east, and does not move.", "Thunder rolls over the hill and the whole clearing goes quiet for a long moment."]) pushTicker({ id: 2, ts: Date.now(), kind: "world", text: t });
+  if (!/nomoment/.test(location.search)) tvMoment({ id: 1, ts: Date.now(), kind: "first", title: "A first: the stone sang when I struck it with the other stone", text: long, intensity: 0.9, emotions: { wonder: 0.8 }, x: 0, z: 0 });
+  if (!/nomoment/.test(location.search)) momentUntil = Date.now() + 3_600_000;
+  S.inventory.splice(0, S.inventory.length, ...Array.from({ length: 8 }, (_, i) => ({ id: `d${i}`, kind: "stick", name: `a very long name for carried thing number ${i + 1}`, desc: "", qty: 3 })));
+  CARDS.unshift(() => ({ title: "River is carrying a great many things", lines: S.inventory.map((i) => `${i.qty} × ${i.name}`) })); cardIdx = 0; nextCard();
 }
 export const toggleTv = () => setTv(!on, { fullscreen: true });
 /** `?tv` in the address opens the TV view as soon as the world has arrived (a browser will not go fullscreen without a click, so that part waits for one). */
