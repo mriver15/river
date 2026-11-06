@@ -29,6 +29,7 @@ export const DEFS: ConfigDef[] = [
   { key: "autoApproveWeb", group: "Tool requests", label: "Include web search and fetch", help: "The two abilities that reach the real internet. Off means they always wait for you, even when everything else is automatic.", type: "toggle", def: false },
   { key: "autoApproveMax", group: "Tool requests", label: "Most new tools built automatically per day", help: "Writing a tool costs tokens. Past this many in a world day, further requests wait for you.", type: "number", def: 3, min: 0, max: 20, step: 1 },
   { key: "weather", group: "Time & weather", label: "Weather", help: "Off means clear skies always.", type: "toggle", def: true },
+  { key: "contentPacks", group: "Time & weather", label: "Content packs", help: "Which sets of strange happenings are in play: names separated by commas, `all`, or `none`. Packs: zone (places that do not belong), mind (perception gone slightly wrong).", type: "text", def: "all", placeholder: "all" },
   { key: "ambientRate", group: "Time & weather", label: "World events", help: "How often strange and beautiful things happen. 0 is none.", type: "number", def: env("AMBIENT_RATE", 1), min: 0, max: 3, step: 0.25, unit: "×" },
 
   { key: "prey", group: "Wildlife", label: "Deer, rabbits, crows, foxes", help: "The gentle, tameable animals.", type: "toggle", def: true },
@@ -71,7 +72,7 @@ let over: Record<string, number | boolean | string> = kvGet<Record<string, numbe
 const listeners: ((key: string, value: number | boolean | string, old: number | boolean | string) => void)[] = [];
 
 export function cfg(key: "weather" | "prey" | "smallWild" | "predators" | "lethal" | "traceAll" | "offlineCatchup" | "autoApproveWeb"): boolean;
-export function cfg(key: "llmProvider" | "llmBaseUrl" | "llmModel" | "forgeModel" | "routineModel" | "autoApprove"): string;
+export function cfg(key: "llmProvider" | "llmBaseUrl" | "llmModel" | "forgeModel" | "routineModel" | "autoApprove" | "contentPacks"): string;
 export function cfg(key: string): number;
 export function cfg(key: string): any { const d = byKey.get(key); if (!d) throw new Error(`unknown setting ${key}`); const v = over[key]; return v === undefined ? d.def : v; }
 export const onConfig = (fn: (key: string, value: number | boolean | string, old: number | boolean | string) => void) => { listeners.push(fn); };

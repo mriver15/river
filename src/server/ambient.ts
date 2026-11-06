@@ -11,6 +11,7 @@ import { SHY_MULT, type Creatures } from "./creatures.ts";
 import type { World } from "./world.ts";
 import { simNow, simRng, every, after, scheduleJob, onJob } from "./sim.ts";
 import { persisted } from "./persist.ts";
+import { PACKS, enabledPacks, packOfEvent } from "./packs/index.ts";
 const sr = simRng("ambient");
 
 const rand = (a: number, b: number) => a + sr() * (b - a);
@@ -81,9 +82,9 @@ const BOOKS: [string, string, string][] = [
   ["Counting Stars", "stars", "Old sailors counted the stars not to know their number, but to learn where they were not."],
 ];
 
-interface Ctx { w: World; say: (text: string, at?: { x: number; z: number }, r?: number) => boolean; fx: (k: FxKind) => void; night: boolean }
+export interface Ctx { w: World; say: (text: string, at?: { x: number; z: number }, r?: number) => boolean; fx: (k: FxKind) => void; night: boolean; rand: (a: number, b: number) => number; pick: <T>(xs: T[]) => T }
 /** What a happening does to the heart. The director uses this to build contrast: quiet after tension, surprise after calm. */
-type Tone = "calm" | "beauty" | "mystery" | "spectacle" | "tension";
+export type Tone = "calm" | "beauty" | "mystery" | "spectacle" | "tension";
 const TONE: Record<string, Tone> = {
   bell: "mystery", "sea-light": "mystery", meteor: "spectacle", whale: "spectacle", flock: "beauty", smoke: "mystery", chime: "mystery", "hum-shift": "mystery",
   bottle: "mystery", driftwood: "calm", footprints: "tension", offering: "mystery", symbol: "mystery", "new-book": "mystery",
@@ -93,7 +94,7 @@ const TONE: Record<string, Tone> = {
  * What kind of thing a happening is about. The director avoids repeating a theme, so River's interests grow out of the whole
  * environment (light, water, growth, animals, traces, messages, sound) and not out of any one object or sense.
  */
-type Theme = "sound" | "light" | "water" | "growth" | "animals" | "trace" | "message" | "material";
+export type Theme = "sound" | "light" | "water" | "growth" | "animals" | "trace" | "message" | "material" | "self" | "place" | "pattern";
 const THEME: Record<string, Theme> = {
   bell: "sound", chime: "sound", "hum-shift": "sound", rustle: "sound",
   "sea-light": "light", meteor: "light", "golden-light": "light", "stars-clear": "light", "dew-web": "light",
@@ -102,7 +103,7 @@ const THEME: Record<string, Theme> = {
   footprints: "trace", offering: "trace", symbol: "trace", smoke: "trace",
   bottle: "message", "new-book": "message", driftwood: "material",
 };
-interface WEvent { name: string; weight: number; when?: (c: Ctx) => boolean; run: (c: Ctx) => void }
+export interface WEvent { name: string; weight: number; when?: (c: Ctx) => boolean; run: (c: Ctx) => void }
 
 function shorePoint(w: World) {
   for (let i = 0; i < 400; i++) {
@@ -163,7 +164,7 @@ const EVENTS: WEvent[] = [
   { name: "new-book", weight: 2, when: (c) => !!find(c.w, "library") && [...c.w.entities.values()].filter((e) => e.kind === "book").length < 16, run: (c) => {
       const l = find(c.w, "library")!;
       const have = new Set([...c.w.entities.values()].filter((e) => e.kind === "book").map((e) => e.props.title));
-      const fresh = BOOKS.filter(([t]) => !have.has(t)); if (!fresh.length) return;
+      const fresh = [...BOOKS, ...enabledPacks(cfg("contentPacks")).flatMap((p) => p.books ?? [])].filter(([t]) => !have.has(t)); if (!fresh.length) return;
       const [title, topic, text] = pick(fresh), a = sr() * Math.PI * 2;
       c.w.spawn("book", `book: ${title}`, l.x + Math.cos(a) * 1.8, l.z + Math.sin(a) * 1.8, { takeable: true, item: "book", desc: `A book titled "${title}". The cover is still dry.`, text, topic, title });
       c.say("There is a book in the Old Library that wasn't there before. Its cover is still dry.", l, 30);
@@ -191,6 +192,9 @@ const EVENTS: WEvent[] = [
       c.say("Pale seeds drift across the clearing on the air like slow snow, and settle in the grass.", first ?? undefined, 40);
     } },
 ];
+
+// Packs add their happenings to the same director, with their own tone and theme.
+for (const p of PACKS) for (const e of p.events) { TONE[e.name] = e.tone; THEME[e.name] = e.theme; }
 
 // ---------- weather ----------
 const WEATHERS: { w: Weather; weight: number }[] = [{ w: "clear", weight: 38 }, { w: "cloudy", weight: 25 }, { w: "rain", weight: 16 }, { w: "fog", weight: 9 }, { w: "windy", weight: 8 }, { w: "storm", weight: 4 }];
@@ -244,13 +248,13 @@ export class Ambient {
   }
   /** Choose the next strange happening: what is possible now, shaped by tone (contrast with River's heart) and theme (variety). */
   pickEvent(now = simNow()): WEvent | null {
-    const ctx: Ctx = { w: this.w, say: this.say, fx: this.fx, night: isNight(this.w) };
-    const ok = EVENTS.filter((e) => (this.last.get(e.name) ?? 0) < now - 10 * 60_000 && (!e.when || e.when(ctx)));
+    const ctx = this.ctx();
+    const ok = this.events().filter((e) => (this.last.get(e.name) ?? 0) < now - 10 * 60_000 && (!e.when || e.when(ctx)));
     return ok.length ? weighted(ok.map((x) => ({ x, weight: x.weight * this.toneWeight(TONE[x.name] ?? "mystery") * this.themeWeight(x.name) }))).x : null;
   }
   private offerRelief() {
-    const ctx: Ctx = { w: this.w, say: this.say, fx: this.fx, night: isNight(this.w) };
-    const ok = EVENTS.filter((e) => (TONE[e.name] === "calm" || TONE[e.name] === "beauty") && (!e.when || e.when(ctx)));
+    const ctx = this.ctx();
+    const ok = this.events().filter((e) => (TONE[e.name] === "calm" || TONE[e.name] === "beauty") && (!e.when || e.when(ctx)));
     if (ok.length) { const e = weighted(ok); this.last.set(e.name, simNow()); this.current = e.name; e.run(ctx); }
   }
 
@@ -270,11 +274,14 @@ export class Ambient {
 
   /** Fire a named happening now (debugging / testing). */
   trigger(name: string) {
-    const e = EVENTS.find((x) => x.name === name);
-    if (e) e.run({ w: this.w, say: this.say, fx: this.fx, night: isNight(this.w) });
+    const e = [...EVENTS, ...PACKS.flatMap((p) => p.events)].find((x) => x.name === name);
+    if (e) { this.current = e.name; e.run(this.ctx()); }
     return !!e;
   }
-  static eventNames = () => EVENTS.map((e) => e.name);
+  static eventNames = () => [...EVENTS, ...PACKS.flatMap((p) => p.events)].map((e) => e.name);
+  /** The happenings in play: the built-in ones, and those of the packs that are switched on. */
+  private events(): WEvent[] { return [...EVENTS, ...enabledPacks(cfg("contentPacks")).flatMap((p) => p.events)]; }
+  private ctx(): Ctx { return { w: this.w, say: this.say, fx: this.fx, night: isNight(this.w), rand, pick }; }
 
   /** Log for the human; tell River only if it could perceive it. */
   readonly say = (text: string, at?: { x: number; z: number }, r = Infinity): boolean => {
@@ -293,7 +300,7 @@ export class Ambient {
       if (this.emotions?.absorbed() && this.deferred < 3) { this.deferred++; this.nextEvent = now + 120_000; }       // don't interrupt deep work with trivia
       else {
         this.deferred = 0; this.nextEvent = now + rand(90_000, 300_000) / cfg("ambientRate");
-        const e = this.pickEvent(now); if (e) { this.last.set(e.name, now); this.current = e.name; this.recentThemes.push(THEME[e.name]); e.run({ w, say: this.say, fx: this.fx, night: isNight(w) }); }
+        const e = this.pickEvent(now); if (e) { this.last.set(e.name, now); this.current = e.name; this.recentThemes.push(THEME[e.name]); e.run(this.ctx()); }
       }
     }
     this.expire();
