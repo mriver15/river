@@ -306,9 +306,11 @@ export class Agent {
         const out = c.badJson ? { content: "your tool arguments were not valid JSON; try again.", is_error: true }
           : failed ? { content: "Skipped: an earlier action in this reply did not work.", is_error: true }
           : await this.exec(c.name, c.args, gen, `${gen}:${c.id}`, await this.fetchExternal(c.name, c.args, gen));
+        const failed0 = failed;
         if (out.is_error) failed = true; else if (!NOT_DEEDS.has(c.name)) this.deeds.push(out.content);
         messages.push({ role: "tool", tool_call_id: c.id, content: out.is_error ? `ERROR: ${out.content}` : out.content });
         u.tools.push(c.name + (out.is_error ? "✗" : ""));
+        if (out.is_error && !failed0) u.note = clip([u.note, `${c.name}: ${clip(out.content, 110)}`].filter(Boolean).join(" | "), 300);      // why it did not work, kept so a run of failures can be explained later
         this.lastOutcomes.push(`${c.name} ${clip(JSON.stringify(c.args), 80)} → ${out.is_error ? "did not work: " : ""}${clip(out.content, 160)}`);
         if (this.lastOutcomes.length > 6) this.lastOutcomes.shift();
       }

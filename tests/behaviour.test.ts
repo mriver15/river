@@ -41,3 +41,17 @@ test("a varied run that keeps trying new things raises no activity warnings", ()
   assert.ok(r.activities.variety > 0.8, String(r.activities.variety));
   assert.deepEqual(r.warnings.filter((w) => /^(Narrow|Stuck|Cycling|Plateau)/.test(w)), []);
 });
+
+test("decisions whose actions failed are counted and the reasons grouped, with positions and amounts folded together", () => {
+  const d = dbWith([{ def: "gather", target: "a", day: 0 }]);
+  d.exec("CREATE TABLE brain_decisions (kinds TEXT, in_tokens INTEGER, out_tokens INTEGER, tools TEXT, note TEXT)");
+  const add = (tools: string, note: string) => d.prepare("INSERT INTO brain_decisions VALUES('idle',100,10,?,?)").run(tools, note);
+  for (let i = 0; i < 20; i++) add("build✗", `build: the spot (${i}, 4) is blocked by 3 things`);
+  for (let i = 0; i < 20; i++) add("move_to", "");
+  add("look", "error: DeepSeek did not answer");
+  const r = behaviourReport(d);
+  assert.equal(r.cognition.failedDecisions, 20);
+  assert.equal(r.cognition.failures[0].n, 20);
+  assert.match(r.cognition.failures[0].why, /blocked by N things/);
+  assert.ok(r.warnings.some((w) => w.startsWith("Wasteful")), r.warnings.join("|"));
+});

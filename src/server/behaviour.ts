@@ -9,7 +9,7 @@ export interface BehaviourReport {
   goals: { total: number; done: number; dropped: number; active: number; doneShare: number };
   making: { deedKinds: number; deeds: Record<string, number>; places: number; works: number; compositions: number; tools: number; memories: number };
   inner: { moments: Record<string, number>; emotionsFelt: number; relationships: number };
-  cognition: { decisions: number; perDay: number; tokens: number; tokensPerDay: number; wakes: Record<string, number> };
+  cognition: { failedDecisions: number; failures: { why: string; n: number }[]; decisions: number; perDay: number; tokens: number; tokensPerDay: number; wakes: Record<string, number> };
   lives: { count: number; averageDays: number; causes: Record<string, number> };
   warnings: string[];
 }
@@ -52,7 +52,8 @@ export function behaviourReport(d: DatabaseSync): BehaviourReport {
   const dn = (k: string) => desires[k] ?? 0, dTotal = Object.values(desires).reduce((x, y) => x + y, 0);
   const deeds = Object.fromEntries(rows<{ kind: string; n: number }>(d, "SELECT kind, SUM(qty) n FROM life_deeds GROUP BY kind ORDER BY n DESC").map((r) => [r.kind, r.n]));
   const count = (t: string) => one<{ n: number }>(d, `SELECT COUNT(*) n FROM ${t}`, { n: 0 }).n;
-  const decisions = rows<{ kinds: string; in_tokens: number; out_tokens: number }>(d, "SELECT kinds, in_tokens, out_tokens FROM brain_decisions");
+  const decisions = rows<{ kinds: string; in_tokens: number; out_tokens: number; tools: string; note: string }>(d, "SELECT kinds, in_tokens, out_tokens, tools, note FROM brain_decisions");
+  const failedD = decisions.filter((r) => r.tools.includes("✗")), why = tally(failedD.flatMap((r) => r.note.split(" | ").filter((x) => x && !x.startsWith("error:") && x !== "cancelled").map((x) => x.replace(/\(-?\d+(\.\d+)?, -?\d+(\.\d+)?\)/g, "(x, z)").replace(/\d+(\.\d+)?/g, "N").slice(0, 90))));
   const tokens = decisions.reduce((a, r) => a + r.in_tokens + r.out_tokens, 0);
   const wakes = tally(decisions.flatMap((r) => { try { return JSON.parse(r.kinds) as string[]; } catch { return [r.kinds]; } }));
   const lives = rows<{ days: number; cause: string }>(d, "SELECT days, cause FROM lives");
@@ -64,7 +65,7 @@ export function behaviourReport(d: DatabaseSync): BehaviourReport {
     goals: { total: dTotal, done: dn("done"), dropped: dn("dropped"), active: dn("active"), doneShare: dTotal ? +(dn("done") / dTotal).toFixed(2) : 0 },
     making: { deedKinds: Object.keys(deeds).length, deeds, places: count("places"), works: count("works"), compositions: count("compositions"), tools: rows(d, "SELECT 1 FROM forged WHERE status = 'installed' OR status = 'approved'").length, memories: count("memories") },
     inner: { moments: obj(moments), emotionsFelt: rows(d, "SELECT DISTINCT emotion FROM mind_trace WHERE emotion IS NOT NULL").length, relationships: rows(d, "SELECT 1 FROM creatures WHERE trust > 0").length },
-    cognition: { decisions: decisions.length, perDay: +(decisions.length / days).toFixed(1), tokens, tokensPerDay: Math.round(tokens / days), wakes: obj(wakes) },
+    cognition: { failedDecisions: failedD.length, failures: [...why].map(([why, n]) => ({ why, n })).sort((a, b) => b.n - a.n).slice(0, 6), decisions: decisions.length, perDay: +(decisions.length / days).toFixed(1), tokens, tokensPerDay: Math.round(tokens / days), wakes: obj(wakes) },
     lives: { count: lives.length, averageDays: lives.length ? +(lives.reduce((a, l) => a + l.days, 0) / lives.length).toFixed(1) : 0, causes: obj(tally(lives.map((l) => l.cause))) },
     warnings: [],
   };
@@ -74,6 +75,7 @@ export function behaviourReport(d: DatabaseSync): BehaviourReport {
   if (a.loopShare > 0.5) w.push(`Cycling: more than half of all activity is one repeating three-step loop.`);
   if (a.failureRate > 0.4 && a.total >= 20) w.push(`Struggling: ${Math.round(a.failureRate * 100)}% of activities failed or were interrupted.`);
   if (days >= 4 && a.quietDays >= days / 2) w.push(`Plateau: nothing new was tried in the last ${a.quietDays} of ${days} days.`);
+  const c = report.cognition; if (c.decisions >= 30 && c.failedDecisions / c.decisions > 0.2) w.push(`Wasteful: ${Math.round((c.failedDecisions / c.decisions) * 100)}% of decisions included an action that failed${c.failures[0] ? `, most often "${c.failures[0].why}"` : ""}.`);
   if (days >= 3 && report.goals.total === 0) w.push("Aimless: River never set a desire.");
   if (days >= 3 && report.goals.total >= 6 && report.goals.doneShare < 0.1) w.push(`Unfinished: ${report.goals.done} of ${report.goals.total} desires were ever completed.`);
   if (days >= 3 && report.making.deedKinds === 0 && a.total > 0) w.push("Passive: nothing was made, gathered, hunted or built.");
@@ -91,7 +93,7 @@ export function formatReport(r: BehaviourReport, title = "Behaviour report"): st
     "Goals", line("desires", `${r.goals.total} (${r.goals.done} done, ${r.goals.dropped} dropped, ${r.goals.active} active)`),
     "Making", line("deeds", Object.entries(r.making.deeds).map(([k, n]) => `${k} ${n}`).join(", ") || "-"), line("places / works / songs", `${r.making.places} / ${r.making.works} / ${r.making.compositions}`), line("tools built", r.making.tools), line("memories", r.making.memories),
     "Inner life", line("moments", Object.entries(r.inner.moments).map(([k, n]) => `${k} ${n}`).join(", ") || "-"), line("emotions felt", r.inner.emotionsFelt), line("creatures trusted", r.inner.relationships),
-    "Mind", line("decisions", `${r.cognition.decisions} (${r.cognition.perDay}/day)`), line("tokens", `${r.cognition.tokens} (${r.cognition.tokensPerDay}/day)`), line("woken by", Object.entries(r.cognition.wakes).slice(0, 6).map(([k, n]) => `${k} ${n}`).join(", ") || "-"),
+    "Mind", line("decisions", `${r.cognition.decisions} (${r.cognition.perDay}/day)`), line("tokens", `${r.cognition.tokens} (${r.cognition.tokensPerDay}/day)`), line("decisions that failed", `${r.cognition.failedDecisions}${r.cognition.failures.length ? ": " + r.cognition.failures.map((f) => `${f.why} ×${f.n}`).join("; ") : ""}`), line("woken by", Object.entries(r.cognition.wakes).slice(0, 6).map(([k, n]) => `${k} ${n}`).join(", ") || "-"),
     "Lives", line("count / average", `${r.lives.count} / ${r.lives.averageDays} days`), line("causes", Object.entries(r.lives.causes).map(([k, n]) => `${k} ${n}`).join(", ") || "-"),
     r.warnings.length ? "Warnings\n" + r.warnings.map((x) => `  ! ${x}`).join("\n") : "Warnings\n  none",
   ].join("\n");
