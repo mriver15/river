@@ -4,6 +4,7 @@ import type { Score } from "../shared/music.ts";
 import type { AgentView, Entity } from "../shared/types.ts";
 import { MusicEngine, type Handle } from "./music.ts";
 import { compile } from "../shared/music.ts";
+import { Soundtrack } from "./soundtrack.ts";
 
 /** Short musical stings for moments that matter, by the feeling at their heart. */
 const STINGS = {
@@ -28,6 +29,7 @@ export class Ambience {
   private g: Record<string, GainNode> = {};
   private hum?: OscillatorNode;
   private engine?: MusicEngine;
+  private track?: Soundtrack;
   playing: Playing | null = null;
   on = false;
 
@@ -45,7 +47,7 @@ export class Ambience {
     if (!this.ctx) { const c = new AudioContext(); this.buildFor(c, c.destination); }
     this.on = !this.on;
     this.master.gain.setTargetAtTime(this.on ? 1 : 0, this.ctx!.currentTime, 0.4);
-    if (!this.on) this.stopMusic();
+    if (!this.on) { this.stopMusic(); this.track?.stop(); }
     if (this.on && this.ctx instanceof AudioContext) void this.ctx.resume();
     return this.on;
   }
@@ -53,6 +55,7 @@ export class Ambience {
   /** Build the graph on any context (an OfflineAudioContext in tests). */
   buildFor(c: BaseAudioContext, dest: AudioNode) {
     this.ctx = c; this.master = c.createGain(); this.master.gain.value = 0; this.master.connect(dest);
+    this.track = c instanceof AudioContext ? new Soundtrack(c, this.master) : undefined;      // not in the offline renders used by tests
     this.noise("wind", "bandpass", 420, 0.6);
     this.noise("rain", "highpass", 2400, 0.4);
     const surf = this.noise("surf", "lowpass", 700, 0.5);
@@ -74,6 +77,7 @@ export class Ambience {
   /** Called a couple of times a second with what River's surroundings are. */
   update(a: AgentView) {
     if (!this.ctx || !this.on) return;
+    this.track?.update(a);
     const t = this.ctx.currentTime, set = (n: string, v: number) => this.g[n]?.gain.setTargetAtTime(v, t, 1.2);
     const night = a.worldTime < 0.23 || a.worldTime > 0.78;
     const wet = a.weather === "rain" ? 1 : a.weather === "storm" ? 1.4 : 0;

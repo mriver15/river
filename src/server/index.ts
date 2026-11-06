@@ -62,7 +62,7 @@ const stateMsg = (): Extract<ServerMsg, { t: "state" }> => ({
 
 // ---------- HTTP (API + built client) ----------
 const DIST = path.resolve("dist/client");
-const MIME: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".json": "application/json" };
+const MIME: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".json": "application/json", ".mp3": "audio/mpeg" };
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://x");
   const json = (o: unknown) => { res.setHeader("content-type", "application/json"); res.end(JSON.stringify(o)); };
