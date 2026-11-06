@@ -10,6 +10,7 @@ import { initMemory, loadMemories } from "./ui/memory.ts";
 import { loadBrain } from "./ui/brain.ts";
 import { onAdvance, onReplay } from "./ui/sim.ts";
 import { setTv, tvLog, tvMoment, wantsTvFromUrl } from "./ui/tv.ts";
+import { fetchLife, openLife } from "./ui/life.ts";
 import { initMusic, onRiverScore } from "./ui/music.ts";
 import { onMoment } from "./ui/moments.ts";
 import { renderDeath } from "./ui/death.ts";
@@ -77,7 +78,7 @@ function handle(m: ServerMsg) {
       S.heat = m.heat; S.scorch = m.scorch; ctx.scene.setHeat(m.heat, m.scorch); ctx.scene.syncEntities(m.entities);
       Object.assign(S, { desires: m.desires, interests: m.interests, inventory: m.inventory, tools: m.tools, requests: m.requests, forged: m.forged, places: m.places, journal: m.journal, moments: m.moments, keeper: m.keeper, catalog: m.catalog, taste: m.taste, stats: m.stats, selfModel: m.selfModel });
       ctx.live = false; resetLog(m.log); ctx.live = true;
-      setAgent(m.agent); renderAll(); if (wantsTvFromUrl() || store.get("tvAuto", false)) setTv(true); break;
+      setAgent(m.agent); renderAll(); if (wantsTvFromUrl() || store.get("tvAuto", false)) setTv(true); if (/[?&]life\b/.test(location.search)) void fetchLife("now").then((l) => l && openLife(l)); break;
     }
     case "agent": setAgent(m.agent); break;
     case "config": S.config = m.config; renderSettings(); break;

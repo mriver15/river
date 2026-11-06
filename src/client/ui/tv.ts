@@ -8,6 +8,9 @@ import { dominant } from "./moments.ts";
 import { EMOTIONS, EMOTION_ORDER, intensityWord } from "../../shared/emotions.ts";
 import type { AgentView, LogEntry, Moment } from "../../shared/types.ts";
 import { Pager, dwellFor } from "./tv-pager.ts";
+import { tvLifeHide, tvLifeShow } from "./tv-life.ts";
+import { fetchLife } from "./life.ts";
+import type { LifeSummary } from "../../shared/life.ts";
 
 let on = false, root: HTMLElement | null = null, timer = 0, cursorTimer = 0, cardTimer = 0, cardIdx = 0, resizeTimer = 0;
 /** One pager for each region that can have more to say than fits. */
@@ -50,6 +53,7 @@ export function tvMoment(m: Moment) {
 type Card = () => { title: string; lines: string[] } | null;
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 const CARDS: Card[] = [
+  () => { const l = soFar; return l ? { title: "This life so far", lines: [`${l.name} has lived ${l.lived}`, ...l.numbers.filter((n) => n.value > 0 && n.label !== "Nights survived").slice(0, 5).map((n) => `${n.value} · ${n.label.toLowerCase()}`), ...l.achievements.slice(-2).map((a) => `★ ${a.title}`)] } : null; },
   () => { const inv = S.inventory.slice(0, 8), worn = (S.agent?.worn ?? []).map((g) => g.name); return inv.length || worn.length ? { title: "River is carrying", lines: [...inv.map((i) => `${i.qty > 1 ? `${i.qty} × ` : ""}${i.name}`), ...(worn.length ? [`Wearing: ${worn.join(", ")}`] : [])] } : { title: "River is carrying", lines: ["Nothing at all."] }; },
   () => { const d = S.desires.filter((x) => x.status === "active").slice(0, 3); return d.length ? { title: "What River wants", lines: d.map((x) => clip(x.text, 110)) } : null; },
   () => { const i = S.interests.slice(0, 4); return i.length ? { title: "What River is curious about", lines: i.map((x) => x.topic) } : null; },
@@ -112,8 +116,22 @@ function build() {
 
 /** Demo mode only: what to pretend River's state is, whatever the server says. */
 let fake: Partial<AgentView> | null = null;
+/** River has died: fetch the obituary (it can take a moment to be written) and let the TV tell the life; while alive, remember how the life is going for the info card. */
+let obit: LifeSummary | null = null, obitAsk = 0, soFar: LifeSummary | null = null, soFarAt = 0;
+function lifeWatch(dead: boolean) {
+  const now = Date.now();
+  if (dead) { if (!obit && now - obitAsk > 2000) { obitAsk = now; void fetchLife("last").then((s) => { obit = s; }); } }
+  else { obit = null; if (now - soFarAt > 60_000) { soFarAt = now; void fetchLife("now").then((s) => { soFar = s; }); } }
+  if (demoLife) { obit = demoLife; }
+}
+let demoLife: LifeSummary | null = null;
 function render() {
   if (!root || !S.agent) return; const a: AgentView = fake ? { ...S.agent, ...fake } : S.agent;
+  const dead = !!a.body?.dead || !!demoLife;
+  lifeWatch(dead);
+  root.classList.toggle("tv-dead", dead);
+  if (dead) { if (!tvLifeShow(root, obit)) return; return; }
+  tvLifeHide();
   const q = <T extends HTMLElement>(s: string) => root!.querySelector<T>(s)!;
   q(".tv-clock .tv-day").textContent = `Day ${a.day}`; q(".tv-clock .tv-time").textContent = timeText(a.worldTime);
   q(".tv-clock .tv-sub").textContent = `${partOfDay(a.worldTime)} · ${a.weather[0]!.toUpperCase()}${a.weather.slice(1)}${S.stats?.worldPaused ? " · world frozen" : ""}`;
@@ -171,8 +189,23 @@ export function setTv(next: boolean, opts: { fullscreen?: boolean } = {}) {
     store.set("tv", false);
   }
 }
+const DEMO_LIFE: LifeSummary = {
+  name: "River", life: 1, alive: false, born: 0, end: 1, days: 3.4, lived: "3 days and 10 hours", dayBorn: 65201, dayEnd: 65205, nights: 3, cause: "a hard fall from the lookout stone", place: { x: 4, z: 9 },
+  epitaph: "River lived 3 days and 10 hours: built 3 things, made 14 more, hunted 2 foxes, befriended Ember, composed 2 pieces. A hard fall from the lookout stone was the end of them.",
+  numbers: [["Nights survived", 3], ["Things built", 3], ["Things made", 14], ["Animals hunted", 2], ["Fish caught", 4], ["Places named", 5], ["Tools asked for", 2], ["Pieces of music", 2], ["Journal pages", 3], ["Friends", 1], ["Things gathered", 31], ["Firsts", 6]].map(([label, value]) => ({ label: label as string, value: value as number })),
+  achievements: [["moon", "Survivor", "Lived through its first night."], ["home", "A roof of its own", "Raised something with its own hands."], ["village", "A small settlement", "Built three or more things."], ["tools", "Maker", "Made ten things that were not there before."], ["spear", "Hunter", "Brought down an animal."], ["fish", "Fisher", "Caught a fish with its bare hands."], ["heart", "Not alone", "Won the trust of a wild animal."], ["music", "Musician", "Composed a piece of music."], ["pen", "Writer", "Kept a journal or inscribed something."], ["star", "Firsts", "Did something it had never done before."]].map(([icon, title, text], i) => ({ id: `a${i}`, icon: icon as string, title: title as string, text: text as string })),
+  built: [{ name: "the lean-to by the pond", shape: "lean-to" }, { name: "the long bench", shape: "bench" }, { name: "the cairn on the ridge", shape: "cairn" }],
+  crafted: [{ name: "stone-tipped spear", qty: 1 }, { name: "length of cord", qty: 6 }, { name: "bark basket", qty: 2 }, { name: "wooden flute", qty: 1 }, { name: "hide pouch", qty: 1 }, { name: "clay bowl", qty: 3 }],
+  hunted: [{ species: "fox", n: 2 }], fished: 4, gathered: 31, tools: { requested: 2, granted: 2, forged: ["treat_wound"], mostUsed: [{ name: "gather", n: 22 }, { name: "craft", n: 9 }, { name: "build", n: 6 }] },
+  discoveries: { firsts: ["a fire", "a sung stone", "a friend"], places: ["Mossy Hollow", "The Lookout", "Ember's Run", "The Long Beach", "Old Cairn"], things: [{ kind: "tree", n: 14 }, { kind: "rock", n: 6 }, { kind: "bush", n: 5 }], colours: ["dusk blue"], keeperPieces: 2 },
+  music: ["Rain Song", "For Ember"], wrote: { journal: 3, lastEntry: "Ember sat beside me all evening and did not run. I think I will remember this longer than I remember the fall." },
+  bonds: [{ name: "Ember", species: "fox", trust: 0.82, alive: true }, { name: "a deer", species: "deer", trust: 0.4, alive: true }],
+  feelings: [{ emotion: "wonder", peak: 0.92, why: "the stone sang when I struck it" }, { emotion: "pride", peak: 0.7, why: "the lean-to stood through the rain" }, { emotion: "dread", peak: 0.66, why: "a wolf at the edge of the dark" }],
+  desiresDone: ["find out what the monolith is"], moments: [{ title: "A first: the stone sang", intensity: 0.9 }],
+};
 /** `?tv&demo` fills every region with the longest things it can hold, to check that nothing lands on anything else. */
 function demo() {
+  if (/[?&]obit\b/.test(location.search)) { demoLife = DEMO_LIFE; return; }
   demoing = true; feeding = true;                                                           // from here the real world is ignored, so the picture is the same every time
   const long = "I keep thinking about the sound the stone made when I struck it, and whether the thing I felt was fear or only wonder dressed up as fear, because my hands would not stop shaking, and the more I turn it over the less I can tell the two apart, and perhaps that is what wonder is: fear that has decided to stay.";
   tvLog({ id: 1, ts: Date.now(), kind: "thought", text: long });

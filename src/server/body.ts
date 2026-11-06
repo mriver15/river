@@ -198,6 +198,8 @@ export const bodyApi = {
   /** Advance the body by dt seconds (the server runs this on a timer). */
   tick: (dt: number) => tick(dt),
   isDead: () => !!st.dead,
+  /** simulation ms at which this life began */
+  born: () => st.born,
   health: () => st.health,
   /** Open wounds, for first aid. */
   wounds: () => st.injuries.map((i) => ({ id: i.id, kind: i.kind, part: i.part, side: i.side, bleeding: i.bleed > 0.5, dressed: !!i.dressed, cleaned: !!i.cleaned, text: say(i), open: ["bite", "claw", "gore", "scrape", "burn"].includes(i.kind) })),

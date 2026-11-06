@@ -1,4 +1,5 @@
 // Mind, Items, Story: the smaller read-only panels.
+import { fetchLife, openLife } from "./life.ts";
 import { previewOf } from "../renderers/preview.ts";
 import { $, clamped, el } from "../dom.ts";
 import { S, isTab } from "../state.ts";
@@ -142,6 +143,7 @@ function section(key: string, title: string, count: string, openByDefault: boole
 export function renderStory() {
   const t = $("tab-story"), keep = t.scrollTop; t.replaceChildren();
   const k = S.keeper;
+  const life = el("button", "btn sm", "Read this life so far"); life.style.margin = "4px 0 10px"; life.onclick = async () => { const s = await fetchLife("now"); if (s) openLife(s); }; t.append(life);
   t.append(section("turning", "Turning points", S.moments.length ? String(Math.min(8, S.moments.length)) : "", true, (b) => { const tp = el("div"); tp.id = "turning"; b.append(tp); renderTurningPoints(tp); }));
   t.append(section("music", "Music", pieceCount() ? String(pieceCount()) : "", pieceCount() > 0, (b) => renderCompositions(b)));
   if (k.placed > 0 || k.found.length) t.append(section("keeper", "The Keeper's trail", `${k.found.length} of ${k.total}`, true, (b) => {

@@ -33,6 +33,7 @@ import { checkCode, resetRiver } from "./reset.ts";
 import { libraryForUi } from "./music.ts";
 import { recentMoments } from "./moments.ts";
 import { timeline } from "./timeline.ts";
+import { lifeSoFar, obituaries, obituary } from "./life.ts";
 import { listModels, testProvider } from "./provider-check.ts";
 import { PROTOCOL_VERSION } from "../shared/protocol.ts";
 import { pluginRecords } from "./sandbox/plugin.ts";
@@ -85,6 +86,9 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === "/api/llm/models") return json(await listModels());                // what the chosen server offers, for the settings pane
   if (url.pathname === "/api/llm/test") return json(await testProvider());                  // can it be reached, does it answer, does it call tools
+  if (url.pathname === "/api/life") return json(lifeSoFar(world, bodyApi.born()));                      // this life, so far
+  if (url.pathname === "/api/obituaries") return json(obituaries());                                  // every life that has ended
+  if (url.pathname === "/api/obituary") return json(obituary(Number(url.searchParams.get("life")) || undefined) ?? { error: "no life has ended yet" });
   if (url.pathname === "/api/plugins") return json({ plugins: [...pluginRecords.values()].map(({ file: _f, ...p }) => p), sandbox: sandboxStats });
   if (url.pathname === "/api/moments") return json(recentMoments(100));
   if (url.pathname === "/api/log") return json(logBefore(Number(url.searchParams.get("before") ?? 1e12), 200));

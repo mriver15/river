@@ -54,7 +54,7 @@ type Deps = Parameters<typeof resetInner>[1];
 /** The wipe itself: synchronous, so it happens at one instant of the simulation. Live and replay both run it. */
 export function resetApply(opts: { world: boolean }, d: Deps): void {
   // 1. wipe the database
-  const tables = ["memories", "events", "desires", "interests", "places", "journal", "tunes", "compositions", "moments", "creatures", "catalog", "opinions", "palette", "works", "tools", "tool_requests", "forged", "inventory", "mind_trace"];
+  const tables = ["memories", "events", "desires", "interests", "places", "journal", "tunes", "compositions", "moments", "creatures", "catalog", "opinions", "palette", "works", "tools", "tool_requests", "forged", "inventory", "mind_trace", "life_deeds"];
   if (opts.world) tables.push("entities");
   db.exec("BEGIN");
   try {

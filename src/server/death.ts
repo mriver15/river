@@ -10,6 +10,7 @@ import type { World } from "./world.ts";
 import type { Agent } from "./agent.ts";
 import { simRng } from "./sim.ts";
 import { beginGeneration } from "./lifecycle.ts";
+import { recordObituary } from "./life.ts";
 const sr = simRng("death");
 
 export function setupDeath(w: World, agent: Agent) {
@@ -35,6 +36,7 @@ export function setupDeath(w: World, agent: Agent) {
         w.items.drop(it.id, 1, { x: d.x + Math.cos(a) * r, z: d.z + Math.sin(a) * r });
       }
     }
+    recordObituary(w, d);                                       // the whole life, written down before a new one wipes the tables it is drawn from
     log("world", `${name} died: ${d.cause}.`, { perceived: false });
     addMemory(`${name} died: ${d.cause}.`, 10, ["death"]);
     agent.setPaused(true, true); bus.emit("state");

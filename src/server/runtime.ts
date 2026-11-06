@@ -6,6 +6,7 @@ import { bus, log } from "./bus.ts";
 import { addMemory, setLocator, setSalience } from "./memory.ts";
 import { InnerLife } from "./inner.ts";
 import { Advancer } from "./advance.ts";
+import { startLife } from "./life.ts";
 import { Agent } from "./agent.ts";
 import { loadPlugins } from "./tools.ts";
 import { reapInterrupted } from "./smith.ts";
@@ -50,6 +51,7 @@ export async function createRuntime() {
   world.fire = fire;
   const knowledge = new Knowledge(world);
   const inner = new InnerLife(world, emotions);
+  startLife(world);
   const activities = new Activities(world, (msg, wake, kind) => agent.notify(msg, wake, kind), () => wildlife.threat());
   // When the token budget runs out the brain may ask for the world to wait; it goes through the journal like any other freeze.
   agent.setWorldPaused = (p, why) => void inject(() => { const m = { t: "sim_pause" as const, paused: p }; const seq = recordCommand("human", "sim_pause", m); humanCommand({ world, agent, emotions, ambient, creatures, story, catalog, wildlife, fire, knowledge, activities } as Runtime, m); finishCommand(seq, "ok", why); });

@@ -298,6 +298,7 @@ const weapon = (w: World) => {
 function kill(e: Entity, w: World, emo: Emotions | null) {
   const sp = e.props.species as string; w.removeEntity(e.id);
   w.spawn("carcass", `${sp} carcass`, e.x, e.z, { species: sp, desc: `The ${sp}, dead. There is meat on it, and a hide worth taking.`, yields: ["meat", "hide"], stock: 3, max: 3, noRegrow: true, expires: simNow() + 25 * 60_000 });
+  bus.emit("deed", { kind: "hunt", name: sp });
   emo?.bump("pride", 0.4, `killed a ${sp}`); emo?.bump("dread", -0.2);
   log("world", `River killed a ${sp}.`, { perceived: true }); addMemory(`I killed a ${sp} at (${w.me.x.toFixed(0)}, ${w.me.z.toFixed(0)}) with ${weapon(w).name}.`, 7, ["danger"]);
 }
@@ -368,6 +369,7 @@ export const FISH_TOOL: ToolDef = {
     const calm = simNow() > noiseUntil ? 0.15 : 0, got = sr() < 0.3 + calm - fish.d * 0.02;
     w.bump({ energy: -3, curiosity: -2 });
     if (!got) return "A silver shape glides past your fingers and is gone. You wait for another.";
+    bus.emit("deed", { kind: "fish", name: "fish" });
     w.removeEntity(fish.e.id); w.addItem("fish", "silver fish", "A cold, silver fish, still twitching. Good food, better cooked.", 1);
     w.bump({ mood: 5 });
     return "Your hands close, and a fish flops hard against your palms. You hold on and drag it up onto the stones.";

@@ -374,6 +374,23 @@
     }
    ],
    "coverage": "unit"
+  },
+  {
+   "id": "life-summary",
+   "feature": "Life summary, achievements and obituary",
+   "owner": "life.ts, death.ts, client/ui/life.ts, client/ui/tv-life.ts",
+   "tools": [],
+   "evidence": [
+    {
+     "test": "tests/life.test.ts",
+     "title": "when River dies the whole life is written down, with its cause, before anything is wiped"
+    },
+    {
+     "test": "tests/life.test.ts",
+     "title": "a new life starts blank, but the old life's summary is kept"
+    }
+   ],
+   "coverage": "unit"
   }
  ]
 }

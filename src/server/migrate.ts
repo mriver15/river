@@ -114,6 +114,15 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: "0012_life_records", description: "A ledger of what River did in this life, and the summary written when a life ends",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS life_deeds (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', qty INTEGER NOT NULL DEFAULT 1, detail TEXT);
+        CREATE TABLE IF NOT EXISTS obituaries (life INTEGER PRIMARY KEY, name TEXT NOT NULL, died INTEGER NOT NULL, summary TEXT NOT NULL);
+      `);
+    },
+  },
 ];
 
 export interface MigrationReport { applied: string[]; alreadyApplied: string[] }

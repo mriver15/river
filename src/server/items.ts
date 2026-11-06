@@ -123,6 +123,7 @@ export class ItemRegistry {
       loc: o.loc, lineage: {}, named: o.named,
     };
     this.items.set(id, i); this.save(i); this.log(id, why, { kind: o.kind, qty: o.qty, loc: o.loc.kind });
+    if (why === "created" && prov.makerLifeId !== undefined) bus.emit("deed", { kind: "crafted", name: o.name, qty: o.qty });
     if (why === "created" && prov.makerLifeId !== undefined && !def.fungible) bus.emit("attach", { id, kind: "item", name: o.name, evidence: "made" });     // something River made is its own, not a unit of stock
     return i;
   }

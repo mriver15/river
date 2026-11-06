@@ -27,6 +27,8 @@
     "known_entities": { "files": ["knowledge.ts"] },
     "brain_decisions": { "files": ["agent.ts"], "note": "append-only" },
     "mind_trace": { "files": ["emotions.ts", "inner.ts"], "note": "append-only explanations; two writers for two kinds of line" },
+    "life_deeds": { "files": ["life.ts"], "note": "what River did in this life; cleared when a new life begins" },
+    "obituaries": { "files": ["life.ts"], "note": "the summary of each life that has ended; kept" },
     "sim_activities": { "files": ["activities.ts"] },
     "sim_commands": { "files": ["recorder.ts"] },
     "sim_checkpoints": { "files": ["recorder.ts"] },
