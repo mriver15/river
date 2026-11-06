@@ -36,6 +36,7 @@ export const DEFS: ConfigDef[] = [
   { key: "predators", group: "Wildlife", label: "Predators", help: "Wolves, boars and bears.", type: "toggle", def: true },
   { key: "damageScale", group: "Wildlife", label: "Animal damage", help: "How hard creatures hit. 0 is harmless.", type: "number", def: 1, min: 0, max: 3, step: 0.25, unit: "×" },
 
+  { key: "newbornGrace", group: "Survival", label: "A new life is not hunted", help: "World minutes after a new River is born during which wolves, boars and bears do not notice it, so it has a chance to find out about fire and shelter. 0 means they hunt it from the first moment. (A day is 24 world minutes.)", type: "number", def: 15, min: 0, max: 120, step: 5, unit: "min" },
   { key: "lethal", group: "Survival", label: "Death", help: "Off means River can be brought to the edge but never dies.", type: "toggle", def: process.env.RIVER_LETHAL !== "0" },
   { key: "needsRate", group: "Survival", label: "Hunger, tiredness and cold", help: "How fast they build. 0 means River never needs to eat or sleep.", type: "number", def: 1, min: 0, max: 3, step: 0.25, unit: "×" },
   { key: "reflexEscape", group: "Survival", label: "Instinct to flee", help: "On: River runs a short way from a charging animal before it has time to think. Off: it stands its ground until it decides otherwise.", type: "toggle", def: true },

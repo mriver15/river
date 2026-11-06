@@ -253,7 +253,8 @@ export class Wildlife {
           if (food && d < 18 && d > 8 && now > st.cool && !prot) { go(me.x, me.z, sp.speed); if (now - st.warnedAt > 120_000) { st.warnedAt = now; this.say("A bear lifts its nose toward you, testing the air. It smells what you are carrying.", e, 20); } break; }
         }
         roam(key === "wolf" ? 22 : 10, key === "wolf" ? 2 : 4, key === "wolf" ? 6 : 14);
-        const sees = d < sp.notice! * (me.sleeping ? 1.3 : 1) && now > st.cool && !scared && !prot;
+        const newborn = now - bodyApi.born() < cfg("newbornGrace") * 60_000;          // a new life is given time to learn before it is hunted
+        const sees = !newborn && d < sp.notice! * (me.sleeping ? 1.3 : 1) && now > st.cool && !scared && !prot;
         if (!sees) break;
         if (key === "wolf") {
           st.mode = "stalk"; st.ang = Math.atan2(e.z - me.z, e.x - me.x); st.until = now + (me.sleeping ? rand(12, 20) : rand(45, 80)) * 1000;
