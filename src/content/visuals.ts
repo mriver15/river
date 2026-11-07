@@ -2,6 +2,7 @@
 // approved primitive components. The server and the client both read this file: the server for sizes and bounds, the client to draw.
 // Nothing here can affect what an item is or does, and nothing here reads a mesh: bounds come from the numbers.
 import { defById, type ItemDef } from "./items.ts";
+import { MATERIALS } from "./materials.ts";
 
 export const VISUAL_VERSION = "1";
 export const MAX_COMPONENTS = 32;                     // per item; raise after profiling
@@ -64,7 +65,7 @@ const MAT_LOOK: Record<string, [number, number, number]> = {      // colour, rou
   clay: [0xb5714a, 0.95, 0], charcoal: [0x232120, 1, 0], pigment: [0xc0503a, 1, 0], food: [0xc9a05a, 0.8, 0], shell: [0xf2c9c0, 0.4, 0],
   glass: [0xa8d8e0, 0.1, 0], metal: [0x9aa0a8, 0.35, 0.8], paper: [0xe8dcc0, 1, 0], inert: [0xb8a98f, 0.8, 0],
 };
-const matLook = (m: string) => MAT_LOOK[m] ?? MAT_LOOK.inert!;
+const matLook = (m: string) => MAT_LOOK[m] ?? MATERIALS[m]?.look ?? MAT_LOOK.inert!;
 const mix = (a: number, b: number, t: number) => {
   const ch = (s: number) => Math.round(((a >> s) & 255) * (1 - t) + ((b >> s) & 255) * t);
   return (ch(16) << 16) | (ch(8) << 8) | ch(0);
@@ -91,10 +92,11 @@ export function styleFor(p: Pick<VisualPacket, "seed" | "parameters" | "mats" | 
     col = mix(col, 0x1a1816, 0.85 * L.char);
     return { color: col, roughness: Math.max(0.15, r * (1 - 0.5 * L.wet)), metalness: k, opacity: o, emissive: 0, emissiveIntensity: 0 };
   };
+  const ore = p.parameters.variant === "copper_ore";               // a dull rock shot through with verdigris and orange
   const primary = finish(base, r1, k1, m1 === "glass" ? 0.55 : 1);
   const second = m2 ? matLook(m2) : null;
-  const secondary = second ? finish(second[0], second[1], second[2]) : finish(darker(base, 0.3), r1, k1);
-  const accent = finish(dyed ?? mix(base, 0xffffff, 0.25), 0.8, 0);
+  const secondary = ore ? finish(0xc27a3a, 0.8, 0) : second ? finish(second[0], second[1], second[2]) : finish(darker(base, 0.3), r1, k1);
+  const accent = ore ? finish(0x4aa386, 0.7, 0) : finish(dyed ?? mix(base, 0xffffff, 0.25), 0.8, 0);
   const metal = finish(0x9aa0a8, 0.35, 0.8), glass = finish(0xa8d8e0, 0.1, 0, 0.5);
   const glow: Style = { color: 0xffd58a, roughness: 1, metalness: 0, opacity: 1, emissive: 0xff8a30, emissiveIntensity: 1.2 };
   if (L.hot) for (const s of [primary, secondary]) { s.emissive = 0xff5a10; s.emissiveIntensity = 0.9; }
@@ -133,8 +135,11 @@ recipe("stone", ({ rnd }) => [
 ]);
 
 recipe("lump", ({ rnd, variant }) => {
-  const chalk = variant === "chalk", coal = variant === "charcoal";
+  const chalk = variant === "chalk", coal = variant === "charcoal", ore = variant === "copper_ore";
   const out = [c(coal ? "box" : "sphere", [1, 0.55, 0.7], [0, 0, 0], "primary", { major: true })];
+  if (ore) {                                                                                   // veins of verdigris and a few orange flecks standing proud of the rock
+    out.push(c("sphere", [0.5, 0.3, 0.3], [0.2, 0.18, 0.2], "accent", { major: true }), c("sphere", [0.35, 0.2, 0.25], [-0.25, 0.1, 0.22], "accent"), c("sphere", [0.18, 0.14, 0.16], [0.05, 0.22, -0.15], "secondary", { major: true }), c("sphere", [0.15, 0.12, 0.14], [-0.38, 0.05, -0.05], "secondary"));
+  }
   out.push(c(coal ? "box" : "sphere", [0.55, 0.4, 0.45], [0.2, 0.12, 0.1 * around(rnd, 0.5)], chalk ? "accent" : "primary"));
   if (coal) out.push(c("box", [0.3, 0.3, 0.3], [-0.3, 0.05, -0.1], "secondary"));
   return out;
@@ -177,7 +182,12 @@ recipe("hide", ({ rnd }) => [
   c("box", [0.1, 0.1, 0.15], [0.52, 0, -0.35], "primary", { damage: [0, 1] }),
 ]);
 
-recipe("strip", ({ variant }) => variant === "cord" ? [
+recipe("strip", ({ variant, rnd }) => variant === "reed" ? [
+  c("cylinder", [1, 0.05, 0.05], [0, 0, 0], "primary", { axis: "x", major: true }),
+  c("cylinder", [0.95, 0.05, 0.05], [0.02, 0.04, 0.05 * around(rnd, 0.3)], "primary", { axis: "x", major: true }),
+  c("cylinder", [1, 0.05, 0.05], [-0.02, 0.02, -0.05], "secondary", { axis: "x" }),
+  c("cone", [0.08, 0.05, 0.05], [0.5, 0, 0], "secondary", { axis: "x" }),
+] : variant === "cord" ? [
   c("cylinder", [1, 0.1, 0.1], [0, 0, 0], "primary", { axis: "x", major: true }),
   c("torus", [0.12, 0.1, 0.1], [0.3, 0, 0], "secondary", { axis: "x" }),
   c("torus", [0.12, 0.1, 0.1], [-0.2, 0, 0], "secondary", { axis: "x" }),
@@ -258,8 +268,10 @@ const spear = (len: number): VisualRecipe["build"] => () => [
 recipe("spear", spear(1.8), { grip: [-0.1, 0, 0], tip: [0.95, 0, 0] });
 recipe("stake", spear(1.0), { grip: [-0.1, 0, 0], tip: [0.5, 0, 0] });
 
-recipe("basket", ({ rnd }) => {
-  const out = [c("cylinder", [0.9, 0.9, 0.9], [0, 0, 0], "primary", { major: true }), c("cylinder", [1, 0.1, 1], [0, 0.45, 0], "secondary", { major: true })];
+recipe("basket", ({ rnd, variant }) => {
+  const reed = variant === "reed_basket";                                            // taller, tighter, with a woven lid-rim and no handle
+  const out = [c("cylinder", [0.9, reed ? 1.1 : 0.9, 0.9], [0, 0, 0], "primary", { major: true }), c("cylinder", [1, 0.1, 1], [0, reed ? 0.55 : 0.45, 0], "secondary", { major: true })];
+  if (reed) { for (let i = 0; i < 6; i++) out.push(c("torus", [0.93, 0.06, 0.93], [0, -0.45 + i * 0.18, 0], "secondary", { axis: "y" })); return out; }
   for (let i = 0; i < 3; i++) out.push(c("torus", [0.95, 0.08, 0.95], [0, -0.3 + i * 0.3, 0], "secondary", { axis: "y" }));     // the weave, in rings
   out.push(c("torus", [0.8, 0.15, 0.1], [0, 0.45 * around(rnd, 0.01), 0], "accent", { axis: "z", damage: [0, 1] }));              // a handle
   return out;
@@ -295,6 +307,46 @@ recipe("keepsake", ({ rnd }) => {
   out.push(c("torus", [0.7, 0.1, 0.7], [0, -0.1, 0], "accent", { axis: "y", repaired: true }));
   return out;
 });
+
+// ---- recipes for what content packs add ----
+/** A blade bound into a short handle: the first material is the blade, the second the handle. */
+recipe("knife", ({ rnd }) => [
+  c("box", [0.55, 0.05, 0.22], [0.22, 0, 0], "primary", { major: true }),                          // the blade, broad at the base
+  c("cone", [0.2, 0.05, 0.2], [0.58, 0, 0], "primary", { axis: "x", major: true }),                // its point
+  c("cylinder", [0.5, 0.07, 0.07], [-0.25, 0, 0], "secondary", { axis: "x", major: true }),        // the handle
+  c("torus", [0.07, 0.11, 0.11], [0.0, 0, 0], "accent", { axis: "x" }),                            // the lashing
+  c("torus", [0.07, 0.11, 0.11], [-0.07, 0, 0], "accent", { axis: "x", damage: [0, 1] }),
+  c("box", [0.12, 0.04, 0.06], [0.3 * around(rnd, 0.1), 0.03, 0.06], "primary", { damage: [2, 3] }),   // a chipped edge
+], { grip: [-0.25, 0, 0], tip: [0.65, 0, 0] });
+
+/** A heavy head lashed to a long haft. */
+recipe("axe", () => [
+  c("cylinder", [1, 0.05, 0.05], [0, 0, 0], "secondary", { axis: "x", major: true }),              // the haft
+  c("box", [0.22, 0.2, 0.1], [0.38, 0.03, 0], "primary", { major: true }),                         // the head
+  c("cone", [0.14, 0.2, 0.1], [0.5, 0.03, 0], "primary", { axis: "x", major: true }),              // the bit
+  c("torus", [0.07, 0.09, 0.09], [0.3, 0, 0], "accent", { axis: "x" }),
+  c("torus", [0.07, 0.09, 0.09], [0.24, 0, 0], "accent", { axis: "x", damage: [0, 1] }),
+  c("sphere", [0.07, 0.05, 0.05], [-0.48, 0, 0], "secondary", { damage: [2, 3] }),
+], { grip: [-0.25, 0, 0], tip: [0.55, 0, 0] });
+
+/** A small bar of metal, narrower at the top, still pitted from the fire. */
+recipe("ingot", ({ rnd }) => [
+  c("box", [1, 0.5, 0.45], [0, 0, 0], "primary", { major: true }),
+  c("box", [0.82, 0.22, 0.33], [0, 0.3, 0], "primary", { major: true }),
+  c("sphere", [0.12, 0.06, 0.12], [0.2 * around(rnd, 0.4), 0.42, 0.04], "secondary"),
+  c("sphere", [0.1, 0.06, 0.1], [-0.25, 0.4, -0.05], "secondary"),
+]);
+
+/** A round-bellied, narrow-necked pot with two lugs. */
+recipe("pot", () => [
+  c("sphere", [1, 0.85, 1], [0, 0, 0], "primary", { major: true }),
+  c("cylinder", [0.5, 0.25, 0.5], [0, 0.5, 0], "primary", { major: true }),
+  c("torus", [0.6, 0.08, 0.6], [0, 0.63, 0], "accent", { axis: "y" }),                              // the rim
+  c("cylinder", [0.42, 0.04, 0.42], [0, 0.6, 0], "secondary", { major: true }),                     // the dark inside
+  c("torus", [0.2, 0.16, 0.06], [0.52, 0.12, 0], "secondary", { axis: "z" }),                       // a lug
+  c("torus", [0.2, 0.16, 0.06], [-0.52, 0.12, 0], "secondary", { axis: "z" }),
+  c("box", [0.25, 0.2, 0.1], [0.4, 0.2, 0.3], "secondary", { damage: [1, 3] }),                     // a chip
+]);
 
 const REGISTRY = new Map(R.map((r) => [`${r.id}@${r.version}`, r] as const));
 export const visualRecipeIds = (): string[] => R.map((r) => r.id);

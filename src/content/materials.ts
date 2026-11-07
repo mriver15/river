@@ -16,6 +16,8 @@ export interface Material {
   flexible?: boolean;
   /** what remains when it burns */
   ash?: string;
+  /** how it looks, if the built-in table does not know it: colour, roughness, metalness */
+  look?: [number, number, number];
   /** how well it keeps heat once warmed, 0..1: a stone by the fire stays warm a long while, a stick does not */
   retention: number;
 }
