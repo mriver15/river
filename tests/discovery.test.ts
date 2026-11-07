@@ -49,10 +49,18 @@ test("trying what the world does not yet allow says what is missing, and trying 
   assert.equal(isApproved("build"), false);
   w.addItem("stick", "stick", "A stick.", 4); w.addItem("stone", "stone", "A stone.", 2);
   const out = tryIt("raise a lean-to out of these sticks");
+  assert.match(out, /build/);
   assert.match(out, /You know how to build/);
   assert.equal(isApproved("build"), true);
-  assert.match(tryIt("build another shelter"), /already know how/);
+  assert.match(tryIt("build another shelter"), /You already can: that is what `build` is for/);
   assert.match(tryIt("juggle flaming swords"), /nothing comes of it/);
+});
+
+test("a berry in the hand does not open colour; a couple of things that leave a mark do", async () => {
+  clear(); w.addItem("berry", "wild berry", "A berry.", 3); w.addItem("flower", "flower", "A flower.", 2);
+  await run(80); assert.equal(isApproved("colour"), false, "food and flowers are food and flowers");
+  clear(); w.addItem("chalk", "lump of chalk", "Chalk.", 2);
+  await run(80); assert.equal(isApproved("colour"), true);
 });
 
 test("the web is never discovered: it stays with the human", () => {

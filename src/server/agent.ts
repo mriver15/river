@@ -29,7 +29,7 @@ const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + "…"
 /** Tools whose answer the model needs before it can decide what to do: after these, one more look is allowed in the same decision. */
 const INFO_TOOLS = new Set(["look", "inspect", "recall", "web_search", "web_fetch"]);
 /** Tools that are looking, walking, talking or thinking rather than doing: what they report is not worth a memory of its own. */
-const NOT_DEEDS = new Set(["look", "inspect", "recall", "remember", "move_to", "say", "set_desire", "resolve_desire", "add_interest", "opinion", "request_tool", "stop", "web_search", "web_fetch"]);
+const NOT_DEEDS = new Set(["look", "inspect", "recall", "remember", "move_to", "say", "set_desire", "resolve_desire", "add_interest", "opinion", "request_tool", "stop", "web_search", "web_fetch", "try"]);
 const WOKEN: Record<TriggerKind, string> = { danger: "danger", contact: "a human is speaking to you", need: "a need is pressing", failure: "something did not work", completion: "you finished what you were doing", emotion: "a strong feeling", novelty: "something caught your attention", idle: "a quiet moment" };
 interface DecisionStats { calls: number; inp: number; out: number; hit: number; ms: number; packet: number; tools: string[]; dropped: string; note: string }
 const OBSERVE = new Set(["look", "move_to", "inspect", "pick_up", "eat", "rest", "recall", "craft", "plant", "build", "drop", "request_tool"]);

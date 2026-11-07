@@ -10,6 +10,7 @@ import { ABILITIES, HUMAN_ONLY, abilityById, type Ability, type Situation } from
 import { capabilitiesOf, defForKind } from "../content/items.ts";
 import { isLand } from "../shared/noise.ts";
 import { obj, str, ToolError, type ToolDef } from "./toolkit.ts";
+import { availableTools } from "./tools.ts";
 import type { World } from "./world.ts";
 
 const SPECIES_PREDATORS = new Set(["wolf", "boar", "bear"]);
@@ -67,10 +68,15 @@ export class Discovery {
     if (!hits.length) return "You try it, in your head and with your hands, and nothing comes of it. Perhaps it is not something that can be done with what is here, or not yet.";
     const out: string[] = [];
     for (const a of hits) {
-      if (this.known(a)) { out.push(`You already know how to do something like this.`); continue; }
+      if (this.known(a)) { out.push(this.pointTo(a)); continue; }
       if (a.when(s)) out.push(this.dawn(a)); else out.push(a.lack || "It does not come yet.");
     }
     return [...new Set(out)].join("\n");
+  }
+  /** It is already River's: say which of its own tools does this, so a try is never a dead end. */
+  private pointTo(a: Ability): string {
+    const t = availableTools().find((x) => x.name === a.id);
+    return t ? `You already can: that is what \`${a.id}\` is for (${t.description.split(/(?<=[.;])\s/)[0]!.slice(0, 160)}).` : `You already know how to do this.`;
   }
   /** Which abilities are known right now (for the human's view). */
   view() { return ABILITIES.map((a) => ({ id: a.id, known: this.known(a), human_only: HUMAN_ONLY.has(a.id) })); }

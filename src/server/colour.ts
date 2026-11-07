@@ -52,13 +52,15 @@ export const COLOUR_TOOL: ToolDef = {
   description:
     "Work with colour. `grind`: crush something you are carrying (a berry, a flower, clay, chalk, charcoal, moss, a mushroom, a shell) into a pigment, a few portions of whatever colour it gives. " +
     "`mix`: blend two pigments you hold, in whatever proportion you like, to make a new one. `name`: give a pigment a name of your own; names you give are how you will talk about colours. " +
+    "`mark`: press a pigment onto a rock, a tree or something you built within reach, to leave a mark that stays for a few days (rain and time wear it away). " +
     "Pigments can be used to colour things you make.",
   input_schema: obj({
-    action: { type: "string", enum: ["grind", "mix", "name"], description: "Make a pigment, blend two, or name one." },
+    action: { type: "string", enum: ["grind", "mix", "name", "mark"], description: "Make a pigment, blend two, name one, or mark a surface with one." },
     item: str("grind: the thing to crush (name or id from your inventory)"),
     a: str("mix: first pigment"), b: str("mix: second pigment"),
     amount_of_a: num("mix: how much of the mixture is the first pigment, 0 to 1 (default 0.5)"),
-    pigment: str("name: the pigment to name"), name: str("name: your name for it, e.g. 'dusk' or 'the red of the shore'"),
+    pigment: str("name or mark: the pigment"), target: str("mark: what to mark (an id or name of something within reach)"), shape: str("mark: what the mark is, in a few words (a spiral, a hand, a bold stripe)"),
+     name: str("name: your name for it, e.g. 'dusk' or 'the red of the shore'"),
   }, ["action"]),
   run: async (a, w: World) => {
     const act = String(a.action);
@@ -94,7 +96,26 @@ export const COLOUR_TOOL: ToolDef = {
       w.renameItem(p.id, name); bus.emit("state");
       return `From now on this colour is "${name}" to you (${describeColour(hex)}, ${hex}).`;
     }
-    throw new ToolError(`Unknown action "${a.action}". Use grind, mix or name.`);
+    if (act === "mark") {
+      const p = findPigment(w, String(a.pigment ?? a.a ?? "")); if (!p) throw new ToolError("You aren't holding a pigment like that.");
+      const ref = String(a.target ?? "").toLowerCase().trim(); if (!ref) throw new ToolError("Say what to mark.");
+      const e = w.entities.get(String(a.target)) ?? w.nearby(10).map((x) => x.e).find((x) => x.id.toLowerCase() === ref || x.name.toLowerCase().includes(ref));
+      if (!e || !w.isKnown(e)) throw new ToolError("There is nothing like that near enough to mark.");
+      if (!w.inReach(e)) throw new ToolError(`${e.name} is ${w.dist(e).toFixed(0)}m away. Go to it first.`);
+      if (!["rock", "monolith", "tree", "structure", "shrine", "library"].includes(e.kind)) throw new ToolError(`A ${e.name} will not hold a mark.`);
+      const made = [...w.entities.values()].filter((x) => x.props.markOf === e.id);
+      if (made.length >= 4) throw new ToolError(`The ${e.name} already carries as many marks as it has room for.`);
+      gate(w, 3000, "making a mark");
+      const hex = p.props!.hex as string, words = describeColour(hex), shape = String(a.shape ?? "").replace(/[^\p{L}\p{N}' ,-]/gu, "").trim().slice(0, 40) || "mark";
+      const face = Math.atan2(w.me.z - e.z, w.me.x - e.x) + (made.length - 1.5) * 0.45, big = /chalk|boulder|outcrop|monolith/.test(e.name);
+      w.takeItem(p.id, 1);
+      const m = w.spawn("trace", `${words} ${shape} on the ${e.name}`, e.x + Math.cos(face) * 1.25, e.z + Math.sin(face) * 1.25, {
+        mark: true, hex, face, h: 0.9 + 0.25 * made.length, span: big ? 1.7 : 1.1, markOf: e.id, desc: `A ${shape} in ${words} pigment, pressed onto the ${e.name} by hand. It will wear away in time.`, expires: simNow() + 4 * 1_440_000,
+      });
+      w.bump({ curiosity: -6 }); bus.emit("deed", { kind: "marked", name: e.name }); void m;
+      return `You press the ${p.name} onto the ${e.name} with your fingers and draw a ${shape}. It stands out ${words} against the surface, and it will be there for days.`;
+    }
+    throw new ToolError(`Unknown action "${a.action}". Use grind, mix, name or mark.`);
   },
 };
 export { pigments };

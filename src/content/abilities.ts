@@ -64,7 +64,7 @@ export const ABILITIES: Ability[] = [
     lack: "There is nothing here to fight, and nothing in your hands to fight with.",
     dawn: "You tighten your grip on what you hold. If it comes to it you could strike back, and a sharpened thing would strike harder. You know how to defend yourself." },
   { id: "colour", intent: /\b(colour|color|paint|dye|pigment|stain|draw|mark|grind|mix|decorate)\b/i,
-    when: (s) => haveAny(s, "marks", "dyes", "berry", "flower", "mushroom", "chalk", "charcoal", "clay") >= 1, spontaneous: true,
+    when: (s) => haveAny(s, "marks", "dyes", "berry", "flower", "mushroom", "chalk", "charcoal", "clay") >= 1, spontaneous: (s) => have(s, "marks") >= 2,
     lack: "You have nothing that would leave its colour behind.",
     dawn: "The berry stains your fingers and will not rub off. Colour comes out of things, if they are crushed. You know how to work with colour." },
   { id: "name_creature", intent: /\b(name|call (it|him|her|them)|befriend|tame|the deer|the rabbit|the fox|the crow)\b/i,

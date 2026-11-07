@@ -287,7 +287,10 @@ function buildEntity(e: Entity): THREE.Object3D {
       }
       break;
     }
-    case "trace": { const d = mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.03, 12), mat(0x3a3328, { transparent: true, opacity: 0.55 }), 0, 0.02, 0); d.castShadow = false; d.scale.set(1, 1, 0.55); g.add(d); break; }
+    case "trace": if (e.props.mark) {                                                          // a pigment mark on the face of something: a coloured patch standing on edge
+      const r = (e.props.span ?? 1.2) / 2, d = mesh(new THREE.CircleGeometry(r, 18), mat(parseInt(String(e.props.hex).slice(1), 16), { roughness: 1, side: THREE.DoubleSide, transparent: true, opacity: 0.92 }), 0, e.props.h ?? 1, 0);
+      d.rotation.y = Math.PI / 2 - (e.props.face ?? 0); d.castShadow = false; g.add(d); break;
+    } else { const d = mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.03, 12), mat(0x3a3328, { transparent: true, opacity: 0.55 }), 0, 0.02, 0); d.castShadow = false; d.scale.set(1, 1, 0.55); g.add(d); break; }
     case "sprout": g.add(mesh(new THREE.ConeGeometry(0.12, 0.45, 5), mat(0x7ad06a), 0, 0.22, 0)); break;
     case "structure": if (e.props.shape && buildStructure(e, g)) { break; } else if (e.props.glow) {            // the Keeper's lamp: a stone post, a lit lamp, and a warm light that pushes the dark back
       g.add(mesh(new THREE.CylinderGeometry(0.16, 0.22, 1.5, 7), mat(0x8a857a), 0, 0.75, 0));
