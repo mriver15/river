@@ -4,6 +4,7 @@
 import type { Ctx, Theme, Tone, WEvent } from "../ambient.ts";
 import { zone } from "./zone.ts";
 import { mind } from "./mind.ts";
+import { hands } from "./hands.ts";
 
 export interface PackEvent extends WEvent { tone: Tone; theme: Theme }
 export interface Pack {
@@ -16,7 +17,7 @@ export interface Pack {
 }
 export type { Ctx };
 
-export const PACKS: Pack[] = [zone, mind];
+export const PACKS: Pack[] = [zone, mind, hands];
 export const packIds = () => PACKS.map((p) => p.id);
 /** Which packs are switched on: a comma-separated list, or "all". */
 export const enabledPacks = (setting: string): Pack[] => {

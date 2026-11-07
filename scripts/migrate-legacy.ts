@@ -58,7 +58,7 @@ steps.backup = { file: backup, sha256: sha(backup), tables: before };
 
 // 2. convert a copy, boot it, run it
 fs.copyFileSync(backup, copy);
-const r = spawnSync(process.execPath, ["--import", "tsx", process.argv[1]!, "--convert", copy], { encoding: "utf8", maxBuffer: 1 << 26 });
+const r = spawnSync(process.execPath, ["--import", "tsx", process.argv[1]!, "--convert", copy], { encoding: "utf8", maxBuffer: 1 << 26, env: { ...process.env, RIVER_DISCOVERY: "0" } });      // a conversion changes nothing River can do: discovery waits until the real thing runs
 const line = r.stdout.split("\n").find((l) => l.startsWith("REPORT "));
 let report: any = null;
 if (r.status !== 0 || !line) problems.push(`the converted copy did not start: ${(r.stderr || r.stdout).slice(-400)}`); else report = JSON.parse(line.slice(7));

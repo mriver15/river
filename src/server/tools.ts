@@ -4,7 +4,7 @@ import { DEFEND_TOOL, FISH_TOOL } from "./wildlife.ts";
 import { CLOTHE_TOOL } from "./clothing.ts";
 import { bus, log } from "./bus.ts";
 import { addMemory, recall } from "./memory.ts";
-import { GATED, addDesire, closeDesire, grandfather, isApproved, requestTool, syncApprovals, touchInterest } from "./mind.ts";
+import { GATED, nearestOwned, addDesire, closeDesire, grandfather, isApproved, requestTool, syncApprovals, touchInterest } from "./mind.ts";
 import { webFetch, webSearch } from "./web.ts";
 import { sensesText } from "./ambient.ts";
 import { COMPOSE_TOOL } from "./music.ts";
@@ -14,6 +14,10 @@ import { COLOUR_TOOL } from "./colour.ts";
 import { OPINION_TOOL } from "./taste.ts";
 import { NAME_CREATURE_TOOL, OFFER_TOOL, type Creatures } from "./creatures.ts";
 import { SPEAK_TO_TOOL, TRADE_TOOL } from "./visitors.ts";
+import { TRY_TOOL } from "./discovery.ts";
+import { describeCapabilities } from "../content/abilities.ts";
+import { capabilitiesOf, defForKind } from "../content/items.ts";
+import { cfg } from "./config.ts";
 import type { Story } from "./story.ts";
 import { addPlace, findPlace, listPlaces, placeNear } from "./places.ts";
 import type { World } from "./world.ts";
@@ -41,7 +45,7 @@ function itemFacts(w: World, i: import("./items.ts").ItemInstance): string {
   const d = w.items.describe(i), mats = [...new Set(i.parts.map((p) => p.material))].join(" and ");
   const state = [i.condition.durability < 0.95 ? (i.condition.durability <= 0 ? "broken" : i.condition.durability < 0.4 ? "badly worn" : "worn") : "", i.condition.wetness > 0.5 ? "soaked" : i.condition.wetness > 0.2 ? "damp" : ""].filter(Boolean);
   const made = i.provenance.sourceIds.length && !i.provenance.unknown ? ` Made from ${i.provenance.sourceIds.length} thing${i.provenance.sourceIds.length > 1 ? "s" : ""}.` : "";
-  return `Made of ${mats}; about ${w.items.unitMass(i).toFixed(2)} kg.${state.length ? ` It is ${state.join(" and ")}.` : ""} ${d.capabilities.length ? `It can: ${d.capabilities.join(", ")}.` : "It has no use beyond being what it is."}${made}${d.contents.length ? ` Inside: ${d.contents.map((c) => `${c.qty > 1 ? `${c.qty} ` : ""}${c.name}`).join(", ")}.` : ""}`;
+  return `Made of ${mats}; about ${w.items.unitMass(i).toFixed(2)} kg.${state.length ? ` It is ${state.join(" and ")}.` : ""} ${describeCapabilities(d.capabilities)}${made}${d.contents.length ? ` Inside: ${d.contents.map((c) => `${c.qty > 1 ? `${c.qty} ` : ""}${c.name}`).join(", ")}.` : ""}`;
 }
 
 function findEntity(w: World, ref: string): Entity | undefined {
@@ -141,7 +145,9 @@ export const BASE_TOOLS: ToolDef[] = [
       w.bump({ curiosity: e.props.text ? -10 : -4 });
       if (e.props.beat) ((w as any).story as Story)?.found(e.props.beat);
       const extra = (e.props.integrity !== undefined && e.props.integrity < 0.95 ? ` It is ${e.props.integrity < 0.3 ? "close to falling down" : e.props.integrity < 0.65 ? "weathered and loose" : "a little weathered"} (${Math.round(e.props.integrity * 100)}% sound).` : "") + (e.props.yields ? ` Stock: ${e.props.stock}.` : "") + (e.kind === "animal" ? ((w as any).creatures as Creatures)?.describe(e) ?? "" : "");
-      return `${e.name}: ${e.props.desc ?? "Nothing special."}${extra}${e.props.text ? `\nYou read: "${e.props.text}"` : ""}`;
+      const kind = e.props.takeable && e.props.item ? defForKind(String(e.props.item)) : null;                 // a loose thing says what it would be good for
+      const feel = kind && kind.id !== "generic" ? ` ${describeCapabilities(capabilitiesOf(kind))}` : "";
+      return `${e.name}: ${e.props.desc ?? "Nothing special."}${feel}${extra}${e.props.text ? `\nYou read: "${e.props.text}"` : ""}`;
     },
   },
   {
@@ -286,13 +292,21 @@ export const BASE_TOOLS: ToolDef[] = [
     input_schema: obj({ topic: str("Short topic, e.g. 'fungi networks'"), why: str("What sparked it") }, ["topic"]),
     run: (a) => { touchInterest(String(a.topic), String(a.why ?? ""), 1.5); return "Interest noted."; },
   },
+  TRY_TOOL,
   {
     name: "request_tool",
     description:
       "Ask the human for an ability you don't have: describe what you want to be able to do, and why. Make your case from your own experience and interests. " +
       "A human decides, and may grant it, build something for it, or say no. If it comes, you'll be told.",
     input_schema: obj({ name: str("Tool name (snake_case)"), reason: str("Why you want it and what you'd do with it") }, ["name", "reason"]),
-    run: (a) => requestTool(String(a.name), String(a.reason)).message,
+    run: (a, w) => {
+      const key = String(a.name).trim().toLowerCase().replace(/\s+/g, "_"), mine = availableTools().filter((t) => t.name !== "request_tool");
+      const same = mine.find((t) => t.name === key);
+      if (same) return `You already have ${same.name}: ${same.description.split(/(?<=[.;])\s/)[0]}`;
+      const near = nearestOwned(`${key.replace(/_/g, " ")}. ${a.reason}`, mine.map((t) => [t.name, t.description] as [string, string]));
+      if (near && !(key in GATED && !isApproved(key))) return `You can already do that: \`${near.name}\` is what you are looking for (${mine.find((t) => t.name === near.name)!.description.split(/(?<=[.;])\s/)[0]}). Nothing new is needed.`;
+      return requestTool(String(a.name), String(a.reason)).message;
+    },
   },
 ];
 
@@ -433,6 +447,6 @@ export async function loadPlugins() {
 
 /** Tool definitions the model sees this cycle. */
 export function availableTools(): ToolDef[] {
-  return [...BASE_TOOLS, ...[...GATED_TOOLS, ...PLUGIN_TOOLS].filter((t) => isApproved(t.name))];
+  return [...BASE_TOOLS.filter((t) => t.name !== "try" || cfg("discovery")), ...[...GATED_TOOLS, ...PLUGIN_TOOLS].filter((t) => isApproved(t.name))];
 }
 export const findTool = (name: string) => availableTools().find((t) => t.name === name);

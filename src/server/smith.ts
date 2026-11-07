@@ -10,8 +10,8 @@ import { bus, log } from "./bus.ts";
 import { db } from "./db.ts";
 import { chat, type ChatMessage } from "./llm.ts";
 import { forgeModelName } from "./provider.ts";
-import { GATED, grantTool, syncApprovals } from "./mind.ts";
-import { BASE_TOOLS, PLUGIN_TOOLS, registerPlugin } from "./tools.ts";
+import { GATED, grantTool, nearestOwned, syncApprovals } from "./mind.ts";
+import { BASE_TOOLS, GATED_TOOLS, PLUGIN_TOOLS, registerPlugin } from "./tools.ts";
 import type { ForgedTool, ToolRequest } from "../shared/types.ts";
 import { LIMITS, scanSource, validateResult } from "./sandbox/contract.ts";
 import { describePlugin, hashOf, runPlugin, type Snapshot } from "./sandbox/host.ts";
@@ -139,6 +139,9 @@ export async function forge(req: ToolRequest, onStaged?: (t: ForgedTool) => void
   const name = req.name;
   if (!/^[a-z][a-z0-9_]{1,30}$/.test(name)) return save(name, req.id, "failed", "", "Invalid tool name.");
   if (BASE_TOOLS.some((t) => t.name === name) || PLUGIN_TOOLS.some((t) => t.name === name) || (name in GATED && !get(name))) return save(name, req.id, "failed", "", "A tool with that name already exists.");
+  const existing: [string, string][] = [...BASE_TOOLS, ...GATED_TOOLS, ...PLUGIN_TOOLS].map((t) => [t.name, t.description]);
+  const twin = nearestOwned(`${name.replace(/_/g, " ")}. ${req.reason}`, existing);
+  if (twin && !req.note) return save(name, req.id, "failed", "", `Too like the ability that already exists as "${twin.name}". Grant that instead, or add a note saying what is different and approve again.`);
   if (active.has(name)) return;
   active.add(name);
   save(name, req.id, "forging", "", "Writing code…");
@@ -146,7 +149,7 @@ export async function forge(req: ToolRequest, onStaged?: (t: ForgedTool) => void
 
   const messages: ChatMessage[] = [
     { role: "system", content: SYSTEM },
-    { role: "user", content: `Tool name: ${name}\nRiver's reason: ${req.reason}${req.note ? `\nThe human's note: ${req.note}` : ""}\n\nWrite the plugin.` },
+    { role: "user", content: `Tool name: ${name}\nRiver's reason: ${req.reason}${req.note ? `\nThe human's note: ${req.note}` : ""}\n\nThese abilities already exist: ${existing.map(([n, d]) => `${n} (${d.split(/(?<=[.;])\s/)[0]!.slice(0, 90)})`).join("; ")}.\nDo not rebuild any of them. If River's request overlaps one, make the part that is genuinely different, and say so in a comment.\n\nWrite the plugin.` },
   ];
   const trail: string[] = [];
   let code = "";

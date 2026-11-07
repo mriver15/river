@@ -415,6 +415,25 @@
     }
    ],
    "coverage": "unit"
+  },
+  {
+   "id": "discovery",
+   "feature": "Abilities found by living: dawning from situations and trying, with what is missing said in the world's words",
+   "owner": "discovery.ts",
+   "tools": [
+    "try"
+   ],
+   "evidence": [
+    {
+     "test": "tests/discovery.test.ts",
+     "title": "trying what the world does not yet allow says what is missing, and trying with enough opens it"
+    },
+    {
+     "test": "tests/discovery.test.ts",
+     "title": "holding a seed, it dawns on River that it could plant, and it is told once, in the world's words"
+    }
+   ],
+   "coverage": "unit"
   }
  ]
 }

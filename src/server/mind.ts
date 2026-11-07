@@ -108,6 +108,15 @@ export function lexicalScores(request: string): { name: string; score: number }[
   const qw = words(request);
   return Object.entries(GATED).filter(([k]) => !isApproved(k)).map(([k, d]) => { const shared = [...words(`${k} ${gist(d)}`)].filter((w) => qw.has(w)).length; return { name: k, score: shared >= 2 ? Math.min(0.9, 0.5 + shared / 10) : 0 }; }).sort((a, b) => b.score - a.score);
 }
+/** The best of `entries` (name, description) that a request is plainly about, by shared words: for telling River it already has what it asks for. */
+export function nearestOwned(request: string, entries: [string, string][]): { name: string; score: number } | null {
+  const qw = words(request); let best: { name: string; score: number } | null = null;
+  for (const [k, d] of entries) {
+    const shared = [...words(`${k.replace(/_/g, " ")} ${gist(d)}`)].filter((w) => qw.has(w)).length, score = shared >= 3 ? Math.min(0.95, 0.5 + shared / 10) : 0;
+    if (score >= 0.8 && (!best || score > best.score)) best = { name: k, score };
+  }
+  return best;
+}
 /** Built-ins that clearly fit this request: a short list (up to 3) for the human to choose from, or nothing. */
 export async function matchBuiltin(request: string): Promise<{ name: string; score: number }[]> {
   return (await matchScores(request)).filter((m) => m.score >= 0.85).slice(0, 3).map((m) => ({ name: m.name, score: +m.score.toFixed(2) }));
