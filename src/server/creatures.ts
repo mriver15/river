@@ -49,12 +49,15 @@ export class Creatures {
       const traits = TRAITS[species] ?? ["curious"], c: Creature = { id: `cr_${species}_${simNow().toString(36)}${i}`, species, trait: traits[Math.floor(sr() * traits.length)], name: null, trust: 0, met: 0, lastSeen: 0, alive: true };
       this.rows.set(c.id, c); this.save(c); alive.push(c);
     }
+    for (const c of [...alive].sort((a, b) => Number(!!a.name) - Number(!!b.name) || a.trust - b.trust).slice(0, Math.max(0, alive.length - count))) { c.alive = false; this.save(c); }      // the island holds fewer now: the unnamed, least-trusting move on first, and are not mourned
     const ents = [...this.w.entities.values()].filter((e) => e.kind === "animal" && e.props.species === species);
-    for (const e of ents.filter((x) => !x.props.creature)) {          // animals from before individuals existed: adopt them
-      const free = alive.find((c) => !ents.some((x) => x.props.creature === c.id)); if (free) { e.props.creature = free.id; this.syncEntity(e, free); } else this.w.removeEntity(e.id);
+    for (const e of ents) if (e.props.creature && this.rows.get(e.props.creature)?.alive === false) this.w.removeEntity(e.id);
+    const kept = alive.filter((c) => c.alive);
+    for (const e of ents.filter((x) => !x.props.creature && this.w.entities.has(x.id))) {
+      const free = kept.find((c) => !ents.some((x) => x.props.creature === c.id)); if (free) { e.props.creature = free.id; this.syncEntity(e, free); } else this.w.removeEntity(e.id);
     }
     if (!allowed) { ents.forEach((e) => this.w.removeEntity(e.id)); return; }
-    for (const c of alive) if (!ents.some((e) => e.props.creature === c.id)) {
+    for (const c of kept) if (!ents.some((e) => e.props.creature === c.id && this.w.entities.has(e.id))) {
       const p = pick(); this.w.spawn("animal", label(c).replace(/^the /, ""), p.x, p.z, { species, creature: c.id, desc, heading: sr() * 6.28, trust: +c.trust.toFixed(2), cname: c.name, trait: c.trait, met: c.met });
     }
   }

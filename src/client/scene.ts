@@ -4,6 +4,7 @@ import { HALF, WORLD_SIZE, groveness, heightAt, hash2 } from "../shared/noise.ts
 import type { AgentView, Entity, FxKind, Weather } from "../shared/types.ts";
 import { buildItem, buildWorn, disposeItem, setLod } from "./renderers/items.ts";
 import { defForKind } from "../content/items.ts";
+import { RULES, type SeasonId } from "../sim/seasons.ts";
 import { NEW_LOOK, VISUAL_VERSION, type VisualPacket } from "../content/visuals.ts";
 import { NEUTRAL_POSTURE, postureOf, type Posture } from "../shared/posture.ts";
 
@@ -111,6 +112,8 @@ function addFlames(g: THREE.Group, e: Entity) {
 }
 
 const mat = (c: number, extra: THREE.MeshStandardMaterialParameters = {}) => new THREE.MeshStandardMaterial({ color: c, flatShading: true, roughness: 0.9, ...extra });
+/** Foliage: remembers its summer colour so the seasons can lean it toward gold or grey and back. */
+const leafMat = (c: number) => { const m = mat(c); m.userData.leaf = c; return m; };
 const mesh = (g: THREE.BufferGeometry, m: THREE.Material, x = 0, y = 0, z = 0) => { const o = new THREE.Mesh(g, m); o.position.set(x, y, z); o.castShadow = true; return o; };
 
 const WILDLIFE: Record<string, true> = { snake: true, beetle: true, butterfly: true, midges: true, fish: true, gull: true, heron: true, owl: true, songbird: true, wolf: true, boar: true, bear: true };
@@ -175,8 +178,8 @@ function buildEntity(e: Entity): THREE.Object3D {
       const pine = e.name.includes("pine"), s = 0.8 + r * 0.7;
       g.add(mesh(new THREE.CylinderGeometry(0.18, 0.28, 2 * s, 6), mat(0x6b4a2f), 0, s, 0));
       const leaf = e.name.includes("birch") ? 0x8cc06a : e.name.includes("willow") ? 0x5fa07a : pine ? 0x2f6b46 : 0x3f8a4a;
-      if (pine) for (let i = 0; i < 3; i++) g.add(mesh(new THREE.ConeGeometry(1.5 * s - i * 0.35, 1.8 * s, 7), mat(leaf), 0, 2.2 * s + i * 1.0 * s, 0));
-      else { g.add(mesh(new THREE.IcosahedronGeometry(1.4 * s, 0), mat(leaf), 0, 2.9 * s, 0)); g.add(mesh(new THREE.IcosahedronGeometry(0.9 * s, 0), mat(leaf), 0.8 * s, 2.3 * s, 0.3)); }
+      if (pine) for (let i = 0; i < 3; i++) g.add(mesh(new THREE.ConeGeometry(1.5 * s - i * 0.35, 1.8 * s, 7), leafMat(leaf), 0, 2.2 * s + i * 1.0 * s, 0));
+      else { g.add(mesh(new THREE.IcosahedronGeometry(1.4 * s, 0), leafMat(leaf), 0, 2.9 * s, 0)); g.add(mesh(new THREE.IcosahedronGeometry(0.9 * s, 0), leafMat(leaf), 0.8 * s, 2.3 * s, 0.3)); }
       break;
     }
     case "rock": { const m = mesh(new THREE.DodecahedronGeometry(0.7 + r * 0.5, 0), mat(e.name.includes("mossy") ? 0x6f8a6a : e.name.includes("clay") ? 0xb5714a : e.name.includes("chalk") ? 0xe6e2d6 : e.name.includes("lookout") ? 0x9a978f : 0x8d9199), 0, 0.3, 0); m.scale.y = 0.65; g.add(m); break; }
@@ -314,6 +317,8 @@ export class Scene3D {
   entityObjs = new Map<string, THREE.Object3D>();
   entityData = new Map<string, Entity>();
   follow = true;
+  private terrainMat?: THREE.MeshStandardMaterial;
+  private season: SeasonId | null = null;
   /** The route River has walked since the page opened (or since cleared), drawn as a line that shifts from night-blue to day-gold with the hour. */
   private trail?: { line: THREE.LineSegments; pos: THREE.BufferAttribute; col: THREE.BufferAttribute; n: number; last: { x: number; z: number } | null };
   private static TRAIL_MAX = 12000;
@@ -417,7 +422,8 @@ export class Scene3D {
     geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
     this.terrainGeo = geo; this.baseColors = colors.slice();
     geo.computeVertexNormals();
-    const terrain = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 1 }));
+    this.terrainMat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 1 });
+    const terrain = new THREE.Mesh(geo, this.terrainMat);
     terrain.receiveShadow = true;
     this.scene.add(terrain);
     const water = new THREE.Mesh(new THREE.PlaneGeometry(600, 600).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x2f7fb8, transparent: true, opacity: 0.82, roughness: 0.25, metalness: 0.1 }));
@@ -475,7 +481,7 @@ export class Scene3D {
     o.position.set(e.x, e.props.deckY ?? heightAt(e.x, e.z, this.seed), e.z);
     o.userData.id = e.id;
     if (e.kind === "animal") { o.userData.tx = e.x; o.userData.tz = e.z; o.userData.heading = e.props.heading ?? 0; o.userData.alt = e.props.alt ?? 0; o.userData.swim = !!e.props.swim; }
-    this.scene.add(o); this.entityObjs.set(e.id, o); this.entityData.set(e.id, e);
+    this.scene.add(o); this.entityObjs.set(e.id, o); if (this.season && e.kind === "tree") { const r = RULES[this.season], t = new THREE.Color(r.leaf); o.traverse((x) => { const m = (x as THREE.Mesh).material as THREE.Material | undefined; if (m?.userData.leaf !== undefined) this.leaf(m as THREE.MeshStandardMaterial, t, r.leafMix); }); } this.entityData.set(e.id, e);
   }
   remove(id: string) {
     const o = this.entityObjs.get(id);
@@ -504,8 +510,18 @@ export class Scene3D {
   get trailShown() { return !!this.trail?.line.visible; }
   clearTrail() { if (this.trail) { this.trail.n = 0; this.trail.last = null; this.trail.line.geometry.setDrawRange(0, 0); } }
 
+  /** Lean the land toward the season: the foliage, the ground and (in updateSky) the light. */
+  private setSeason(id: SeasonId) {
+    if (id === this.season) return;
+    this.season = id; const r = RULES[id], target = new THREE.Color(r.leaf);
+    this.terrainMat?.color.setRGB(...r.ground);
+    this.scene.traverse((o) => { const m = (o as THREE.Mesh).material as THREE.Material | undefined; if (m?.userData.leaf !== undefined) this.leaf(m as THREE.MeshStandardMaterial, target, r.leafMix); });
+  }
+  private leaf(m: THREE.MeshStandardMaterial, target: THREE.Color, mix: number) { m.color.set(m.userData.leaf).lerp(target, mix); }
+
   setAgent(a: AgentView) {
     this.growTrail(a);
+    if (a.season) this.setSeason(a.season.id);
     this.dress(a.worn ?? []); this.mark(a.body?.marks ?? []);
     const first = !this.agent;
     this.agent = a;
@@ -734,6 +750,7 @@ export class Scene3D {
     const wk = this.wk, ease = 0.02;
     wk.grey += (target[0] - wk.grey) * ease; wk.fogNear += (target[1] - wk.fogNear) * ease; wk.fogFar += (target[2] - wk.fogFar) * ease; wk.dark += (target[3] - wk.dark) * ease; wk.rain += (target[4] - wk.rain) * ease;
     const grey = new THREE.Color(0x8a919b).multiplyScalar(0.25 + 0.75 * day);
+    if (this.season) sky.lerp(new THREE.Color(RULES[this.season].sky), 0.14 * day);                // the year in the light
     sky.lerp(grey, wk.grey);
     this.flash = Math.max(0, this.flash - 0.06);
     if (this.flash > 0) sky.lerp(new THREE.Color(0xe8f0ff), this.flash * 0.8);

@@ -8,6 +8,7 @@ import { cfg } from "./config.ts";
 import { bus, log } from "./bus.ts";
 import { addMemory } from "./memory.ts";
 import { bodyApi } from "./body.ts";
+import { ecologyOf } from "./ecology.ts";
 import { HALF, groveness, isLand } from "../shared/noise.ts";
 import { ToolError, obj, str, type ToolDef } from "./toolkit.ts";
 import type { Entity } from "../shared/types.ts";
@@ -95,11 +96,12 @@ export class Wildlife {
     for (const e of w.entities.values()) if (e.kind === "animal" && WILD[e.props.species]) (have.get(e.props.species) ?? have.set(e.props.species, []).get(e.props.species)!).push(e);
     let spawned = 0;
     for (const [key, sp] of Object.entries(WILD)) {
-      const list = have.get(key) ?? [], on = sp.cls === "predator" ? cfg("predators") : cfg("smallWild"), allowed = on && (sp.when === "any" || (sp.when === "night") === night);
+      const list = have.get(key) ?? [], on = sp.cls === "predator" ? cfg("predators") : cfg("smallWild"), eco = ecologyOf(w), allowed = on && (sp.when === "any" || (sp.when === "night") === night) && (eco?.here(key) ?? true), want = eco ? eco.count(key, sp.count) : sp.count;
       if (!on) { for (const e of list) { w.removeEntity(e.id); this.st.delete(e.id); } continue; }
       const far = sp.cls === "predator" ? 40 : 14;
       if (!allowed) { for (const e of list) if (Math.hypot(e.x - w.me.x, e.z - w.me.z) > far) { w.removeEntity(e.id); this.st.delete(e.id); } continue; }
-      for (let i = list.length; i < sp.count && spawned < 3; i++) {
+      if (list.length > want) { const gone = list.filter((e) => Math.hypot(e.x - w.me.x, e.z - w.me.z) > far).sort((a, b) => Math.hypot(b.x - w.me.x, b.z - w.me.z) - Math.hypot(a.x - w.me.x, a.z - w.me.z))[0]; if (gone) { w.removeEntity(gone.id); this.st.delete(gone.id); } }     // the island holds fewer now: the farthest slips away
+      for (let i = list.length; i < want && spawned < 3; i++) {
         const p = this.spot(sp, far); if (!p) break;
         const e = w.spawn("animal", sp.name, p.x, p.z, { species: key, wild: true, desc: sp.desc, heading: rand(0, 6.28), alt: sp.alt ?? 0, swim: sp.cls === "fish" || undefined, ...(sp.hp ? { hp: sp.hp, maxHp: sp.hp } : {}) });
         this.st.set(e.id, { tx: p.x, tz: p.z, wait: rand(1, 6), mode: "wander", until: 0, cool: 0, ang: rand(0, 6.28), warnedAt: 0, perch: p.perch }); spawned++;

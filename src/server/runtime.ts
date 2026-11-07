@@ -16,6 +16,7 @@ import { Fire } from "./fire.ts";
 import { Emotions } from "./emotions.ts";
 import { Creatures } from "./creatures.ts";
 import { Visitors } from "./visitors.ts";
+import { Ecology } from "./ecology.ts";
 import { Story } from "./story.ts";
 import { Catalog } from "./catalog.ts";
 import { bodyApi } from "./body.ts";
@@ -45,6 +46,7 @@ export async function createRuntime() {
   const creatures = new Creatures(world, ambient.say);
   ambient.creatures = creatures; world.creatures = creatures;
   const visitors = new Visitors(world, ambient.say); (world as any).visitors = visitors;
+  const ecology = new Ecology(world); (world as any).ecology = ecology;
   const story = new Story(world); story.emotions = emotions; world.story = story;
   const catalog = new Catalog(world); catalog.story = story; catalog.sync();
   bodyApi.attach(world, emotions, (msg) => agent.notify(msg, true, "danger"));
@@ -60,7 +62,7 @@ export async function createRuntime() {
   agent.setWorldPaused = (p, why) => void inject(() => { const m = { t: "sim_pause" as const, paused: p }; const seq = recordCommand("human", "sim_pause", m); humanCommand({ world, agent, emotions, ambient, creatures, story, catalog, wildlife, fire, knowledge, activities } as Runtime, m); finishCommand(seq, "ok", why); });
   activities.resume();
   const advancer = new Advancer({ world, agent });
-  const made = { world, emotions, inner, advancer, agent, ambient, creatures, visitors, story, catalog, wildlife, fire, knowledge, activities };
+  const made = { world, emotions, inner, advancer, agent, ambient, creatures, visitors, ecology, story, catalog, wildlife, fire, knowledge, activities };
   bus.on("tool-request", (req: ToolRequest) => autoHandle(made, req));
   bus.on("tool-installed", (f: { name: string }) => { agent.notify(`Your new tool "${f.name}" has been built and is now usable. Try it!`); addMemory(`The tool "${f.name}" was built for me and is now available.`, 7, ["tools"]); });
   return made;
@@ -100,7 +102,7 @@ export function startSystems(rt: Runtime) {
     emotions.contact(0.3); emotions.bump("wonder", 0.25, "something was left for me"); bus.emit("deed", { kind: "gift", name: e.name });
   });
   setLocator(() => ({ x: world.me.x, z: world.me.z }));
-  emotions.start(); bodyApi.start(); wildlife.start(); creatures.start(); rt.visitors.start(); story.start();
+  emotions.start(); bodyApi.start(); wildlife.start(); creatures.start(); rt.visitors.start(); rt.ecology.start(); story.start();
   startDreams(world, (msg) => agent.notify(msg, false), { feelings: () => emotions.describe(), after: () => emotions.afterDream() });
   startJournal(world);
   every(STEP_MS, () => { if (simTick() % CHECKPOINT_EVERY === 0) checkpoint(world); }, "checkpoint");

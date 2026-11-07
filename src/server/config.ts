@@ -32,11 +32,13 @@ export const DEFS: ConfigDef[] = [
   { key: "contentPacks", group: "Time & weather", label: "Content packs", help: "Which sets of strange happenings are in play: names separated by commas, `all`, or `none`. Packs: zone (places that do not belong), mind (perception gone slightly wrong).", type: "text", def: "all", placeholder: "all" },
   { key: "visitorDays", group: "Time & weather", label: "Visitors", help: "About how many world days pass between visits from a stranger who comes ashore, stays a while and goes. 0 means none.", type: "number", def: 2.5, min: 0, max: 20, step: 0.5, unit: "days" },
   { key: "visitorVoice", group: "River's mind", label: "Visitor voices per day", help: "How many times a day, at most, a visitor's reply is written by the model (small and capped; the cheaper routine model if one is set). 0 means they only speak their own lines.", type: "number", def: 12, min: 0, max: 100, step: 1 },
+  { key: "seasonDays", group: "Time & weather", label: "Season length", help: "World days in each of the four seasons (a day is 24 world minutes). Winter is colder and barer, spring and summer grow things back faster, and who is about changes with the year. 0 means no seasons.", type: "number", def: 6, min: 0, max: 30, step: 1, unit: "days" },
   { key: "ambientRate", group: "Time & weather", label: "World events", help: "How often strange and beautiful things happen. 0 is none.", type: "number", def: env("AMBIENT_RATE", 1), min: 0, max: 3, step: 0.25, unit: "×" },
 
   { key: "prey", group: "Wildlife", label: "Deer, rabbits, crows, foxes", help: "The gentle, tameable animals.", type: "toggle", def: true },
   { key: "smallWild", group: "Wildlife", label: "Snakes, bugs, fish, birds", help: "Includes the snakes and midges that bite.", type: "toggle", def: true },
   { key: "predators", group: "Wildlife", label: "Predators", help: "Wolves, boars and bears.", type: "toggle", def: true },
+  { key: "ecology", group: "Wildlife", label: "Living populations", help: "On: deer, rabbits, foxes and wolves rise and fall with the seasons, the plants and each other, and what River hunts stays gone for a while. Off: the numbers never change.", type: "toggle", def: true },
   { key: "damageScale", group: "Wildlife", label: "Animal damage", help: "How hard creatures hit. 0 is harmless.", type: "number", def: 1, min: 0, max: 3, step: 0.25, unit: "×" },
 
   { key: "newbornGrace", group: "Survival", label: "A new life is not hunted", help: "World minutes after a new River is born during which wolves, boars and bears do not notice it, so it has a chance to find out about fire and shelter. 0 means they hunt it from the first moment. (A day is 24 world minutes.)", type: "number", def: 15, min: 0, max: 120, step: 5, unit: "min" },

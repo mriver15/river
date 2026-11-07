@@ -70,6 +70,7 @@ const server = http.createServer(async (req, res) => {
   const json = (o: unknown) => { res.setHeader("content-type", "application/json"); res.end(JSON.stringify(o)); };
   if (url.pathname === "/api/memories") return json({ ...embeddingCoverage(), memories: await search(url.searchParams.get("q") ?? "", 60) });
   if (url.pathname === "/api/music") return json(libraryForUi());
+  if (url.pathname === "/api/ecology") return json(rt.ecology.view());                 // the season, how well the plants are giving, and how many of each kind live here
   if (url.pathname === "/api/brain") return json(agent.brainView());
   if (url.pathname === "/api/item") {                              // the item inspector: identity, place, condition, make-up, what it can do, where it came from
     const i = world.items.get(url.searchParams.get("id") ?? "");

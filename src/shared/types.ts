@@ -50,6 +50,7 @@ export interface AgentView {
   sleeping: boolean;
   needs: Needs;
   worldTime: number;    // fraction of day 0..1 (0 = midnight)
+  season?: { id: "spring" | "summer" | "autumn" | "winter"; index: number; day: number; progress: number; year: number };
   weather: Weather;
   feelings: Partial<Record<EmotionName, number>>;
   day: number;

@@ -1,5 +1,6 @@
 import { CONTENT_PACKS } from "../content/packs/index.ts";
 import { cfg } from "./config.ts";
+import { seasonAt, RULES, type Season, type SeasonRules } from "../sim/seasons.ts";
 import { warmthFactor, worn, attachItems } from "./clothing.ts";
 import { bodyView } from "./body.ts";
 import { db, kvGet, kvSet } from "./db.ts";
@@ -428,11 +429,12 @@ export class World {
     // warmth: the night, rain and wind take it; fire, shelter and sun give it back
     {
       const t = this.worldTime(), night = t < 0.23 || t > 0.78;
-      let loss = (night ? 0.045 : 0) + (this.weather === "rain" ? 0.035 : this.weather === "storm" ? 0.07 : this.weather === "windy" ? 0.02 : this.weather === "fog" ? 0.01 : 0);
+      const sr = this.seasonRules();
+      let loss = sr.cold * (night ? 0.045 : 0) + (this.weather === "rain" ? 0.035 : this.weather === "storm" ? 0.07 : this.weather === "windy" ? 0.02 : this.weather === "fog" ? 0.01 : 0);
       const sheltered = [...this.entities.values()].some((e) => e.kind === "structure" && (e.props.shelter ?? !e.props.shape) && Math.hypot(e.x - m.x, e.z - m.z) < 3.2 + (e.props.radius ?? 0));
       if (sheltered) loss *= 0.4;
       loss *= (1 - warmthFactor()) * nr;                         // clothes turn some of it away
-      const gain = (!night && (this.weather === "clear" || this.weather === "windy") ? 0.03 : 0) + this.warmSource() * 0.35 + this.items.carriedHeat();
+      const gain = (!night && (this.weather === "clear" || this.weather === "windy") ? sr.sun : 0) + this.warmSource() * 0.35 + this.items.carriedHeat();
       m.needs.warmth = Math.max(0, Math.min(100, m.needs.warmth + (gain - loss) * dt));
       if (m.needs.warmth < 30) { m.needs.energy = Math.max(0, m.needs.energy - 0.02 * dt); m.needs.mood = Math.max(0, m.needs.mood - 0.01 * dt); }   // cold wears you down
     }
@@ -472,7 +474,7 @@ export class World {
       this.lastGrow = now;
       for (const e of this.entities.values()) {
         const p = e.props;
-        if (p.yields && !p.noRegrow && p.stock < p.max && now - (p.lastTake ?? 0) > 60_000) { p.stock++; p.lastTake = now; this.putEntity(e); }
+        if (p.yields && !p.noRegrow && p.stock < p.max && now - (p.lastTake ?? 0) > 60_000 / this.seasonRules().regrow) { p.stock++; p.lastTake = now; this.putEntity(e); }
         if (e.kind === "sprout" && now - p.born > p.ms / (this.weather === "rain" || this.weather === "storm" ? 2 : 1)) {
           e.kind = p.grow; e.name = p.grownName; e.props = p.grown; this.putEntity(e);
           log("observation", `The sprout you planted has grown into ${e.name} at (${e.x.toFixed(0)}, ${e.z.toFixed(0)}).`, { id: e.id });
@@ -500,9 +502,12 @@ export class World {
     if (ws !== this.lastWalk) { this.lastWalk = ws; db.prepare("INSERT INTO kv(k, v) VALUES('walk', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v").run(ws); }
   }
 
+  /** Where the year stands, and what that does to the cold, the growing and the weather. */
+  season(): Season { return seasonAt(this.day(), cfg("seasonDays")); }
+  seasonRules(): SeasonRules { return RULES[this.season().id]; }
   view(): AgentView {
     const m = this.me;
     return { name: m.name, x: m.x, z: m.z, heading: m.heading, activity: m.activity, speech: m.speech, sleeping: m.sleeping,
-      needs: m.needs, progress: (this.activities as { view(): { label: string; pct: number } | null } | undefined)?.view() ?? null, weather: this.weather, feelings: this.feelings, worldTime: this.worldTime(), day: this.day(), thinking: m.thinking, worn: worn(), body: bodyView() };
+      needs: m.needs, progress: (this.activities as { view(): { label: string; pct: number } | null } | undefined)?.view() ?? null, weather: this.weather, feelings: this.feelings, worldTime: this.worldTime(), day: this.day(), season: this.season(), thinking: m.thinking, worn: worn(), body: bodyView() };
   }
 }

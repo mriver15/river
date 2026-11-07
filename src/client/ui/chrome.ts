@@ -67,7 +67,8 @@ export function renderHud(a: AgentView) {
   feels.hidden = !top.length;
   const h = a.worldTime * 24, night = a.worldTime < 0.23 || a.worldTime > 0.78;
   $("chip-time").textContent = `${night ? "☾" : "☀"}  Day ${a.day} · ${String(Math.floor(h)).padStart(2, "0")}:${String(Math.floor((h % 1) * 60)).padStart(2, "0")}`;
-  $("chip-weather").textContent = a.weather[0].toUpperCase() + a.weather.slice(1);
+  $("chip-weather").textContent = a.weather[0].toUpperCase() + a.weather.slice(1) + (a.season ? ` · ${a.season.id[0]!.toUpperCase()}${a.season.id.slice(1)}` : "");
+  $("chip-weather").title = a.season ? `${a.season.id}, day ${a.season.day} of the season (year ${a.season.year})` : "";
 }
 
 export function renderBudget() {

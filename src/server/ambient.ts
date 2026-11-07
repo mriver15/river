@@ -12,6 +12,8 @@ import type { World } from "./world.ts";
 import { simNow, simRng, every, after, scheduleJob, onJob } from "./sim.ts";
 import { persisted } from "./persist.ts";
 import { PACKS, enabledPacks, packOfEvent } from "./packs/index.ts";
+import { RULES } from "../sim/seasons.ts";
+import { ecologyOf } from "./ecology.ts";
 const sr = simRng("ambient");
 
 const rand = (a: number, b: number) => a + sr() * (b - a);
@@ -42,7 +44,8 @@ export function sensesText(w: World): string {
   const cold = m.needs.warmth < 15 ? "You are shaking with cold." : m.needs.warmth < 35 ? "You are cold." : "";
   const dark = isNight(w) && !w.lit() ? "The dark presses close; you can see only a few steps." : "";
   const sky = isNight(w) && w.weather !== "storm" && w.weather !== "fog" && w.weather !== "cloudy" ? " The moon and stars are out." : "";
-  return `${[cold, dark].filter(Boolean).join(" ")}${cold || dark ? "\n" : ""}Weather: ${WEATHER_TEXT[w.weather]}.${sky} Sounds: ${[...new Set(sounds)].join(", ") || "near silence"}.`;
+  const yr = w.season(), turning = yr.progress > 0.78 ? ` The year is turning toward ${["summer", "autumn", "winter", "spring"][yr.index]}.` : "";
+  return `${[cold, dark].filter(Boolean).join(" ")}${cold || dark ? "\n" : ""}Weather: ${WEATHER_TEXT[w.weather]}.${sky}${turning} Sounds: ${[...new Set(sounds)].join(", ") || "near silence"}.`;
 }
 
 // ---------- wildlife ----------
@@ -216,6 +219,7 @@ export class Ambient {
   private deferred = 0;
   private current = "";                 // name of the happening being run, for the log
   private recentThemes: Theme[] = [];
+  private lastSeason = "";
 
   constructor(private w: World, private notify: (msg: string) => void) {
     // after a scare passes, the world offers something gentle
@@ -226,8 +230,8 @@ export class Ambient {
       this.say(fox ? "A fox's eyes catch the light for an instant, then it is gone." : "Nothing. Only the wind in the leaves, you tell yourself.");
     });
     // the director's schedule and memory, committed with the clock
-    const s = persisted("ambient", () => ({ weatherUntil: this.weatherUntil, nextEvent: this.nextEvent, last: [...this.last], noted: [...this.noted], animalState: [...this.animalState], deferred: this.deferred, current: this.current, recentThemes: this.recentThemes.slice(-12), lastPersist: this.lastPersist }));
-    if (s) { this.weatherUntil = s.weatherUntil; this.nextEvent = s.nextEvent; this.last = new Map(s.last); this.noted = new Map(s.noted); this.animalState = new Map(s.animalState); this.deferred = s.deferred; this.current = s.current; this.recentThemes = s.recentThemes; this.lastPersist = s.lastPersist; }
+    const s = persisted("ambient", () => ({ weatherUntil: this.weatherUntil, nextEvent: this.nextEvent, last: [...this.last], noted: [...this.noted], animalState: [...this.animalState], deferred: this.deferred, current: this.current, recentThemes: this.recentThemes.slice(-12), lastPersist: this.lastPersist, season: this.lastSeason }));
+    if (s) { this.weatherUntil = s.weatherUntil; this.nextEvent = s.nextEvent; this.last = new Map(s.last); this.noted = new Map(s.noted); this.animalState = new Map(s.animalState); this.deferred = s.deferred; this.current = s.current; this.recentThemes = s.recentThemes; this.lastPersist = s.lastPersist; this.lastSeason = s.season ?? ""; }
     else this.nextEvent = simNow() + rand(40_000, 120_000);
   }
 
@@ -294,6 +298,7 @@ export class Ambient {
 
   private slow() {
     const now = simNow(), w = this.w;
+    this.turnOfYear();
     if (now >= this.weatherUntil) this.changeWeather();
     if (w.weather === "storm" && sr() < 0.03) { this.fx("lightning"); if (sr() < 0.3) bus.emit("strike"); if (sr() < 0.4) { this.say("Thunder cracks, close enough to feel in your chest."); bus.emit("loud", { text: "thunder cracked overhead" }); } }
     if (now >= this.nextEvent) {
@@ -307,10 +312,18 @@ export class Ambient {
     if (Math.floor(now / 1000) % 20 === 0) this.syncWildlife();
   }
 
+  /** When the season changes, the world says so, once. A new world, or a loaded one, just takes note of where the year is. */
+  private turnOfYear() {
+    const s = this.w.season();
+    if (!this.lastSeason) { this.lastSeason = s.id; return; }
+    if (s.id === this.lastSeason) return;
+    this.lastSeason = s.id; this.current = ""; this.say(RULES[s.id].arrives);
+  }
+
   private changeWeather() {
     const w = this.w, prev = w.weather;
     const emo = this.emotions, calmLong = (emo?.calmFor() ?? 0) > 20 * 60_000, strained = (emo?.arousal() ?? 0) > 0.55;
-    let next = weighted(WEATHERS.filter((x) => x.w !== prev).map((x) => ({ ...x, weight: x.weight * (x.w === "storm" ? (strained ? 0 : calmLong ? 2.5 : 1) : 1) }))).w;
+    let next = weighted(WEATHERS.filter((x) => x.w !== prev).map((x) => ({ ...x, weight: x.weight * (x.w === "storm" ? (strained ? 0 : calmLong ? 2.5 : 1) : 1) * (RULES[w.season().id].weather[x.w] ?? 1) }))).w;
     if (prev === "storm") next = "rain";
     w.weather = cfg("weather") ? next : "clear"; this.weatherUntil = simNow() + rand(180_000, 540_000) / cfg("ambientRate");
     kvSet("weather", { w: next, until: this.weatherUntil });
@@ -345,10 +358,11 @@ export class Ambient {
     const w = this.w, night = isNight(w), have = new Map<string, Entity[]>();
     for (const e of w.entities.values()) if (e.kind === "animal") (have.get(e.props.species) ?? have.set(e.props.species, []).get(e.props.species)!).push(e);
     for (const [key, s] of Object.entries(SPECIES)) {
-      const list = have.get(key) ?? [], allowed = (s.when === "any" || (s.when === "night") === night) && (key === "firefly" || cfg("prey"));
-      if (key !== "firefly" && this.creatures) { this.creatures.presence(key, s.count, allowed, s.desc, () => landPoint(w, undefined, HALF - 8)); continue; }   // individuals
+      const eco = ecologyOf(w), want = eco ? eco.count(key, s.count) : s.count;
+      const list = have.get(key) ?? [], allowed = (s.when === "any" || (s.when === "night") === night) && (key === "firefly" || cfg("prey")) && (eco?.here(key) ?? true);
+      if (key !== "firefly" && this.creatures) { this.creatures.presence(key, want, allowed, s.desc, () => landPoint(w, undefined, HALF - 8)); continue; }   // individuals
       if (!allowed) { list.forEach((e) => w.removeEntity(e.id)); continue; }
-      for (let i = list.length; i < s.count; i++) {
+      for (let i = list.length; i < want; i++) {
         const p = landPoint(w, undefined, HALF - 8);
         const e = w.spawn("animal", s.name, p.x, p.z, { species: key, desc: s.desc, heading: sr() * 6.28 });
         this.animalState.set(e.id, { tx: p.x, tz: p.z, wait: rand(1, 6) });
